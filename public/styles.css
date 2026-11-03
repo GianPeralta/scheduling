@@ -51,11 +51,16 @@
 *::before,
 *::after { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
 
 body {
     margin: 0;
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -63,12 +68,14 @@ body {
     background-color: var(--bg);
     -webkit-font-smoothing: antialiased;
     line-height: 1.5;
+    overflow-x: hidden;
 }
 
 h1, h2, h3 { margin: 0; letter-spacing: -0.025em; }
 p { margin: 0; }
+button, a, label { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 button { font: inherit; cursor: pointer; }
-input, textarea { font: inherit; }
+input, textarea { font: inherit; font-size: 1rem; }
 svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 .hidden { display: none !important; }
@@ -124,6 +131,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     font-weight: 500;
 }
 .topbar-link {
+    margin-left: auto;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -216,9 +224,11 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     display: grid;
     grid-template-columns: 295px 1fr;
     min-height: 560px;
+    margin-top: clamp(20px, 3.5vw, 36px);
     overflow: hidden;
     animation: rise 0.65s 0.06s var(--ease) both;
 }
+.hero + .scheduler { margin-top: 0; }
 
 .info-panel {
     padding: 32px 28px;
@@ -1112,28 +1122,269 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .booking .btn { align-self: center; }
 
 /* ==========================================================================
-   Responsive
+   Responsive (Tablet, Mobile & Small Phones)
    ========================================================================== */
-@media (max-width: 1020px) {
-    .scheduler { grid-template-columns: 260px 1fr; }
-    #step1 { grid-template-columns: 1fr; }
-    .slot-list { max-height: none; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+
+/* Tablet (portrait & compact landscape: up to 960px)
+   Stack the teacher info panel as a compact horizontal header at the top of
+   the card so the Calendar and Time Slots can still sit side-by-side! */
+@media (max-width: 960px) {
+    .scheduler {
+        grid-template-columns: 1fr;
+        min-height: 0;
+    }
+    .info-panel {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 22px 24px;
+    }
+    .info-head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 14px;
+    }
+    .info-head .avatar {
+        width: 46px;
+        height: 46px;
+        margin-bottom: 0;
+        border-radius: 12px;
+        font-size: 1.05rem;
+        flex-shrink: 0;
+    }
+    .info-panel h2 {
+        font-size: 1.25rem;
+        margin: 0;
+    }
+    .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 20px;
+        margin-bottom: 16px;
+    }
+    .meta li { font-size: 0.88rem; gap: 7px; }
+    .selection {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        padding: 11px 14px;
+        margin-bottom: 16px;
+    }
+    .selection-label { margin-bottom: 0; }
+    .steps {
+        grid-template-columns: repeat(3, 1fr);
+        margin-top: 0;
+        padding-top: 12px;
+        gap: 8px;
+    }
+    .step { padding: 4px 0; font-size: 0.82rem; }
+    .panel { padding: 24px; }
+    #step1 {
+        grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+        gap: 24px;
+    }
+    .details-form { max-width: none; }
+    .stats { gap: 12px; }
+    .stat { padding: 16px 18px; gap: 12px; }
 }
 
-@media (max-width: 760px) {
-    .scheduler { grid-template-columns: 1fr; }
-    .info-panel { border-right: none; border-bottom: 1px solid var(--border); padding: 24px; }
-    .info-panel h2 { margin-bottom: 14px; }
-    .meta { margin-bottom: 16px; }
-    .steps { display: flex; justify-content: space-between; margin-top: 8px; }
-    .step { font-size: 0.75rem; flex-direction: column; gap: 4px; text-align: center; }
-    .panel { padding: 22px; }
-    .slot-list { grid-template-columns: 1fr; }
-    .stats { grid-template-columns: 1fr; }
-    .booking { grid-template-columns: 1fr; gap: 12px; }
-    .booking-time { display: flex; justify-content: space-between; align-items: center; text-align: left; }
-    .booking .btn { justify-self: start; align-self: start; }
-    .search { max-width: none; }
+/* Mobile & Small Tablets (up to 680px) */
+@media (max-width: 680px) {
+    .topbar {
+        padding: calc(10px + env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 10px max(14px, env(safe-area-inset-left, 0px));
+    }
+    .brand { gap: 10px; }
+    .brand-mark { width: 34px; height: 34px; font-size: 0.84rem; border-radius: 9px; }
+    .brand-text strong { font-size: 0.92rem; }
+    .brand-text small { font-size: 0.72rem; }
+    .topbar-link { padding: 8px 12px; font-size: 0.82rem; min-height: 38px; }
+
+    .container {
+        padding: 0 max(12px, env(safe-area-inset-right, 0px)) 32px max(12px, env(safe-area-inset-left, 0px));
+    }
+
+    .hero { padding: 20px 4px 16px; }
+    .hero h1 { font-size: clamp(1.5rem, 6.2vw, 1.95rem); margin: 12px auto 8px; }
+    .hero p { font-size: 0.92rem; line-height: 1.45; }
+    .pill { font-size: 0.74rem; padding: 5px 12px; }
+
+    .card { border-radius: 16px; }
+    .info-panel { padding: 16px 18px; }
+    .meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 12px;
+        margin-bottom: 14px;
+    }
+    .meta li { font-size: 0.83rem; min-width: 0; }
+    .meta li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .selection {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        margin-bottom: 14px;
+    }
+
+    .steps { gap: 4px; padding-top: 12px; }
+    .step {
+        flex-direction: column;
+        text-align: center;
+        gap: 4px;
+        font-size: 0.74rem;
+    }
+
+    .panel { padding: 18px; }
+    #step1 {
+        grid-template-columns: 1fr;
+        gap: 22px;
+    }
+
+    /* Touch-friendly calendar */
+    .icon-btn { width: 42px; height: 42px; }
+    .weekdays, .days { gap: 5px; }
+    .day {
+        min-height: 42px;
+        font-size: 0.92rem;
+        border-radius: 9px;
+    }
+    .legend { margin-top: 14px; justify-content: center; }
+
+    /* Separated, non-nested slot list for smooth page scrolling */
+    .slots {
+        padding-top: 20px;
+        border-top: 1px solid var(--border);
+    }
+    .slots-head { min-height: 0; margin-bottom: 12px; }
+    .slot-list {
+        max-height: none;
+        overflow: visible;
+        padding: 0;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .slot {
+        min-height: 50px;
+        padding: 13px 15px;
+    }
+
+    /* Form & buttons */
+    .back-btn { min-height: 40px; padding: 8px 12px 8px 6px; }
+    .segmented label > span { min-height: 44px; padding: 10px 10px; font-size: 0.88rem; }
+    .group-fields { padding: 14px; gap: 14px; }
+    .remove-member { width: 44px; height: 46px; }
+    .add-member { min-height: 42px; width: 100%; justify-content: center; }
+    .btn { min-height: 48px; }
+
+    /* Confirmation ticket */
+    .ticket { padding: 16px; gap: 10px; }
+    .ticket-row { font-size: 0.9rem; gap: 12px; }
+
+    /* Admin Dashboard on mobile */
+    .login-wrap { padding: 28px 0; }
+    .login-card { padding: 26px 20px; }
+
+    .dash-head {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        padding: 22px 0 16px;
+    }
+    .dash-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+    .dash-actions .btn { min-height: 42px; width: 100%; }
+
+    /* Compact 3-column stat strip on mobile so all stats fit above the fold */
+    .stats {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 16px;
+    }
+    .stat {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 12px;
+        gap: 8px;
+        border-radius: 14px;
+    }
+    .stat-icon { width: 34px; height: 34px; border-radius: 9px; }
+    .stat-icon svg { width: 18px; height: 18px; }
+    .stat-value { font-size: 1.35rem; }
+    .stat-label { font-size: 0.74rem; line-height: 1.2; }
+
+    .toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 14px;
+        gap: 10px;
+    }
+    .tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+    }
+    .tab { min-height: 40px; text-align: center; }
+    .search { max-width: none; min-width: 0; width: 100%; }
+    .search input { font-size: 1rem; min-height: 42px; }
+
+    .bookings { padding: 6px 14px 18px; }
+    .booking {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 14px;
+    }
+    .booking-time {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        text-align: left;
+        padding: 8px 12px;
+    }
+    .booking .btn {
+        width: 100%;
+        min-height: 40px;
+        justify-self: stretch;
+    }
+
+    .toast {
+        bottom: max(16px, env(safe-area-inset-bottom, 16px));
+        width: calc(100vw - 24px);
+        text-align: center;
+    }
+    .footer {
+        padding-bottom: max(28px, calc(16px + env(safe-area-inset-bottom, 0px)));
+    }
+}
+
+/* Extra-small phones (320px–400px) */
+@media (max-width: 400px) {
+    .brand-text small { display: none; }
+    .meta { grid-template-columns: 1fr; gap: 6px; }
+    .weekdays, .days { gap: 3px; }
+    .day { font-size: 0.85rem; min-height: 38px; }
+    .slot.selected { padding-right: 96px; }
+    .slot-next { padding: 0 12px; font-size: 0.82rem; }
+    .ticket-row { flex-direction: column; gap: 2px; }
+    .ticket-row strong { text-align: left; max-width: 100%; }
+}
+
+/* Touch devices: replace sticky hover transforms with crisp active press states */
+@media (hover: none) {
+    .day.available:hover,
+    .btn-primary:hover:not(:disabled) {
+        transform: none;
+    }
+    .day.available:active,
+    .slot:active:not(:disabled),
+    .btn:active:not(:disabled),
+    .icon-btn:active:not(:disabled) {
+        transform: scale(0.98);
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {

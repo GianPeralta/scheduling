@@ -70,10 +70,13 @@
         if (n === 2) {
             setTimeout(() => {
                 const target = state.bookingType === 'group' ? $('#teamInput') : $('#nameInput');
-                if (target) target.focus();
+                if (target) target.focus({ preventScroll: true });
             }, 50);
         }
-        if (window.innerWidth < 900) $('#scheduler').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (window.innerWidth <= 940) {
+            const activePanel = $(['#step1', '#step2', '#step3'][n - 1]);
+            (activePanel || $('#scheduler')).scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     }
 
     function updateSelectionBox() {
@@ -226,7 +229,7 @@
             } else {
                 btn.classList.add('available');
                 btn.title = `${info.open} slot${info.open === 1 ? '' : 's'} open`;
-                btn.addEventListener('click', () => selectDate(ds));
+                btn.addEventListener('click', () => selectDate(ds, true));
             }
 
             if (ds === state.selectedDate) btn.classList.add('selected');
@@ -245,7 +248,7 @@
     }
 
     /* ---------------- slots ---------------- */
-    async function selectDate(ds) {
+    async function selectDate(ds, fromUser = false) {
         state.selectedDate = ds;
         state.selectedSlot = null;
         updateSelectionBox();
@@ -263,6 +266,9 @@
             const data = await api(`/api/slots?date=${ds}`);
             if (reqId !== state.slotsRequest) return;
             renderSlots(data.slots);
+            if (fromUser && window.innerWidth <= 680) {
+                $('.slots').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
         } catch (err) {
             if (reqId !== state.slotsRequest) return;
             list.innerHTML = '';
