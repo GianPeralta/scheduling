@@ -55,7 +55,7 @@
         if (!purpose) return '';
         return purpose === 'other'
             ? 'Other Consultation · 6 min'
-            : 'System / Software / Web App · 1 hr 20 min';
+            : 'System Consultation · 1 hr 20 min';
     }
 
     async function api(url, options = {}) {
@@ -143,7 +143,7 @@
         const isOther = state.consultationPurpose === 'other';
         $('#bannerPurposeTitle').textContent = isOther
             ? 'Other Consultation'
-            : 'System / Software / Web App';
+            : 'System Consultation';
         const badge = $('#bannerPurposeBadge');
         badge.textContent = isOther ? '6 minutes' : '1 hr 20 min';
         badge.className = 'badge ' + (isOther ? 'sky' : 'teal');
@@ -184,7 +184,7 @@
             '#durationMeta',
             nextPurpose === 'other'
                 ? '6 minutes (Other consultation)'
-                : '1 hr 20 min (System / Software / Web App)'
+                : '1 hr 20 min (System Consultation)'
         );
 
         updatePurposeBanner();
@@ -689,7 +689,7 @@
         const isGroup = b.type === 'group' && b.teamName;
         $('#cPurpose').textContent = b.consultationType === 'other'
             ? `Other Consultation (${b.durationLabel || '6 min'})`
-            : `System / Software / Web App (${b.durationLabel || '1 hr 20 min'})`;
+            : `System Consultation (${b.durationLabel || '1 hr 20 min'})`;
         $('#cTeamRow').classList.toggle('hidden', !isGroup);
         if (isGroup) {
             $('#cTeam').textContent = b.teamName;

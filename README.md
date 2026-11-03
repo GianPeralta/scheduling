@@ -7,7 +7,7 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 
 **Students (`/`)**
 - **Two consultation types**:
-  - **System / Software / Web App** (`1 hr 20 min`): For students or groups consulting about the system, software, or web app they made.
+  - **System Consultation** (`1 hr 20 min`): For students or groups consulting about the system, software, or web app they made.
   - **Other Consultation** (`6 minutes`): Quick check-in for any other questions or concerns.
 - **Weekly schedule (Monday – Saturday)** until **December 10**:
   - **Monday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM, 6:10 PM – 7:30 PM

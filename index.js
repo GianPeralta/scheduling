@@ -23,7 +23,7 @@ const OTHER_DURATION = 6;   // 6 minutes for all other consultations
 const CONSULTATION_TYPES = {
     system: {
         id: 'system',
-        title: 'System / Software / Web App',
+        title: 'System Consultation',
         description: 'Consult about the system, software, or web app you made',
         durationMinutes: SYSTEM_DURATION,
         durationLabel: '1 hr 20 min',
