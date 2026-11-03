@@ -12,6 +12,8 @@
         currentMinute: 0,
         tab: 'upcoming',
         search: '',
+        loggingIn: false,
+        loadReqId: 0,
     };
 
     /* ---------------- helpers ---------------- */
@@ -75,6 +77,8 @@
 
     async function login(e) {
         e.preventDefault();
+        if (state.loggingIn) return;
+        state.loggingIn = true;
         const btn = $('#loginBtn');
         state.password = $('#passwordInput').value;
         btn.disabled = true;
@@ -89,6 +93,7 @@
             state.password = '';
             showLogin(err.message);
         } finally {
+            state.loggingIn = false;
             btn.disabled = false;
             btn.querySelector('.spinner').classList.add('hidden');
         }
@@ -103,8 +108,12 @@
 
     /* ---------------- data ---------------- */
     async function loadBookings() {
+        const reqId = ++state.loadReqId;
+        const refreshBtn = $('#refreshBtn');
+        if (refreshBtn) refreshBtn.disabled = true;
         try {
             const data = await api('/api/admin/bookings');
+            if (reqId !== state.loadReqId) return false;
             state.bookings = data.bookings.sort(
                 (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? a.hour * 60) - (b.startMinute ?? b.hour * 60)
             );
@@ -113,12 +122,19 @@
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
             $('#todayLabel').textContent = `Today is ${longDate(data.today)}`;
             render();
+            return true;
         } catch (err) {
+            if (reqId !== state.loadReqId) return false;
             if (err.status === 401) {
                 logout();
                 showLogin('Session expired. Please sign in again.');
             } else {
                 toast(err.message, 'error');
+            }
+            return false;
+        } finally {
+            if (reqId === state.loadReqId && refreshBtn) {
+                refreshBtn.disabled = false;
             }
         }
     }
@@ -260,8 +276,8 @@
     $('#loginForm').addEventListener('submit', login);
     $('#logoutBtn').addEventListener('click', logout);
     $('#refreshBtn').addEventListener('click', async () => {
-        await loadBookings();
-        toast('Appointments refreshed.');
+        const ok = await loadBookings();
+        if (ok) toast('Appointments refreshed.');
     });
     $('#searchInput').addEventListener('input', (e) => {
         state.search = e.target.value.trim();

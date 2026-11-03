@@ -7,6 +7,7 @@
 
     const state = {
         config: null,
+        currentStep: 1,
         viewYear: 0,
         viewMonth: 0, // 0-11
         monthDays: {}, // { 'YYYY-MM-DD': { bookable, open } }
@@ -16,6 +17,10 @@
         bookingType: 'individual', // 'individual' | 'group'
         monthRequest: 0,
         slotsRequest: 0,
+        loadingSlotsKey: null,
+        loadedSlotsKey: null,
+        activeWindowLabel: null,
+        submitting: false,
     };
 
     /* ---------------- helpers ---------------- */
@@ -72,6 +77,7 @@
 
     /* ---------------- steps ---------------- */
     function goToStep(n) {
+        state.currentStep = n;
         ['#step1', '#step2', '#step3'].forEach((id, i) => {
             $(id).classList.toggle('hidden', i + 1 !== n);
         });
@@ -119,8 +125,14 @@
     }
 
     async function setConsultationPurpose(purpose) {
-        state.consultationPurpose = purpose === 'other' ? 'other' : 'system';
+        const nextPurpose = purpose === 'other' ? 'other' : 'system';
+        if (nextPurpose === state.consultationPurpose) return;
+
+        state.consultationPurpose = nextPurpose;
         state.selectedSlot = null;
+        state.loadingSlotsKey = null;
+        state.loadedSlotsKey = null;
+        state.activeWindowLabel = null;
         updateSelectionBox();
         updateReasonPlaceholder();
 
@@ -129,12 +141,14 @@
             : '1 hr 20 min (System / Software / Web App)';
 
         const currentSelectedDate = state.selectedDate;
-        await loadMonth();
-        if (currentSelectedDate && state.monthDays[currentSelectedDate]?.bookable) {
-            await selectDate(currentSelectedDate);
+        const ok = await loadMonth();
+        if (!ok) return;
+
+        if (currentSelectedDate && state.monthDays[currentSelectedDate]?.bookable && state.monthDays[currentSelectedDate].open > 0) {
+            await selectDate(currentSelectedDate, false, true);
         } else {
             const firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
-            if (firstOpen) await selectDate(firstOpen);
+            if (firstOpen) await selectDate(firstOpen, false, true);
             else resetSlotsPanel();
         }
     }
@@ -221,14 +235,15 @@
         renderCalendar(true);
         try {
             const data = await api(`/api/month?month=${key}&purpose=${state.consultationPurpose}`);
-            if (reqId !== state.monthRequest) return;
+            if (reqId !== state.monthRequest) return false;
             state.monthDays = data.days;
         } catch (err) {
-            if (reqId !== state.monthRequest) return;
+            if (reqId !== state.monthRequest) return false;
             state.monthDays = {};
             toast(err.message, 'error');
         }
         renderCalendar(false);
+        return true;
     }
 
     function renderCalendar(loading) {
@@ -240,8 +255,8 @@
         const todayKey = config.today.slice(0, 7);
         const lastKey = config.lastBookableDate.slice(0, 7);
         const current = monthKey(y, m);
-        $('#prevMonth').disabled = current <= todayKey;
-        $('#nextMonth').disabled = current >= lastKey;
+        $('#prevMonth').disabled = loading || current <= todayKey;
+        $('#nextMonth').disabled = loading || current >= lastKey;
 
         const container = $('#days');
         container.classList.toggle('loading', loading);
@@ -285,20 +300,37 @@
     }
 
     function changeMonth(delta) {
+        if (!state.config) return Promise.resolve(false);
         let m = state.viewMonth + delta;
         let y = state.viewYear;
         if (m < 0) { m = 11; y--; }
         if (m > 11) { m = 0; y++; }
+
+        const targetKey = monthKey(y, m);
+        const todayKey = state.config.today.slice(0, 7);
+        const lastKey = state.config.lastBookableDate.slice(0, 7);
+        if (targetKey < todayKey || targetKey > lastKey) return Promise.resolve(false);
+
         state.viewMonth = m;
         state.viewYear = y;
         return loadMonth();
     }
 
     /* ---------------- slots ---------------- */
-    async function selectDate(ds, fromUser = false) {
+    async function selectDate(ds, fromUser = false, force = false) {
+        const key = `${ds}#${state.consultationPurpose}`;
+        // Ignore duplicate / double clicks on the date that is already loaded or currently loading
+        if (!force && ds === state.selectedDate && (state.loadingSlotsKey === key || state.loadedSlotsKey === key)) {
+            return;
+        }
+
         state.selectedDate = ds;
         state.selectedSlot = null;
+        state.loadingSlotsKey = key;
+        state.loadedSlotsKey = null;
+        state.activeWindowLabel = null;
         updateSelectionBox();
+
         document.querySelectorAll('.day.selected').forEach((el) => el.classList.remove('selected'));
         const btn = document.querySelector(`.day[data-date="${ds}"]`);
         if (btn) btn.classList.add('selected');
@@ -312,16 +344,57 @@
         try {
             const data = await api(`/api/slots?date=${ds}&purpose=${state.consultationPurpose}`);
             if (reqId !== state.slotsRequest) return;
+            state.loadingSlotsKey = null;
+            state.loadedSlotsKey = key;
             renderSlots(data.slots);
             if (fromUser && window.innerWidth <= 680) {
                 $('.slots').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         } catch (err) {
             if (reqId !== state.slotsRequest) return;
+            state.loadingSlotsKey = null;
             list.innerHTML = '';
             $('#slotsSubtitle').textContent = 'Could not load time slots.';
             toast(err.message, 'error');
         }
+    }
+
+    function createSlotButton(slot, i) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'slot';
+        btn.style.animationDelay = `${Math.min(i, 12) * 18}ms`;
+
+        const time = document.createElement('span');
+        time.className = 'slot-time';
+        time.textContent = slot.label;
+        const range = document.createElement('span');
+        range.className = 'slot-range';
+        range.textContent = slot.available ? `until ${slot.endLabel}` : 'Unavailable';
+        btn.append(time, range);
+
+        if (!slot.available) {
+            btn.disabled = true;
+            btn.classList.add('taken');
+        } else {
+            if (state.selectedSlot && state.selectedSlot.startMinute === slot.startMinute) {
+                btn.classList.add('selected');
+                btn.appendChild(createNextBadge());
+            }
+            btn.addEventListener('click', () => selectSlot(slot, btn));
+        }
+        return btn;
+    }
+
+    function createNextBadge() {
+        const next = document.createElement('span');
+        next.className = 'slot-next';
+        next.textContent = 'Next →';
+        next.addEventListener('click', (e) => {
+            e.stopPropagation();
+            goToStep(2);
+        });
+        return next;
     }
 
     function renderSlots(slots) {
@@ -338,65 +411,73 @@
             return;
         }
 
-        let lastWindow = null;
+        // For 6-minute consultations, group slots by window tabs so the list stays compact and easy to browse
+        if (state.consultationPurpose === 'other') {
+            const windows = [];
+            const byWindow = new Map();
+            slots.forEach((s) => {
+                const w = s.windowLabel || 'All times';
+                if (!byWindow.has(w)) {
+                    byWindow.set(w, []);
+                    windows.push(w);
+                }
+                byWindow.get(w).push(s);
+            });
+
+            if (windows.length > 1) {
+                if (!state.activeWindowLabel || !byWindow.has(state.activeWindowLabel)) {
+                    state.activeWindowLabel =
+                        windows.find((w) => byWindow.get(w).some((s) => s.available)) || windows[0];
+                }
+
+                const tabs = document.createElement('div');
+                tabs.className = 'window-tabs';
+                windows.forEach((w) => {
+                    const winSlots = byWindow.get(w);
+                    const winOpen = winSlots.filter((s) => s.available).length;
+                    const tab = document.createElement('button');
+                    tab.type = 'button';
+                    tab.className = 'window-tab' + (w === state.activeWindowLabel ? ' active' : '');
+                    tab.textContent = `${w} (${winOpen})`;
+                    tab.disabled = winOpen === 0;
+                    tab.addEventListener('click', () => {
+                        if (state.activeWindowLabel === w) return;
+                        state.activeWindowLabel = w;
+                        renderSlots(slots);
+                    });
+                    tabs.appendChild(tab);
+                });
+                list.appendChild(tabs);
+
+                const activeSlots = byWindow.get(state.activeWindowLabel) || [];
+                activeSlots.forEach((slot, i) => list.appendChild(createSlotButton(slot, i)));
+                return;
+            }
+        }
+
+        // For 1 hr 20 min consultations (or single-window days), render the slots directly
         slots.forEach((slot, i) => {
-            if (slot.windowLabel && slot.windowLabel !== lastWindow) {
-                lastWindow = slot.windowLabel;
-                const hdr = document.createElement('div');
-                hdr.className = 'slot-window-header';
-                hdr.textContent = `Window: ${slot.windowLabel}`;
-                list.appendChild(hdr);
-            }
-
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'slot';
-            btn.style.animationDelay = `${Math.min(i, 15) * 20}ms`;
-
-            const time = document.createElement('span');
-            time.className = 'slot-time';
-            time.textContent = slot.label;
-            const range = document.createElement('span');
-            range.className = 'slot-range';
-            range.textContent = slot.available ? `until ${slot.endLabel}` : 'Unavailable';
-            btn.append(time, range);
-
-            if (!slot.available) {
-                btn.disabled = true;
-                btn.classList.add('taken');
-            } else {
-                btn.addEventListener('click', () => selectSlot(slot, btn));
-            }
-            list.appendChild(btn);
+            list.appendChild(createSlotButton(slot, i));
         });
     }
 
     function selectSlot(slot, btn) {
-        const wasSelected = btn.classList.contains('selected');
+        // If already selected, clicking/double-clicking advances directly to Step 2
+        if (btn.classList.contains('selected')) {
+            goToStep(2);
+            return;
+        }
+
         document.querySelectorAll('.slot.selected').forEach((el) => {
             el.classList.remove('selected');
             const next = el.querySelector('.slot-next');
             if (next) next.remove();
         });
 
-        if (wasSelected) {
-            state.selectedSlot = null;
-            updateSelectionBox();
-            return;
-        }
-
         state.selectedSlot = slot;
         btn.classList.add('selected');
         updateSelectionBox();
-
-        const next = document.createElement('span');
-        next.className = 'slot-next';
-        next.textContent = 'Next →';
-        next.addEventListener('click', (e) => {
-            e.stopPropagation();
-            goToStep(2);
-        });
-        btn.appendChild(next);
+        btn.appendChild(createNextBadge());
     }
 
     /* ---------------- booking form ---------------- */
@@ -407,6 +488,7 @@
     }
 
     function setSubmitting(on) {
+        state.submitting = on;
         const btn = $('#submitBtn');
         btn.disabled = on;
         btn.querySelector('.spinner').classList.toggle('hidden', !on);
@@ -415,6 +497,7 @@
 
     async function submitBooking(e) {
         e.preventDefault();
+        if (state.submitting) return;
         setFormError('');
 
         if (!state.selectedDate || !state.selectedSlot) {
@@ -495,7 +578,9 @@
                 state.selectedSlot = null;
                 updateSelectionBox();
                 goToStep(1);
-                loadMonth().then(() => selectDate(date));
+                loadMonth().then((ok) => {
+                    if (ok && date) selectDate(date, false, true);
+                });
             } else {
                 setFormError(err.message);
             }
@@ -531,19 +616,26 @@
         $('#reasonCount').textContent = '0';
         resetMembers();
         setBookingType('individual');
+        // Sync consultationPurpose radio with current state.consultationPurpose
+        const purposeRadio = document.querySelector(`input[name="consultationPurpose"][value="${state.consultationPurpose}"]`);
+        if (purposeRadio) purposeRadio.checked = true;
         setFormError('');
         state.selectedSlot = null;
+        state.loadedSlotsKey = null;
         const date = state.selectedDate;
         updateSelectionBox();
         goToStep(1);
-        loadMonth().then(() => {
-            if (date && state.monthDays[date] && state.monthDays[date].open > 0) selectDate(date);
+        loadMonth().then((ok) => {
+            if (!ok) return;
+            if (date && state.monthDays[date] && state.monthDays[date].open > 0) selectDate(date, false, true);
             else resetSlotsPanel();
         });
     }
 
     function resetSlotsPanel() {
         state.selectedDate = null;
+        state.loadingSlotsKey = null;
+        state.loadedSlotsKey = null;
         $('#slotsTitle').textContent = 'Select a date';
         $('#slotsSubtitle').textContent = 'Available times will appear here.';
         $('#slotList').innerHTML = `
@@ -569,6 +661,13 @@
         $('#prevMonth').addEventListener('click', () => changeMonth(-1));
         $('#nextMonth').addEventListener('click', () => changeMonth(1));
         $('#backBtn').addEventListener('click', () => goToStep(1));
+        const step1Indicator = document.querySelector('.step[data-step="1"]');
+        if (step1Indicator) {
+            step1Indicator.style.cursor = 'pointer';
+            step1Indicator.addEventListener('click', () => {
+                if (state.currentStep === 2) goToStep(1);
+            });
+        }
         $('#bookingForm').addEventListener('submit', submitBooking);
         $('#bookAnother').addEventListener('click', resetBooking);
         $('#reasonInput').addEventListener('input', (e) => {
@@ -593,15 +692,17 @@
         const [y, m] = c.today.split('-').map(Number);
         state.viewYear = y;
         state.viewMonth = m - 1;
-        await loadMonth();
+        const ok = await loadMonth();
+        if (!ok || state.selectedDate) return;
 
         // Auto-select the first available day (moving to next month if needed)
         let firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
         if (!firstOpen && monthKey(state.viewYear, state.viewMonth) < c.lastBookableDate.slice(0, 7)) {
-            await changeMonth(1);
+            const changed = await changeMonth(1);
+            if (!changed || state.selectedDate) return;
             firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
         }
-        if (firstOpen) selectDate(firstOpen);
+        if (firstOpen && !state.selectedDate) selectDate(firstOpen);
     }
 
     init();

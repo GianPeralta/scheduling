@@ -428,16 +428,38 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     outline-offset: 1px;
 }
 
-.slot-window-header {
-    font-size: 0.73rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    padding: 8px 4px 2px;
+.window-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
 }
-.slot-window-header:first-child {
-    padding-top: 0;
+.window-tab {
+    flex: 1 1 auto;
+    padding: 7px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background-color: var(--surface-subtle);
+    color: var(--text-soft);
+    font-size: 0.76rem;
+    font-weight: 600;
+    text-align: center;
+    transition: all 0.18s var(--ease);
+}
+.window-tab:hover:not(:disabled) {
+    border-color: var(--primary-border);
+    color: var(--primary);
+    background-color: var(--primary-soft);
+}
+.window-tab.active {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: #ffffff;
+    box-shadow: var(--shadow-xs);
+}
+.window-tab:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 /* ---------- calendar ---------- */
