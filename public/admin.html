@@ -3,30 +3,26 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Teacher Dashboard · ConsultHub</title>
+    <title>Dashboard · Arnemie Gayyed</title>
     <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#0f766e" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-    <div class="bg-blobs" aria-hidden="true">
-        <span class="blob blob-1"></span>
-        <span class="blob blob-2"></span>
-        <span class="blob blob-3"></span>
-    </div>
-
     <header class="topbar">
         <a class="brand" href="/">
-            <span class="brand-mark">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
+            <span class="brand-mark">AG</span>
+            <span class="brand-text">
+                <strong>Arnemie Gayyed</strong>
+                <small>Consultation booking</small>
             </span>
-            <span>Consult<span class="accent">Hub</span></span>
         </a>
         <a class="topbar-link" href="/">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-            Booking page
+            <span>Booking page</span>
         </a>
     </header>
 
@@ -34,11 +30,9 @@
         <!-- Login -->
         <section class="login-wrap" id="loginView">
             <form class="card login-card" id="loginForm">
-                <div class="avatar">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                </div>
-                <h1>Teacher Dashboard</h1>
-                <p class="muted small">Enter your admin password to view appointments.</p>
+                <div class="avatar">AG</div>
+                <h1>Arnemie's Dashboard</h1>
+                <p class="muted small">Enter your password to view and manage your consultation schedule.</p>
                 <label class="field">
                     <span>Password</span>
                     <input type="password" id="passwordInput" autocomplete="current-password" placeholder="••••••••" required />
@@ -56,7 +50,7 @@
             <div class="dash-head">
                 <div>
                     <p class="muted small" id="todayLabel"></p>
-                    <h1>Your <span class="gradient-text">appointments</span></h1>
+                    <h1>Welcome back, <span class="accent-text">Arnemie</span></h1>
                 </div>
                 <div class="dash-actions">
                     <button class="btn btn-ghost" id="refreshBtn">
@@ -72,7 +66,7 @@
 
             <div class="stats">
                 <div class="card stat">
-                    <div class="stat-icon green">
+                    <div class="stat-icon teal">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
                     </div>
                     <div>
@@ -81,7 +75,7 @@
                     </div>
                 </div>
                 <div class="card stat">
-                    <div class="stat-icon">
+                    <div class="stat-icon sky">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
                     </div>
                     <div>
@@ -90,7 +84,7 @@
                     </div>
                 </div>
                 <div class="card stat">
-                    <div class="stat-icon pink">
+                    <div class="stat-icon amber">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     </div>
                     <div>
@@ -108,7 +102,7 @@
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                        <input type="search" id="searchInput" placeholder="Search name or reason…" />
+                        <input type="search" id="searchInput" placeholder="Search student, team, or reason…" />
                     </label>
                 </div>
                 <div class="bookings" id="bookingList"></div>
@@ -117,7 +111,7 @@
     </main>
 
     <footer class="footer">
-        <p>© <span id="year"></span> ConsultHub · Teacher dashboard</p>
+        <p>© <span id="year"></span> Arnemie Gayyed · Consultation dashboard</p>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -125,4 +119,3 @@
     <script src="/admin.js"></script>
 </body>
 </html>
-

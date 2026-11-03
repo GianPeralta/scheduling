@@ -2,6 +2,8 @@
     'use strict';
 
     const $ = (sel) => document.querySelector(sel);
+    const MAX_MEMBERS = 10;
+    const MIN_GROUP_MEMBERS = 2;
 
     const state = {
         config: null,
@@ -10,6 +12,7 @@
         monthDays: {}, // { 'YYYY-MM-DD': { bookable, open } }
         selectedDate: null,
         selectedSlot: null, // { hour, label, endLabel }
+        bookingType: 'individual', // 'individual' | 'group'
         monthRequest: 0,
         slotsRequest: 0,
     };
@@ -64,7 +67,12 @@
             el.classList.toggle('active', s === n);
             el.classList.toggle('done', s < n);
         });
-        if (n === 2) setTimeout(() => $('#nameInput').focus(), 50);
+        if (n === 2) {
+            setTimeout(() => {
+                const target = state.bookingType === 'group' ? $('#teamInput') : $('#nameInput');
+                if (target) target.focus();
+            }, 50);
+        }
         if (window.innerWidth < 900) $('#scheduler').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
@@ -77,6 +85,83 @@
         } else {
             box.classList.add('hidden');
         }
+    }
+
+    /* ---------------- group members UI ---------------- */
+    function getMemberInputs() {
+        return Array.from(document.querySelectorAll('#memberList input'));
+    }
+
+    function syncMemberControls() {
+        const rows = Array.from(document.querySelectorAll('#memberList .member-row'));
+        rows.forEach((row, idx) => {
+            const input = row.querySelector('input');
+            input.placeholder = idx === 0
+                ? 'Member 1 — your full name'
+                : `Member ${idx + 1} — full name`;
+            const removeBtn = row.querySelector('.remove-member');
+            removeBtn.disabled = rows.length <= MIN_GROUP_MEMBERS;
+            removeBtn.title = rows.length <= MIN_GROUP_MEMBERS
+                ? 'At least 2 members are required'
+                : 'Remove member';
+        });
+        $('#memberCount').textContent = `(${rows.length}/${MAX_MEMBERS})`;
+        $('#addMemberBtn').classList.toggle('hidden', rows.length >= MAX_MEMBERS);
+    }
+
+    function addMemberRow(initialValue = '', shouldFocus = false) {
+        const list = $('#memberList');
+        if (list.children.length >= MAX_MEMBERS) return;
+
+        const row = document.createElement('div');
+        row.className = 'member-row';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 100;
+        input.value = initialValue;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-member';
+        removeBtn.setAttribute('aria-label', 'Remove member');
+        removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        removeBtn.addEventListener('click', () => {
+            if (list.children.length <= MIN_GROUP_MEMBERS) return;
+            row.remove();
+            syncMemberControls();
+        });
+
+        row.append(input, removeBtn);
+        list.appendChild(row);
+        syncMemberControls();
+        if (shouldFocus) input.focus();
+    }
+
+    function resetMembers() {
+        const list = $('#memberList');
+        list.innerHTML = '';
+        addMemberRow();
+        addMemberRow();
+    }
+
+    function setBookingType(type) {
+        state.bookingType = type === 'group' ? 'group' : 'individual';
+        const isGroup = state.bookingType === 'group';
+        $('#individualFields').classList.toggle('hidden', isGroup);
+        $('#groupFields').classList.toggle('hidden', !isGroup);
+        $('#reasonInput').placeholder = isGroup
+            ? "e.g. We'd like to review our capstone project architecture and milestones."
+            : "e.g. I'd like to ask about my project proposal and the grading criteria.";
+
+        if (isGroup) {
+            const firstMember = getMemberInputs()[0];
+            const soloName = $('#nameInput').value.trim();
+            if (firstMember && !firstMember.value.trim() && soloName) {
+                firstMember.value = soloName;
+            }
+        }
+        setFormError('');
     }
 
     /* ---------------- calendar ---------------- */
@@ -203,7 +288,7 @@
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'slot';
-            btn.style.animationDelay = `${i * 35}ms`;
+            btn.style.animationDelay = `${i * 30}ms`;
 
             const time = document.createElement('span');
             time.className = 'slot-time';
@@ -269,21 +354,65 @@
         e.preventDefault();
         setFormError('');
 
-        const name = $('#nameInput').value.trim();
-        const reason = $('#reasonInput').value.trim();
-
-        if (name.length < 2) {
-            setFormError('Please enter your full name.');
-            $('#nameInput').focus();
+        if (!state.selectedDate || !state.selectedSlot) {
+            goToStep(1);
             return;
         }
+
+        const reason = $('#reasonInput').value.trim();
+        let payload;
+
+        if (state.bookingType === 'group') {
+            const teamName = $('#teamInput').value.trim();
+            if (teamName.length < 2) {
+                setFormError('Please enter your team name.');
+                $('#teamInput').focus();
+                return;
+            }
+            const inputs = getMemberInputs();
+            const members = inputs.map((el) => el.value.trim()).filter(Boolean);
+            if (members.length < MIN_GROUP_MEMBERS) {
+                setFormError('Please enter at least 2 group member names.');
+                const emptyInput = inputs.find((el) => el.value.trim().length < 2) || inputs[0];
+                if (emptyInput) emptyInput.focus();
+                return;
+            }
+            const invalidInput = inputs.find((el) => {
+                const v = el.value.trim();
+                return v.length > 0 && v.length < 2;
+            });
+            if (invalidInput) {
+                setFormError('Each member needs a full name (at least 2 characters).');
+                invalidInput.focus();
+                return;
+            }
+            payload = {
+                type: 'group',
+                teamName,
+                members,
+                reason,
+                date: state.selectedDate,
+                hour: state.selectedSlot.hour,
+            };
+        } else {
+            const name = $('#nameInput').value.trim();
+            if (name.length < 2) {
+                setFormError('Please enter your full name.');
+                $('#nameInput').focus();
+                return;
+            }
+            payload = {
+                type: 'individual',
+                name,
+                reason,
+                date: state.selectedDate,
+                hour: state.selectedSlot.hour,
+            };
+        }
+
         if (reason.length < 5) {
             setFormError('Please tell me a bit more about the reason for the meeting.');
             $('#reasonInput').focus();
-            return;
-        }
-        if (!state.selectedDate || !state.selectedSlot) {
-            goToStep(1);
             return;
         }
 
@@ -291,12 +420,7 @@
         try {
             const { booking } = await api('/api/bookings', {
                 method: 'POST',
-                body: JSON.stringify({
-                    name,
-                    reason,
-                    date: state.selectedDate,
-                    hour: state.selectedSlot.hour,
-                }),
+                body: JSON.stringify(payload),
             });
             showConfirmation(booking);
         } catch (err) {
@@ -316,7 +440,16 @@
     }
 
     function showConfirmation(b) {
-        $('#cName').textContent = b.name;
+        const isGroup = b.type === 'group' && b.teamName;
+        $('#cTeamRow').classList.toggle('hidden', !isGroup);
+        if (isGroup) {
+            $('#cTeam').textContent = b.teamName;
+            $('#cNameLabel').textContent = `Members (${b.members.length})`;
+            $('#cName').textContent = b.members.join(', ');
+        } else {
+            $('#cNameLabel').textContent = 'Name';
+            $('#cName').textContent = b.name;
+        }
         $('#cDate').textContent = formatLongDate(b.date);
         $('#cTime').textContent = b.label;
         $('#cLocation').textContent = state.config.location;
@@ -328,6 +461,8 @@
     function resetBooking() {
         $('#bookingForm').reset();
         $('#reasonCount').textContent = '0';
+        resetMembers();
+        setBookingType('individual');
         setFormError('');
         state.selectedSlot = null;
         const date = state.selectedDate;
@@ -354,6 +489,12 @@
     async function init() {
         $('#year').textContent = new Date().getFullYear();
 
+        resetMembers();
+        document.querySelectorAll('input[name="bookingType"]').forEach((radio) => {
+            radio.addEventListener('change', (e) => setBookingType(e.target.value));
+        });
+        $('#addMemberBtn').addEventListener('click', () => addMemberRow('', true));
+
         $('#prevMonth').addEventListener('click', () => changeMonth(-1));
         $('#nextMonth').addEventListener('click', () => changeMonth(1));
         $('#backBtn').addEventListener('click', () => goToStep(1));
@@ -371,17 +512,8 @@
         }
 
         const c = state.config;
-        $('#teacherName').textContent = c.teacherName;
-        $('#meetingTitle').textContent = c.meetingTitle;
         $('#location').textContent = c.location;
         $('#timezone').textContent = c.timezone.replace(/_/g, ' ');
-        $('#avatar').textContent = c.teacherName
-            .split(/\s+/)
-            .filter((w) => /^[A-Za-z]/.test(w) && !/^(mr|mrs|ms|dr|prof|sir|ma'?am)\.?$/i.test(w))
-            .slice(0, 2)
-            .map((w) => w[0].toUpperCase())
-            .join('') || 'T';
-        document.title = `Book a Consultation · ${c.teacherName}`;
 
         const [y, m] = c.today.split('-').map(Number);
         state.viewYear = y;

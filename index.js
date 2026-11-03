@@ -24,9 +24,10 @@ const listEnv = (value, fallback) =>
         .map(Number)
         .filter(Number.isFinite);
 
+// This site is only for one teacher: Arnemie Gayyed.
+const TEACHER_NAME = 'Arnemie Gayyed';
+
 const CONFIG = {
-    teacherName: process.env.TEACHER_NAME || 'Your Teacher',
-    meetingTitle: process.env.MEETING_TITLE || 'Student Consultation',
     location: process.env.MEETING_LOCATION || 'Faculty Office',
     timezone: process.env.TIMEZONE || 'Asia/Manila',
     startHour: intEnv(process.env.START_HOUR, 9), // first slot starts at 9:00
@@ -126,8 +127,7 @@ function isFutureSlot(dateStr, hour, now = nowInTz()) {
 app.get('/api/config', (req, res) => {
     const now = nowInTz();
     res.json({
-        teacherName: CONFIG.teacherName,
-        meetingTitle: CONFIG.meetingTitle,
+        teacherName: TEACHER_NAME,
         location: CONFIG.location,
         timezone: CONFIG.timezone,
         durationMinutes: 60,
@@ -195,14 +195,60 @@ app.get('/api/slots', async (req, res) => {
     res.json({ date, slots });
 });
 
-app.post('/api/bookings', async (req, res) => {
-    const name = String(req.body?.name ?? '').trim().replace(/\s+/g, ' ');
-    const reason = String(req.body?.reason ?? '').trim();
-    const date = String(req.body?.date ?? '');
-    const hour = Number(req.body?.hour);
+const MAX_MEMBERS = 10;
+const cleanName = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
+const BOOKING_COLUMNS = 'id, student_name, team_name, members, reason, appointment_date, start_hour, created_at';
 
-    if (name.length < 2 || name.length > 100) {
-        return res.status(400).json({ error: 'Please enter your full name (2–100 characters).' });
+/** Shape a database row for the frontend. */
+function toBooking(r) {
+    const members = Array.isArray(r.members) && r.members.length ? r.members : [r.student_name];
+    return {
+        id: r.id,
+        reference: r.id.slice(0, 8).toUpperCase(),
+        type: r.team_name ? 'group' : 'individual',
+        name: r.student_name,
+        teamName: r.team_name || null,
+        members,
+        reason: r.reason,
+        date: r.appointment_date,
+        hour: r.start_hour,
+        label: `${formatHour(r.start_hour)} – ${formatHour(r.start_hour + 1)}`,
+        createdAt: r.created_at,
+    };
+}
+
+app.post('/api/bookings', async (req, res) => {
+    const body = req.body || {};
+    const type = body.type === 'group' ? 'group' : 'individual';
+    const reason = String(body.reason ?? '').trim();
+    const date = String(body.date ?? '');
+    const hour = Number(body.hour);
+
+    let members;
+    let teamName = null;
+
+    if (type === 'group') {
+        teamName = cleanName(body.teamName);
+        if (teamName.length < 2 || teamName.length > 100) {
+            return res.status(400).json({ error: 'Please enter your team name (2–100 characters).' });
+        }
+        members = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
+        if (members.length < 2) {
+            return res.status(400).json({ error: 'A group booking needs at least 2 member names.' });
+        }
+        if (members.length > MAX_MEMBERS) {
+            return res.status(400).json({ error: `A group can have at most ${MAX_MEMBERS} members.` });
+        }
+    } else {
+        members = [cleanName(body.name)];
+    }
+
+    if (members.some((m) => m.length < 2 || m.length > 100)) {
+        return res.status(400).json({
+            error: type === 'group'
+                ? 'Each member needs a full name (2–100 characters).'
+                : 'Please enter your full name (2–100 characters).',
+        });
     }
     if (reason.length < 5 || reason.length > 1000) {
         return res.status(400).json({ error: 'Please describe your reason (5–1000 characters).' });
@@ -214,8 +260,15 @@ app.post('/api/bookings', async (req, res) => {
 
     const { data, error } = await db()
         .from(TABLE)
-        .insert([{ student_name: name, reason, appointment_date: date, start_hour: hour }])
-        .select('id, student_name, reason, appointment_date, start_hour')
+        .insert([{
+            student_name: members[0], // the person booking (group representative)
+            team_name: teamName,
+            members,
+            reason,
+            appointment_date: date,
+            start_hour: hour,
+        }])
+        .select(BOOKING_COLUMNS)
         .single();
 
     if (error) {
@@ -225,17 +278,7 @@ app.post('/api/bookings', async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
 
-    res.status(201).json({
-        booking: {
-            id: data.id,
-            reference: data.id.slice(0, 8).toUpperCase(),
-            name: data.student_name,
-            reason: data.reason,
-            date: data.appointment_date,
-            hour: data.start_hour,
-            label: `${formatHour(data.start_hour)} – ${formatHour(data.start_hour + 1)}`,
-        },
-    });
+    res.status(201).json({ booking: toBooking(data) });
 });
 
 /* ------------------------------------------------------------------ */
@@ -262,7 +305,7 @@ app.post('/api/admin/login', requireAdmin, (req, res) => res.json({ ok: true }))
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     const { data, error } = await db()
         .from(TABLE)
-        .select('id, student_name, reason, appointment_date, start_hour, created_at')
+        .select(BOOKING_COLUMNS)
         .order('appointment_date', { ascending: true })
         .order('start_hour', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
@@ -271,16 +314,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     res.json({
         today: now.date,
         currentHour: now.hour,
-        bookings: data.map((r) => ({
-            id: r.id,
-            reference: r.id.slice(0, 8).toUpperCase(),
-            name: r.student_name,
-            reason: r.reason,
-            date: r.appointment_date,
-            hour: r.start_hour,
-            label: `${formatHour(r.start_hour)} – ${formatHour(r.start_hour + 1)}`,
-            createdAt: r.created_at,
-        })),
+        bookings: data.map(toBooking),
     });
 });
 

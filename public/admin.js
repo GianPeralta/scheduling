@@ -2,7 +2,7 @@
     'use strict';
 
     const $ = (sel) => document.querySelector(sel);
-    const STORAGE_KEY = 'consulthub_admin_pw';
+    const STORAGE_KEY = 'arnemie_admin_pw';
 
     const state = {
         password: sessionStorage.getItem(STORAGE_KEY) || '',
@@ -123,7 +123,10 @@
     const isNow = (b) => b.date === state.today && b.hour === state.currentHour;
 
     async function cancelBooking(b, btn) {
-        if (!confirm(`Cancel the appointment with ${b.name} on ${longDate(b.date)} at ${b.label}?`)) return;
+        const who = b.type === 'group' && b.teamName
+            ? `${b.teamName} (${b.members.length} members)`
+            : b.name;
+        if (!confirm(`Cancel the appointment with ${who} on ${longDate(b.date)} at ${b.label}?`)) return;
         btn.disabled = true;
         try {
             await api(`/api/admin/bookings/${b.id}`, { method: 'DELETE' });
@@ -134,6 +137,16 @@
             btn.disabled = false;
             toast(err.message, 'error');
         }
+    }
+
+    function matchesSearch(b, q) {
+        if (!q) return true;
+        if (b.name.toLowerCase().includes(q)) return true;
+        if (b.teamName && b.teamName.toLowerCase().includes(q)) return true;
+        if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
+        if (b.reason.toLowerCase().includes(q)) return true;
+        if (b.reference.toLowerCase().includes(q)) return true;
+        return false;
     }
 
     /* ---------------- render ---------------- */
@@ -149,9 +162,7 @@
         $('#countPast').textContent = past.length;
 
         const q = state.search.toLowerCase();
-        const list = (state.tab === 'upcoming' ? upcoming : past).filter(
-            (b) => !q || b.name.toLowerCase().includes(q) || b.reason.toLowerCase().includes(q) || b.reference.toLowerCase().includes(q)
-        );
+        const list = (state.tab === 'upcoming' ? upcoming : past).filter((b) => matchesSearch(b, q));
 
         const container = $('#bookingList');
         container.innerHTML = '';
@@ -176,24 +187,38 @@
         groups.forEach((items, date) => {
             const group = el('div', 'date-group');
             const title = el('div', 'date-group-title', longDate(date));
-            if (date === state.today) title.appendChild(el('span', 'badge green', 'Today'));
-            else if (date === addDays(state.today, 1)) title.appendChild(el('span', 'badge', 'Tomorrow'));
+            if (date === state.today) title.appendChild(el('span', 'badge teal', 'Today'));
+            else if (date === addDays(state.today, 1)) title.appendChild(el('span', 'badge sky', 'Tomorrow'));
             group.appendChild(title);
 
             items.forEach((b) => {
+                const isGroup = b.type === 'group' && b.teamName;
                 const card = el('div', 'booking' + (isNow(b) ? ' now' : ''));
-                card.style.animationDelay = `${Math.min(i++, 12) * 30}ms`;
+                card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
 
                 const time = el('div', 'booking-time');
                 const [start, end] = b.label.split(' – ');
                 time.appendChild(el('strong', '', start));
                 time.appendChild(el('span', '', `to ${end}`));
 
-                const body = el('div');
-                const name = el('div', 'booking-name', b.name);
-                name.appendChild(el('code', '', b.reference));
-                if (isNow(b)) name.appendChild(el('span', 'badge green', 'In progress'));
-                body.appendChild(name);
+                const body = el('div', 'booking-body');
+                const header = el('div', 'booking-name');
+                header.appendChild(el('span', 'booking-title', isGroup ? b.teamName : b.name));
+                if (isGroup) {
+                    header.appendChild(el('span', 'badge amber', `Group · ${b.members.length}`));
+                }
+                header.appendChild(el('code', '', b.reference));
+                if (isNow(b)) header.appendChild(el('span', 'badge teal', 'In progress'));
+                body.appendChild(header);
+
+                if (isGroup && Array.isArray(b.members) && b.members.length) {
+                    const membersWrap = el('div', 'booking-members');
+                    b.members.forEach((memberName) => {
+                        membersWrap.appendChild(el('span', 'member-chip', memberName));
+                    });
+                    body.appendChild(membersWrap);
+                }
+
                 body.appendChild(el('p', 'booking-reason', b.reason));
                 body.appendChild(el('p', 'booking-meta', `Booked ${new Date(b.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`));
 
