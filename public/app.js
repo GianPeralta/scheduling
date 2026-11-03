@@ -2,11 +2,16 @@
     'use strict';
 
     const $ = (sel) => document.querySelector(sel);
+    const setText = (sel, val) => {
+        const el = $(sel);
+        if (el) el.textContent = val;
+    };
     const MAX_MEMBERS = 10;
     const MIN_GROUP_MEMBERS = 2;
 
     const state = {
         config: null,
+        configPromise: null,
         currentStep: 1, // 1 = Type, 2 = Date & Time, 3 = Details, 4 = Confirmed
         viewYear: 0,
         viewMonth: 0, // 0-11
@@ -144,6 +149,28 @@
         badge.className = 'badge ' + (isOther ? 'sky' : 'teal');
     }
 
+    async function ensureConfig() {
+        if (state.config) return state.config;
+        if (!state.configPromise) {
+            state.configPromise = api('/api/config').then((c) => {
+                state.config = c;
+                setText('#location', c.location);
+                setText('#timezone', c.timezone.replace(/_/g, ' '));
+                if (c.lastBookableDate) {
+                    setText('#deadlineMeta', `Bookings until ${formatShortDate(c.lastBookableDate)}`);
+                }
+                const [y, m] = c.today.split('-').map(Number);
+                state.viewYear = y;
+                state.viewMonth = m - 1;
+                return c;
+            }).catch((err) => {
+                state.configPromise = null;
+                throw err;
+            });
+        }
+        return state.configPromise;
+    }
+
     async function chooseConsultationPurpose(purpose) {
         const nextPurpose = purpose === 'other' ? 'other' : 'system';
         const purposeChanged = nextPurpose !== state.consultationPurpose;
@@ -153,9 +180,12 @@
             card.classList.toggle('selected', card.dataset.purpose === nextPurpose);
         });
 
-        $('#durationMeta').textContent = nextPurpose === 'other'
-            ? '6 minutes (Other consultation)'
-            : '1 hr 20 min (System / Software / Web App)';
+        setText(
+            '#durationMeta',
+            nextPurpose === 'other'
+                ? '6 minutes (Other consultation)'
+                : '1 hr 20 min (System / Software / Web App)'
+        );
 
         updatePurposeBanner();
         updateReasonPlaceholder();
@@ -167,6 +197,14 @@
             state.activeWindowLabel = null;
         }
         updateSelectionBox();
+
+        try {
+            await ensureConfig();
+        } catch (err) {
+            toast('Could not connect to the server. Please refresh the page.', 'error');
+            return;
+        }
+
         goToStep(2);
 
         const targetMonthLoadKey = `${monthKey(state.viewYear, state.viewMonth)}#${nextPurpose}`;
@@ -680,7 +718,7 @@
         state.loadedMonthKey = null;
         state.loadedSlotsKey = null;
         document.querySelectorAll('.type-choice-card').forEach((card) => card.classList.remove('selected'));
-        $('#durationMeta').textContent = '1 hr 20 min or 6 min';
+        setText('#durationMeta', '1 hr 20 min or 6 min');
         updateSelectionBox();
         goToStep(1);
     }
@@ -705,22 +743,25 @@
 
     /* ---------------- init ---------------- */
     async function init() {
-        $('#year').textContent = new Date().getFullYear();
+        const now = new Date();
+        state.viewYear = now.getFullYear();
+        state.viewMonth = now.getMonth();
+        setText('#year', now.getFullYear());
 
         resetMembers();
         document.querySelectorAll('.type-choice-card').forEach((card) => {
             card.addEventListener('click', () => chooseConsultationPurpose(card.dataset.purpose));
         });
-        $('#changePurposeBtn').addEventListener('click', () => goToStep(1));
+        $('#changePurposeBtn')?.addEventListener('click', () => goToStep(1));
 
         document.querySelectorAll('input[name="bookingType"]').forEach((radio) => {
             radio.addEventListener('change', (e) => setBookingType(e.target.value));
         });
-        $('#addMemberBtn').addEventListener('click', () => addMemberRow('', true));
+        $('#addMemberBtn')?.addEventListener('click', () => addMemberRow('', true));
 
-        $('#prevMonth').addEventListener('click', () => changeMonth(-1));
-        $('#nextMonth').addEventListener('click', () => changeMonth(1));
-        $('#backBtn').addEventListener('click', () => goToStep(2));
+        $('#prevMonth')?.addEventListener('click', () => changeMonth(-1));
+        $('#nextMonth')?.addEventListener('click', () => changeMonth(1));
+        $('#backBtn')?.addEventListener('click', () => goToStep(2));
 
         document.querySelectorAll('.step').forEach((stepEl) => {
             const targetStep = Number(stepEl.dataset.step);
@@ -734,29 +775,17 @@
             }
         });
 
-        $('#bookingForm').addEventListener('submit', submitBooking);
-        $('#bookAnother').addEventListener('click', resetBooking);
-        $('#reasonInput').addEventListener('input', (e) => {
-            $('#reasonCount').textContent = e.target.value.length;
+        $('#bookingForm')?.addEventListener('submit', submitBooking);
+        $('#bookAnother')?.addEventListener('click', resetBooking);
+        $('#reasonInput')?.addEventListener('input', (e) => {
+            setText('#reasonCount', e.target.value.length);
         });
 
         try {
-            state.config = await api('/api/config');
+            await ensureConfig();
         } catch (err) {
             toast('Could not connect to the server. Please refresh the page.', 'error');
-            return;
         }
-
-        const c = state.config;
-        $('#location').textContent = c.location;
-        $('#timezone').textContent = c.timezone.replace(/_/g, ' ');
-        if (c.lastBookableDate) {
-            $('#deadlineMeta').textContent = `Bookings until ${formatShortDate(c.lastBookableDate)}`;
-        }
-
-        const [y, m] = c.today.split('-').map(Number);
-        state.viewYear = y;
-        state.viewMonth = m - 1;
     }
 
     init();
