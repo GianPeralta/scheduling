@@ -41,7 +41,7 @@ app.get('/', (req, res) => {
             </style>
         </head>
         <body>
-            <h2>Send a Message to Supabase</h2>
+            <h2>Send a Message to Supabasesdasdasdqwdasdasdsa</h2>
             <form id="textForm">
                 <input type="text" id="textInput" placeholder="Type something..." required />
                 <button type="submit">Insert Text</button>
