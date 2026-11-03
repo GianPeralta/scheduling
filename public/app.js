@@ -424,7 +424,7 @@
             tabsEl.classList.add('hidden');
         }
         const list = $('#slotList');
-        list.innerHTML = '<div class="slot skeleton"></div>'.repeat(4);
+        list.innerHTML = '<div class="slot skeleton"></div>'.repeat(purpose === 'other' ? 4 : 1);
 
         const reqId = ++state.slotsRequest;
         try {
@@ -493,9 +493,9 @@
         }
 
         const openCount = slots.filter((s) => s.available).length;
-        const durText = state.consultationPurpose === 'other' ? '6 minutes each' : '1 hr 20 min each';
+        const durText = state.consultationPurpose === 'other' ? '6 minutes each' : '1 hr 20 min';
         $('#slotsSubtitle').textContent = openCount
-            ? `${openCount} of ${slots.length} slots available · ${durText}`
+            ? `${openCount} of ${slots.length} ${slots.length === 1 ? 'slot' : 'slots'} available · ${durText}`
             : 'No more open slots on this day.';
 
         if (!slots.length) {

@@ -9,13 +9,10 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 - **Two consultation types**:
   - **System Consultation** (`1 hr 20 min`): For students or groups consulting about the system, software, or web app they made.
   - **Other Consultation** (`6 minutes`): Quick check-in for any other questions or concerns.
-- **Weekly schedule (Monday – Saturday)** until **December 10**:
-  - **Monday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM, 6:10 PM – 7:30 PM
-  - **Tuesday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 7:30 PM
-  - **Wednesday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM, 6:10 PM – 7:30 PM
-  - **Thursday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 7:30 PM
-  - **Friday**: 7:30 AM – 8:50 AM, 11:30 AM – 12:50 PM, 4:50 PM – 7:30 PM
-  - **Saturday**: 8:50 AM – 12:50 PM, 2:10 PM – 7:30 PM
+- **Weekly schedule (Tuesday – Thursday)** until **December 10**:
+  - **Tuesday**: 2:10 PM – 3:30 PM
+  - **Wednesday**: 12:50 PM – 2:10 PM
+  - **Thursday**: 2:10 PM – 3:30 PM
 - Automatic overlap prevention between 1 hr 20 min and 6-minute slots
 - **Individual or Group booking**:
   - *Just me*: enter full name + reason for the meeting

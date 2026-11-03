@@ -40,47 +40,24 @@ const CONSULTATION_TYPES = {
 // Available consultation windows per day of week (0 = Sun ... 6 = Sat)
 // Every window is composed of 1h 20m (80-minute) blocks.
 const WINDOWS_BY_DAY = {
-    // MONDAY: 11:30AM - 2:10PM, 3:30PM - 4:50PM, 6:10PM - 7:30PM
-    1: [
-        [hm(11, 30), hm(14, 10)],
-        [hm(15, 30), hm(16, 50)],
-        [hm(18, 10), hm(19, 30)],
-    ],
-    // TUESDAY: 10:10AM - 11:30AM, 2:10PM - 3:30PM, 4:50PM - 7:30PM
+    // TUESDAY: 2:10PM - 3:30PM
     2: [
-        [hm(10, 10), hm(11, 30)],
         [hm(14, 10), hm(15, 30)],
-        [hm(16, 50), hm(19, 30)],
     ],
-    // WEDNESDAY: 11:30AM - 2:10PM, 3:30PM - 4:50PM, 6:10PM - 7:30PM
+    // WEDNESDAY: 12:50PM - 2:10PM
     3: [
-        [hm(11, 30), hm(14, 10)],
-        [hm(15, 30), hm(16, 50)],
-        [hm(18, 10), hm(19, 30)],
+        [hm(12, 50), hm(14, 10)],
     ],
-    // THURSDAY: 10:10AM - 11:30AM, 2:10PM - 3:30PM, 4:50PM - 7:30PM
+    // THURSDAY: 2:10PM - 3:30PM
     4: [
-        [hm(10, 10), hm(11, 30)],
         [hm(14, 10), hm(15, 30)],
-        [hm(16, 50), hm(19, 30)],
-    ],
-    // FRIDAY: 7:30AM - 8:50AM, 11:30AM - 12:50PM, 4:50PM - 7:30PM
-    5: [
-        [hm(7, 30), hm(8, 50)],
-        [hm(11, 30), hm(12, 50)],
-        [hm(16, 50), hm(19, 30)],
-    ],
-    // SATURDAY: 8:50AM - 12:50PM, 2:10PM - 7:30PM
-    6: [
-        [hm(8, 50), hm(12, 50)],
-        [hm(14, 10), hm(19, 30)],
     ],
 };
 
 const CONFIG = {
     location: process.env.MEETING_LOCATION || 'Faculty Office',
     timezone: process.env.TIMEZONE || 'Asia/Manila',
-    workingDays: [1, 2, 3, 4, 5, 6],
+    workingDays: [2, 3, 4],
     bookingEndDate: process.env.BOOKING_END_DATE || null, // defaults to Dec 10 of current year
 };
 
