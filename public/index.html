@@ -36,7 +36,7 @@
                 <ul class="meta">
                     <li>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                        <span id="durationMeta">1 hr 20 min (System/App) · 6 min (Other)</span>
+                        <span id="durationMeta">1 hr 20 min or 6 min</span>
                     </li>
                     <li>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -64,41 +64,74 @@
                 </div>
 
                 <div class="steps">
-                    <div class="step active" data-step="1"><span>1</span> Choose a time</div>
-                    <div class="step" data-step="2"><span>2</span> Your details</div>
-                    <div class="step" data-step="3"><span>3</span> Confirmed</div>
+                    <div class="step active" data-step="1"><span>1</span> Consultation type</div>
+                    <div class="step" data-step="2"><span>2</span> Choose date &amp; time</div>
+                    <div class="step" data-step="3"><span>3</span> Your details</div>
+                    <div class="step" data-step="4"><span>4</span> Confirmed</div>
                 </div>
             </aside>
 
-            <!-- Step 1: purpose, date & time -->
+            <!-- Step 1: Choose consultation type FIRST -->
             <div class="panel step-panel" id="step1">
-                <div class="purpose-bar">
-                    <div class="purpose-head">
-                        <span class="purpose-title">What is your consultation about?</span>
-                        <span class="muted small">Duration adjusts automatically based on your consultation topic.</span>
+                <div class="type-step">
+                    <div class="type-step-header">
+                        <span class="pill"><span class="pulse-dot"></span> Step 1 of 3 · Required first step</span>
+                        <h3>What is your consultation about?</h3>
+                        <p class="muted">Please choose the type of consultation you are booking first. This sets your session duration and shows the matching available time slots.</p>
                     </div>
-                    <div class="purpose-cards" role="radiogroup" aria-label="Consultation purpose">
-                        <label class="purpose-card">
-                            <input type="radio" name="consultationPurpose" value="system" checked />
-                            <div class="purpose-card-body">
-                                <div class="purpose-card-top">
-                                    <strong>System / Software / Web App</strong>
-                                    <span class="badge teal">1 hr 20 min</span>
+
+                    <div class="type-choice-grid">
+                        <button type="button" class="type-choice-card" data-purpose="system">
+                            <div class="type-choice-top">
+                                <div class="type-choice-icon teal">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="m10 9-2 2 2 2M14 9l2 2-2 2"/></svg>
                                 </div>
-                                <p>Consult about the system, software, or web app you/your group made.</p>
+                                <span class="type-duration-pill teal">1 hr 20 min</span>
                             </div>
-                        </label>
-                        <label class="purpose-card">
-                            <input type="radio" name="consultationPurpose" value="other" />
-                            <div class="purpose-card-body">
-                                <div class="purpose-card-top">
-                                    <strong>Other Consultation</strong>
-                                    <span class="badge sky">6 minutes</span>
+                            <div class="type-choice-content">
+                                <h4>System / Software / Web App</h4>
+                                <p>For students or groups who want to consult about, present, or get feedback on the system, software, or web app they made.</p>
+                            </div>
+                            <div class="type-choice-cta">
+                                <span>Select &amp; choose a time</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                            </div>
+                        </button>
+
+                        <button type="button" class="type-choice-card" data-purpose="other">
+                            <div class="type-choice-top">
+                                <div class="type-choice-icon sky">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>
                                 </div>
-                                <p>Short check-in or consultation for any other topic or concern.</p>
+                                <span class="type-duration-pill sky">6 minutes</span>
                             </div>
-                        </label>
+                            <div class="type-choice-content">
+                                <h4>Other Consultation</h4>
+                                <p>For quick questions, project proposal check-ins, grading inquiries, or any concern other than a system/software review.</p>
+                            </div>
+                            <div class="type-choice-cta">
+                                <span>Select &amp; choose a time</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                            </div>
+                        </button>
                     </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Date & time -->
+            <div class="panel step-panel hidden" id="step2">
+                <div class="active-purpose-banner" id="activePurposeBanner">
+                    <div class="active-purpose-info">
+                        <span class="active-purpose-label">Selected consultation</span>
+                        <div class="active-purpose-title">
+                            <strong id="bannerPurposeTitle">System / Software / Web App</strong>
+                            <span class="badge teal" id="bannerPurposeBadge">1 hr 20 min</span>
+                        </div>
+                    </div>
+                    <button type="button" class="change-purpose-btn" id="changePurposeBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        Change consultation type
+                    </button>
                 </div>
 
                 <div class="calendar">
@@ -138,12 +171,12 @@
                 </div>
             </div>
 
-            <!-- Step 2: details form -->
-            <div class="panel step-panel hidden" id="step2">
+            <!-- Step 3: Details form -->
+            <div class="panel step-panel hidden" id="step3">
                 <form class="details-form" id="bookingForm" novalidate>
                     <button type="button" class="back-btn" id="backBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                        Back
+                        Back to date &amp; time
                     </button>
                     <h3>Enter your details</h3>
                     <p class="muted small">Let me know who's coming and what you'd like to discuss.</p>
@@ -208,8 +241,8 @@
                 </form>
             </div>
 
-            <!-- Step 3: confirmation -->
-            <div class="panel step-panel hidden" id="step3">
+            <!-- Step 4: Confirmation -->
+            <div class="panel step-panel hidden" id="step4">
                 <div class="success">
                     <div class="success-icon">
                         <svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24" fill="none"/><path fill="none" d="m15 27 7 7 15-15"/></svg>

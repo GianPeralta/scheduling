@@ -7,16 +7,17 @@
 
     const state = {
         config: null,
-        currentStep: 1,
+        currentStep: 1, // 1 = Type, 2 = Date & Time, 3 = Details, 4 = Confirmed
         viewYear: 0,
         viewMonth: 0, // 0-11
         monthDays: {}, // { 'YYYY-MM-DD': { bookable, open } }
         selectedDate: null,
         selectedSlot: null, // { startMinute, endMinute, durationMinutes, label, endLabel }
-        consultationPurpose: 'system', // 'system' (1h 20m) | 'other' (6m)
+        consultationPurpose: null, // 'system' (1h 20m) | 'other' (6m)
         bookingType: 'individual', // 'individual' | 'group'
         monthRequest: 0,
         slotsRequest: 0,
+        loadedMonthKey: null,
         loadingSlotsKey: null,
         loadedSlotsKey: null,
         activeWindowLabel: null,
@@ -46,6 +47,7 @@
     }
 
     function purposeSummary(purpose = state.consultationPurpose) {
+        if (!purpose) return '';
         return purpose === 'other'
             ? 'Other Consultation · 6 min'
             : 'System / Software / Web App · 1 hr 20 min';
@@ -78,7 +80,7 @@
     /* ---------------- steps ---------------- */
     function goToStep(n) {
         state.currentStep = n;
-        ['#step1', '#step2', '#step3'].forEach((id, i) => {
+        ['#step1', '#step2', '#step3', '#step4'].forEach((id, i) => {
             $(id).classList.toggle('hidden', i + 1 !== n);
         });
         document.querySelectorAll('.step').forEach((el) => {
@@ -86,33 +88,41 @@
             el.classList.toggle('active', s === n);
             el.classList.toggle('done', s < n);
         });
-        if (n === 2) {
+        if (n === 3) {
             setTimeout(() => {
                 const target = state.bookingType === 'group' ? $('#teamInput') : $('#nameInput');
                 if (target) target.focus({ preventScroll: true });
             }, 50);
         }
         if (window.innerWidth <= 940) {
-            const activePanel = $(['#step1', '#step2', '#step3'][n - 1]);
+            const activePanel = $(['#step1', '#step2', '#step3', '#step4'][n - 1]);
             (activePanel || $('#scheduler')).scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     }
 
     function updateSelectionBox() {
         const box = $('#selectionBox');
+        if (!state.consultationPurpose) {
+            box.classList.add('hidden');
+            return;
+        }
+        $('#selectionPurpose').textContent = purposeSummary();
         if (state.selectedDate && state.selectedSlot) {
-            $('#selectionPurpose').textContent = purposeSummary();
             $('#selectionDate').textContent = formatLongDate(state.selectedDate);
             $('#selectionTime').textContent = `${state.selectedSlot.label} – ${state.selectedSlot.endLabel}`;
-            box.classList.remove('hidden');
+        } else if (state.selectedDate) {
+            $('#selectionDate').textContent = formatLongDate(state.selectedDate);
+            $('#selectionTime').textContent = 'Select a time slot';
         } else {
-            box.classList.add('hidden');
+            $('#selectionDate').textContent = 'Select a date & time';
+            $('#selectionTime').textContent = '';
         }
+        box.classList.remove('hidden');
     }
 
     function updateReasonPlaceholder() {
         const isGroup = state.bookingType === 'group';
-        const isSystem = state.consultationPurpose === 'system';
+        const isSystem = state.consultationPurpose !== 'other';
         if (isSystem) {
             $('#reasonInput').placeholder = isGroup
                 ? "e.g. We'd like to consult about the system/web app our group built and review its features."
@@ -124,21 +134,45 @@
         }
     }
 
-    async function setConsultationPurpose(purpose) {
+    function updatePurposeBanner() {
+        const isOther = state.consultationPurpose === 'other';
+        $('#bannerPurposeTitle').textContent = isOther
+            ? 'Other Consultation'
+            : 'System / Software / Web App';
+        const badge = $('#bannerPurposeBadge');
+        badge.textContent = isOther ? '6 minutes' : '1 hr 20 min';
+        badge.className = 'badge ' + (isOther ? 'sky' : 'teal');
+    }
+
+    async function chooseConsultationPurpose(purpose) {
         const nextPurpose = purpose === 'other' ? 'other' : 'system';
-        if (nextPurpose === state.consultationPurpose) return;
+        const purposeChanged = nextPurpose !== state.consultationPurpose;
 
         state.consultationPurpose = nextPurpose;
-        state.selectedSlot = null;
-        state.loadingSlotsKey = null;
-        state.loadedSlotsKey = null;
-        state.activeWindowLabel = null;
-        updateSelectionBox();
-        updateReasonPlaceholder();
+        document.querySelectorAll('.type-choice-card').forEach((card) => {
+            card.classList.toggle('selected', card.dataset.purpose === nextPurpose);
+        });
 
-        $('#durationMeta').textContent = state.consultationPurpose === 'other'
+        $('#durationMeta').textContent = nextPurpose === 'other'
             ? '6 minutes (Other consultation)'
             : '1 hr 20 min (System / Software / Web App)';
+
+        updatePurposeBanner();
+        updateReasonPlaceholder();
+
+        if (purposeChanged) {
+            state.selectedSlot = null;
+            state.loadingSlotsKey = null;
+            state.loadedSlotsKey = null;
+            state.activeWindowLabel = null;
+        }
+        updateSelectionBox();
+        goToStep(2);
+
+        const targetMonthLoadKey = `${monthKey(state.viewYear, state.viewMonth)}#${nextPurpose}`;
+        if (!purposeChanged && state.loadedMonthKey === targetMonthLoadKey && state.selectedDate) {
+            return;
+        }
 
         const currentSelectedDate = state.selectedDate;
         const ok = await loadMonth();
@@ -147,7 +181,12 @@
         if (currentSelectedDate && state.monthDays[currentSelectedDate]?.bookable && state.monthDays[currentSelectedDate].open > 0) {
             await selectDate(currentSelectedDate, false, true);
         } else {
-            const firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
+            let firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
+            if (!firstOpen && state.config && monthKey(state.viewYear, state.viewMonth) < state.config.lastBookableDate.slice(0, 7)) {
+                const changed = await changeMonth(1);
+                if (!changed) return;
+                firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
+            }
             if (firstOpen) await selectDate(firstOpen, false, true);
             else resetSlotsPanel();
         }
@@ -231,15 +270,18 @@
     /* ---------------- calendar ---------------- */
     async function loadMonth() {
         const reqId = ++state.monthRequest;
+        const purpose = state.consultationPurpose || 'system';
         const key = monthKey(state.viewYear, state.viewMonth);
         renderCalendar(true);
         try {
-            const data = await api(`/api/month?month=${key}&purpose=${state.consultationPurpose}`);
+            const data = await api(`/api/month?month=${key}&purpose=${purpose}`);
             if (reqId !== state.monthRequest) return false;
             state.monthDays = data.days;
+            state.loadedMonthKey = `${key}#${purpose}`;
         } catch (err) {
             if (reqId !== state.monthRequest) return false;
             state.monthDays = {};
+            state.loadedMonthKey = null;
             toast(err.message, 'error');
         }
         renderCalendar(false);
@@ -318,7 +360,8 @@
 
     /* ---------------- slots ---------------- */
     async function selectDate(ds, fromUser = false, force = false) {
-        const key = `${ds}#${state.consultationPurpose}`;
+        const purpose = state.consultationPurpose || 'system';
+        const key = `${ds}#${purpose}`;
         // Ignore duplicate / double clicks on the date that is already loaded or currently loading
         if (!force && ds === state.selectedDate && (state.loadingSlotsKey === key || state.loadedSlotsKey === key)) {
             return;
@@ -347,7 +390,7 @@
 
         const reqId = ++state.slotsRequest;
         try {
-            const data = await api(`/api/slots?date=${ds}&purpose=${state.consultationPurpose}`);
+            const data = await api(`/api/slots?date=${ds}&purpose=${purpose}`);
             if (reqId !== state.slotsRequest) return;
             state.loadingSlotsKey = null;
             state.loadedSlotsKey = key;
@@ -397,7 +440,7 @@
         next.textContent = 'Next →';
         next.addEventListener('click', (e) => {
             e.stopPropagation();
-            goToStep(2);
+            goToStep(3);
         });
         return next;
     }
@@ -473,9 +516,9 @@
     }
 
     function selectSlot(slot, btn) {
-        // If already selected, clicking/double-clicking advances directly to Step 2
+        // If already selected, clicking/double-clicking advances directly to Step 3 (Details)
         if (btn.classList.contains('selected')) {
-            goToStep(2);
+            goToStep(3);
             return;
         }
 
@@ -511,8 +554,12 @@
         if (state.submitting) return;
         setFormError('');
 
-        if (!state.selectedDate || !state.selectedSlot) {
+        if (!state.consultationPurpose) {
             goToStep(1);
+            return;
+        }
+        if (!state.selectedDate || !state.selectedSlot) {
+            goToStep(2);
             return;
         }
 
@@ -588,7 +635,7 @@
                 const date = state.selectedDate;
                 state.selectedSlot = null;
                 updateSelectionBox();
-                goToStep(1);
+                goToStep(2);
                 loadMonth().then((ok) => {
                     if (ok && date) selectDate(date, false, true);
                 });
@@ -619,7 +666,7 @@
         $('#cLocation').textContent = state.config.location;
         $('#cReason').textContent = b.reason;
         $('#cRef').textContent = b.reference;
-        goToStep(3);
+        goToStep(4);
     }
 
     function resetBooking() {
@@ -627,20 +674,15 @@
         $('#reasonCount').textContent = '0';
         resetMembers();
         setBookingType('individual');
-        // Sync consultationPurpose radio with current state.consultationPurpose
-        const purposeRadio = document.querySelector(`input[name="consultationPurpose"][value="${state.consultationPurpose}"]`);
-        if (purposeRadio) purposeRadio.checked = true;
         setFormError('');
+        state.consultationPurpose = null;
         state.selectedSlot = null;
+        state.loadedMonthKey = null;
         state.loadedSlotsKey = null;
-        const date = state.selectedDate;
+        document.querySelectorAll('.type-choice-card').forEach((card) => card.classList.remove('selected'));
+        $('#durationMeta').textContent = '1 hr 20 min or 6 min';
         updateSelectionBox();
         goToStep(1);
-        loadMonth().then((ok) => {
-            if (!ok) return;
-            if (date && state.monthDays[date] && state.monthDays[date].open > 0) selectDate(date, false, true);
-            else resetSlotsPanel();
-        });
     }
 
     function resetSlotsPanel() {
@@ -666,9 +708,11 @@
         $('#year').textContent = new Date().getFullYear();
 
         resetMembers();
-        document.querySelectorAll('input[name="consultationPurpose"]').forEach((radio) => {
-            radio.addEventListener('change', (e) => setConsultationPurpose(e.target.value));
+        document.querySelectorAll('.type-choice-card').forEach((card) => {
+            card.addEventListener('click', () => chooseConsultationPurpose(card.dataset.purpose));
         });
+        $('#changePurposeBtn').addEventListener('click', () => goToStep(1));
+
         document.querySelectorAll('input[name="bookingType"]').forEach((radio) => {
             radio.addEventListener('change', (e) => setBookingType(e.target.value));
         });
@@ -676,14 +720,20 @@
 
         $('#prevMonth').addEventListener('click', () => changeMonth(-1));
         $('#nextMonth').addEventListener('click', () => changeMonth(1));
-        $('#backBtn').addEventListener('click', () => goToStep(1));
-        const step1Indicator = document.querySelector('.step[data-step="1"]');
-        if (step1Indicator) {
-            step1Indicator.style.cursor = 'pointer';
-            step1Indicator.addEventListener('click', () => {
-                if (state.currentStep === 2) goToStep(1);
-            });
-        }
+        $('#backBtn').addEventListener('click', () => goToStep(2));
+
+        document.querySelectorAll('.step').forEach((stepEl) => {
+            const targetStep = Number(stepEl.dataset.step);
+            if (targetStep === 1 || targetStep === 2) {
+                stepEl.style.cursor = 'pointer';
+                stepEl.addEventListener('click', () => {
+                    if (state.currentStep < 4 && targetStep < state.currentStep) {
+                        goToStep(targetStep);
+                    }
+                });
+            }
+        });
+
         $('#bookingForm').addEventListener('submit', submitBooking);
         $('#bookAnother').addEventListener('click', resetBooking);
         $('#reasonInput').addEventListener('input', (e) => {
@@ -700,7 +750,6 @@
         const c = state.config;
         $('#location').textContent = c.location;
         $('#timezone').textContent = c.timezone.replace(/_/g, ' ');
-        $('#durationMeta').textContent = '1 hr 20 min (System / Software / Web App)';
         if (c.lastBookableDate) {
             $('#deadlineMeta').textContent = `Bookings until ${formatShortDate(c.lastBookableDate)}`;
         }
@@ -708,17 +757,6 @@
         const [y, m] = c.today.split('-').map(Number);
         state.viewYear = y;
         state.viewMonth = m - 1;
-        const ok = await loadMonth();
-        if (!ok || state.selectedDate) return;
-
-        // Auto-select the first available day (moving to next month if needed)
-        let firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
-        if (!firstOpen && monthKey(state.viewYear, state.viewMonth) < c.lastBookableDate.slice(0, 7)) {
-            const changed = await changeMonth(1);
-            if (!changed || state.selectedDate) return;
-            firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
-        }
-        if (firstOpen && !state.selectedDate) selectDate(firstOpen);
     }
 
     init();
