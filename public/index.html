@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Book a Consultation</title>
+    <meta name="description" content="Schedule a one-hour consultation with your teacher." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+    <div class="bg-blobs" aria-hidden="true">
+        <span class="blob blob-1"></span>
+        <span class="blob blob-2"></span>
+        <span class="blob blob-3"></span>
+    </div>
+
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand-mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
+            </span>
+            <span>Consult<span class="accent">Hub</span></span>
+        </a>
+        <a class="topbar-link" href="/admin.html">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Teacher login
+        </a>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <span class="pill"><span class="pulse-dot"></span> Now accepting bookings</span>
+            <h1>Book a <span class="gradient-text">consultation</span></h1>
+            <p>Pick a date and an open time slot, tell me what you'd like to talk about, and you're all set. Each session is <strong>1 hour</strong>.</p>
+        </section>
+
+        <section class="scheduler card" id="scheduler">
+            <!-- Left: meeting info -->
+            <aside class="info-panel">
+                <div class="avatar" id="avatar">T</div>
+                <p class="muted small" id="teacherName">Loading…</p>
+                <h2 id="meetingTitle">Student Consultation</h2>
+
+                <ul class="meta">
+                    <li>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                        1 hour
+                    </li>
+                    <li>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+                        <span id="location">—</span>
+                    </li>
+                    <li>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                        <span id="timezone">—</span>
+                    </li>
+                </ul>
+
+                <div class="selection hidden" id="selectionBox">
+                    <p class="selection-label">Your selection</p>
+                    <p class="selection-date" id="selectionDate"></p>
+                    <p class="selection-time" id="selectionTime"></p>
+                </div>
+
+                <div class="steps">
+                    <div class="step active" data-step="1"><span>1</span> Choose a time</div>
+                    <div class="step" data-step="2"><span>2</span> Your details</div>
+                    <div class="step" data-step="3"><span>3</span> Confirmed</div>
+                </div>
+            </aside>
+
+            <!-- Step 1: date & time -->
+            <div class="panel step-panel" id="step1">
+                <div class="calendar">
+                    <div class="calendar-head">
+                        <h3 id="monthLabel">—</h3>
+                        <div class="calendar-nav">
+                            <button class="icon-btn" id="prevMonth" aria-label="Previous month">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                            </button>
+                            <button class="icon-btn" id="nextMonth" aria-label="Next month">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="weekdays">
+                        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                    </div>
+                    <div class="days" id="days"></div>
+                    <div class="legend">
+                        <span><i class="dot dot-open"></i> Available</span>
+                        <span><i class="dot dot-full"></i> Fully booked</span>
+                    </div>
+                </div>
+
+                <div class="slots">
+                    <div class="slots-head">
+                        <h3 id="slotsTitle">Select a date</h3>
+                        <p class="muted small" id="slotsSubtitle">Available times will appear here.</p>
+                    </div>
+                    <div class="slot-list" id="slotList">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                            <p>Pick a highlighted day on the calendar to see open time slots.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: details form -->
+            <div class="panel step-panel hidden" id="step2">
+                <form class="details-form" id="bookingForm" novalidate>
+                    <button type="button" class="back-btn" id="backBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        Back
+                    </button>
+                    <h3>Enter your details</h3>
+                    <p class="muted small">Let me know who you are and what you'd like to discuss.</p>
+
+                    <label class="field">
+                        <span>Full name</span>
+                        <input type="text" id="nameInput" maxlength="100" placeholder="e.g. Juan Dela Cruz" autocomplete="name" required />
+                    </label>
+
+                    <label class="field">
+                        <span>Reason for the meeting</span>
+                        <textarea id="reasonInput" rows="5" maxlength="1000" placeholder="e.g. I'd like to ask about my project proposal and the grading criteria." required></textarea>
+                        <small class="counter"><span id="reasonCount">0</span>/1000</small>
+                    </label>
+
+                    <div class="form-error hidden" id="formError"></div>
+
+                    <button type="submit" class="btn btn-primary btn-block" id="submitBtn">
+                        <span class="btn-label">Confirm booking</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Step 3: confirmation -->
+            <div class="panel step-panel hidden" id="step3">
+                <div class="success">
+                    <div class="success-icon">
+                        <svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24" fill="none"/><path fill="none" d="m15 27 7 7 15-15"/></svg>
+                    </div>
+                    <h3>You're booked!</h3>
+                    <p class="muted">Your consultation has been scheduled. Please be on time.</p>
+
+                    <div class="ticket">
+                        <div class="ticket-row"><span>Name</span><strong id="cName"></strong></div>
+                        <div class="ticket-row"><span>Date</span><strong id="cDate"></strong></div>
+                        <div class="ticket-row"><span>Time</span><strong id="cTime"></strong></div>
+                        <div class="ticket-row"><span>Location</span><strong id="cLocation"></strong></div>
+                        <div class="ticket-row ticket-reason"><span>Reason</span><p id="cReason"></p></div>
+                        <div class="ticket-ref">Reference <code id="cRef"></code></div>
+                    </div>
+
+                    <p class="muted small">Take a screenshot of this confirmation for your records.</p>
+                    <button class="btn btn-ghost" id="bookAnother">Book another time</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>© <span id="year"></span> ConsultHub · Student consultation scheduling</p>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
+
