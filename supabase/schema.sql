@@ -2,15 +2,18 @@
 -- (Safe to run again: it also upgrades a table created by an earlier version.)
 
 create table if not exists public.appointments (
-    id               uuid primary key default gen_random_uuid(),
-    student_name     text        not null check (char_length(student_name) between 2 and 100),
-    reason           text        not null check (char_length(reason) between 5 and 1000),
-    appointment_date date        not null,
-    start_hour       smallint    not null check (start_hour between 0 and 23),
-    created_at       timestamptz not null default now(),
+    id                uuid primary key default gen_random_uuid(),
+    student_name      text        not null check (char_length(student_name) between 2 and 100),
+    reason            text        not null check (char_length(reason) between 5 and 1000),
+    appointment_date  date        not null,
+    start_hour        smallint    not null,
+    start_minute      smallint    not null check (start_minute between 0 and 1439),
+    duration_minutes  smallint    not null default 80 check (duration_minutes in (6, 80)),
+    consultation_type text        not null default 'system' check (consultation_type in ('system', 'other')),
+    created_at        timestamptz not null default now(),
 
-    -- A time slot can only be booked once (prevents double booking)
-    constraint appointments_slot_unique unique (appointment_date, start_hour)
+    -- A specific start minute on a date can only be booked once
+    constraint appointments_date_start_minute_unique unique (appointment_date, start_minute)
 );
 
 -- Group bookings:
@@ -21,6 +24,29 @@ alter table public.appointments add column if not exists team_name text
     check (team_name is null or char_length(team_name) between 2 and 100);
 alter table public.appointments add column if not exists members text[] not null default '{}'
     check (cardinality(members) <= 10);
+
+-- Upgrade path for tables created with the older hourly schema:
+alter table public.appointments add column if not exists start_minute smallint;
+alter table public.appointments add column if not exists duration_minutes smallint not null default 80;
+alter table public.appointments add column if not exists consultation_type text not null default 'system';
+
+update public.appointments
+   set start_minute = start_hour * 60
+ where start_minute is null;
+
+alter table public.appointments alter column start_minute set not null;
+alter table public.appointments drop constraint if exists appointments_slot_unique;
+alter table public.appointments drop constraint if exists appointments_start_hour_check;
+
+do $$
+begin
+    if not exists (
+        select 1 from pg_constraint where conname = 'appointments_date_start_minute_unique'
+    ) then
+        alter table public.appointments
+            add constraint appointments_date_start_minute_unique unique (appointment_date, start_minute);
+    end if;
+end $$;
 
 create index if not exists appointments_date_idx on public.appointments (appointment_date);
 

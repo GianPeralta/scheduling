@@ -9,6 +9,7 @@
         bookings: [],
         today: '',
         currentHour: 0,
+        currentMinute: 0,
         tab: 'upcoming',
         search: '',
     };
@@ -104,9 +105,12 @@
     async function loadBookings() {
         try {
             const data = await api('/api/admin/bookings');
-            state.bookings = data.bookings.sort((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour);
+            state.bookings = data.bookings.sort(
+                (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? a.hour * 60) - (b.startMinute ?? b.hour * 60)
+            );
             state.today = data.today;
             state.currentHour = data.currentHour;
+            state.currentMinute = data.currentMinute ?? data.currentHour * 60;
             $('#todayLabel').textContent = `Today is ${longDate(data.today)}`;
             render();
         } catch (err) {
@@ -119,8 +123,15 @@
         }
     }
 
-    const isPast = (b) => b.date < state.today || (b.date === state.today && b.hour + 1 <= state.currentHour);
-    const isNow = (b) => b.date === state.today && b.hour === state.currentHour;
+    const isPast = (b) => {
+        const endMin = b.endMinute ?? (b.hour + 1) * 60;
+        return b.date < state.today || (b.date === state.today && endMin <= state.currentMinute);
+    };
+    const isNow = (b) => {
+        const startMin = b.startMinute ?? b.hour * 60;
+        const endMin = b.endMinute ?? (b.hour + 1) * 60;
+        return b.date === state.today && state.currentMinute >= startMin && state.currentMinute < endMin;
+    };
 
     async function cancelBooking(b, btn) {
         const who = b.type === 'group' && b.teamName
@@ -204,6 +215,11 @@
                 const body = el('div', 'booking-body');
                 const header = el('div', 'booking-name');
                 header.appendChild(el('span', 'booking-title', isGroup ? b.teamName : b.name));
+                if (b.consultationType === 'other') {
+                    header.appendChild(el('span', 'badge sky', 'Other · 6m'));
+                } else {
+                    header.appendChild(el('span', 'badge teal', 'System / App · 1h 20m'));
+                }
                 if (isGroup) {
                     header.appendChild(el('span', 'badge amber', `Group · ${b.members.length}`));
                 }

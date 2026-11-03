@@ -11,7 +11,8 @@
         viewMonth: 0, // 0-11
         monthDays: {}, // { 'YYYY-MM-DD': { bookable, open } }
         selectedDate: null,
-        selectedSlot: null, // { hour, label, endLabel }
+        selectedSlot: null, // { startMinute, endMinute, durationMinutes, label, endLabel }
+        consultationPurpose: 'system', // 'system' (1h 20m) | 'other' (6m)
         bookingType: 'individual', // 'individual' | 'group'
         monthRequest: 0,
         slotsRequest: 0,
@@ -31,6 +32,18 @@
         return utcDate(str).toLocaleDateString('en-US', {
             weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
         });
+    }
+
+    function formatShortDate(str) {
+        return utcDate(str).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+        });
+    }
+
+    function purposeSummary(purpose = state.consultationPurpose) {
+        return purpose === 'other'
+            ? 'Other Consultation · 6 min'
+            : 'System / Software / Web App · 1 hr 20 min';
     }
 
     async function api(url, options = {}) {
@@ -82,11 +95,47 @@
     function updateSelectionBox() {
         const box = $('#selectionBox');
         if (state.selectedDate && state.selectedSlot) {
+            $('#selectionPurpose').textContent = purposeSummary();
             $('#selectionDate').textContent = formatLongDate(state.selectedDate);
             $('#selectionTime').textContent = `${state.selectedSlot.label} – ${state.selectedSlot.endLabel}`;
             box.classList.remove('hidden');
         } else {
             box.classList.add('hidden');
+        }
+    }
+
+    function updateReasonPlaceholder() {
+        const isGroup = state.bookingType === 'group';
+        const isSystem = state.consultationPurpose === 'system';
+        if (isSystem) {
+            $('#reasonInput').placeholder = isGroup
+                ? "e.g. We'd like to consult about the system/web app our group built and review its features."
+                : "e.g. I'd like to consult about the system/software/web app I made.";
+        } else {
+            $('#reasonInput').placeholder = isGroup
+                ? "e.g. Quick group check-in regarding our topic and requirements."
+                : "e.g. Quick question about project requirements or grading criteria.";
+        }
+    }
+
+    async function setConsultationPurpose(purpose) {
+        state.consultationPurpose = purpose === 'other' ? 'other' : 'system';
+        state.selectedSlot = null;
+        updateSelectionBox();
+        updateReasonPlaceholder();
+
+        $('#durationMeta').textContent = state.consultationPurpose === 'other'
+            ? '6 minutes (Other consultation)'
+            : '1 hr 20 min (System / Software / Web App)';
+
+        const currentSelectedDate = state.selectedDate;
+        await loadMonth();
+        if (currentSelectedDate && state.monthDays[currentSelectedDate]?.bookable) {
+            await selectDate(currentSelectedDate);
+        } else {
+            const firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
+            if (firstOpen) await selectDate(firstOpen);
+            else resetSlotsPanel();
         }
     }
 
@@ -153,9 +202,7 @@
         const isGroup = state.bookingType === 'group';
         $('#individualFields').classList.toggle('hidden', isGroup);
         $('#groupFields').classList.toggle('hidden', !isGroup);
-        $('#reasonInput').placeholder = isGroup
-            ? "e.g. We'd like to review our capstone project architecture and milestones."
-            : "e.g. I'd like to ask about my project proposal and the grading criteria.";
+        updateReasonPlaceholder();
 
         if (isGroup) {
             const firstMember = getMemberInputs()[0];
@@ -173,7 +220,7 @@
         const key = monthKey(state.viewYear, state.viewMonth);
         renderCalendar(true);
         try {
-            const data = await api(`/api/month?month=${key}`);
+            const data = await api(`/api/month?month=${key}&purpose=${state.consultationPurpose}`);
             if (reqId !== state.monthRequest) return;
             state.monthDays = data.days;
         } catch (err) {
@@ -259,11 +306,11 @@
         $('#slotsTitle').textContent = formatLongDate(ds);
         $('#slotsSubtitle').textContent = 'Loading available times…';
         const list = $('#slotList');
-        list.innerHTML = '<div class="slot skeleton"></div>'.repeat(5);
+        list.innerHTML = '<div class="slot skeleton"></div>'.repeat(4);
 
         const reqId = ++state.slotsRequest;
         try {
-            const data = await api(`/api/slots?date=${ds}`);
+            const data = await api(`/api/slots?date=${ds}&purpose=${state.consultationPurpose}`);
             if (reqId !== state.slotsRequest) return;
             renderSlots(data.slots);
             if (fromUser && window.innerWidth <= 680) {
@@ -281,8 +328,9 @@
         const list = $('#slotList');
         list.innerHTML = '';
         const openCount = slots.filter((s) => s.available).length;
+        const durText = state.consultationPurpose === 'other' ? '6 minutes each' : '1 hr 20 min each';
         $('#slotsSubtitle').textContent = openCount
-            ? `${openCount} of ${slots.length} time slots available · 1 hour each`
+            ? `${openCount} of ${slots.length} slots available · ${durText}`
             : 'No more open slots on this day.';
 
         if (!slots.length) {
@@ -290,11 +338,20 @@
             return;
         }
 
+        let lastWindow = null;
         slots.forEach((slot, i) => {
+            if (slot.windowLabel && slot.windowLabel !== lastWindow) {
+                lastWindow = slot.windowLabel;
+                const hdr = document.createElement('div');
+                hdr.className = 'slot-window-header';
+                hdr.textContent = `Window: ${slot.windowLabel}`;
+                list.appendChild(hdr);
+            }
+
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'slot';
-            btn.style.animationDelay = `${i * 30}ms`;
+            btn.style.animationDelay = `${Math.min(i, 15) * 20}ms`;
 
             const time = document.createElement('span');
             time.className = 'slot-time';
@@ -394,11 +451,12 @@
             }
             payload = {
                 type: 'group',
+                consultationType: state.consultationPurpose,
                 teamName,
                 members,
                 reason,
                 date: state.selectedDate,
-                hour: state.selectedSlot.hour,
+                startMinute: state.selectedSlot.startMinute,
             };
         } else {
             const name = $('#nameInput').value.trim();
@@ -409,10 +467,11 @@
             }
             payload = {
                 type: 'individual',
+                consultationType: state.consultationPurpose,
                 name,
                 reason,
                 date: state.selectedDate,
-                hour: state.selectedSlot.hour,
+                startMinute: state.selectedSlot.startMinute,
             };
         }
 
@@ -447,6 +506,9 @@
 
     function showConfirmation(b) {
         const isGroup = b.type === 'group' && b.teamName;
+        $('#cPurpose').textContent = b.consultationType === 'other'
+            ? `Other Consultation (${b.durationLabel || '6 min'})`
+            : `System / Software / Web App (${b.durationLabel || '1 hr 20 min'})`;
         $('#cTeamRow').classList.toggle('hidden', !isGroup);
         if (isGroup) {
             $('#cTeam').textContent = b.teamName;
@@ -496,6 +558,9 @@
         $('#year').textContent = new Date().getFullYear();
 
         resetMembers();
+        document.querySelectorAll('input[name="consultationPurpose"]').forEach((radio) => {
+            radio.addEventListener('change', (e) => setConsultationPurpose(e.target.value));
+        });
         document.querySelectorAll('input[name="bookingType"]').forEach((radio) => {
             radio.addEventListener('change', (e) => setBookingType(e.target.value));
         });
@@ -520,6 +585,10 @@
         const c = state.config;
         $('#location').textContent = c.location;
         $('#timezone').textContent = c.timezone.replace(/_/g, ' ');
+        $('#durationMeta').textContent = '1 hr 20 min (System / Software / Web App)';
+        if (c.lastBookableDate) {
+            $('#deadlineMeta').textContent = `Bookings until ${formatShortDate(c.lastBookableDate)}`;
+        }
 
         const [y, m] = c.today.split('-').map(Number);
         state.viewYear = y;

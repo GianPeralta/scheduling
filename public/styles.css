@@ -291,6 +291,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     color: var(--primary);
     margin-bottom: 4px;
 }
+.selection-purpose { font-weight: 700; font-size: 0.84rem; color: var(--primary); margin-bottom: 2px; }
 .selection-date { font-weight: 700; font-size: 0.94rem; }
 .selection-time { color: var(--text-soft); font-size: 0.9rem; }
 
@@ -348,7 +349,95 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 #step1 {
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-    gap: 32px;
+    gap: 24px 32px;
+    align-content: start;
+}
+
+/* ---------- consultation purpose selector ---------- */
+.purpose-bar {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 10px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+}
+.purpose-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+}
+.purpose-title {
+    font-size: 0.96rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.purpose-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.purpose-card {
+    position: relative;
+    cursor: pointer;
+    display: block;
+}
+.purpose-card input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+.purpose-card-body {
+    height: 100%;
+    padding: 13px 16px;
+    border-radius: var(--radius);
+    border: 1.5px solid var(--border);
+    background-color: var(--surface-subtle);
+    transition: all 0.2s var(--ease);
+    display: grid;
+    gap: 4px;
+}
+.purpose-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.purpose-card-top strong {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.purpose-card-body p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    line-height: 1.4;
+}
+.purpose-card:hover .purpose-card-body {
+    border-color: var(--primary-border);
+    background-color: var(--surface);
+}
+.purpose-card input:checked + .purpose-card-body {
+    border-color: var(--primary);
+    background-color: var(--primary-soft);
+    box-shadow: 0 0 0 3px var(--primary-tint);
+}
+.purpose-card input:focus-visible + .purpose-card-body {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+
+.slot-window-header {
+    font-size: 0.73rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    padding: 8px 4px 2px;
+}
+.slot-window-header:first-child {
+    padding-top: 0;
 }
 
 /* ---------- calendar ---------- */
@@ -1239,7 +1328,11 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     .panel { padding: 18px; }
     #step1 {
         grid-template-columns: 1fr;
-        gap: 22px;
+        gap: 20px;
+    }
+    .purpose-cards {
+        grid-template-columns: 1fr;
+        gap: 8px;
     }
 
     /* Touch-friendly calendar */

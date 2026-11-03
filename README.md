@@ -1,23 +1,31 @@
 # Arnemie Gayyed — Student Consultation Scheduler
 
-A personal scheduling website for **Arnemie Gayyed** where students book a **1‑hour consultation** either **individually** or **as a group/team**.
+A personal scheduling website for **Arnemie Gayyed** where students book a consultation either **individually** or **as a group/team**.
 Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Vercel.
 
 ## Features
 
 **Students (`/`)**
-- Interactive calendar showing which days have open slots (green dot) or are fully booked (red dot)
-- 1‑hour time slots for the chosen day; taken or past slots are disabled
+- **Two consultation types**:
+  - **System / Software / Web App** (`1 hr 20 min`): For students or groups consulting about the system, software, or web app they made.
+  - **Other Consultation** (`6 minutes`): Quick check-in for any other questions or concerns.
+- **Weekly schedule (Monday – Saturday)** until **December 10**:
+  - **Monday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM, 6:10 PM – 7:30 PM
+  - **Tuesday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 7:30 PM
+  - **Wednesday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM, 6:10 PM – 7:30 PM
+  - **Thursday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 7:30 PM
+  - **Friday**: 7:30 AM – 8:50 AM, 11:30 AM – 12:50 PM, 4:50 PM – 7:30 PM
+  - **Saturday**: 8:50 AM – 12:50 PM, 2:10 PM – 7:30 PM
+- Automatic overlap prevention between 1 hr 20 min and 6-minute slots
 - **Individual or Group booking**:
   - *Just me*: enter full name + reason for the meeting
   - *Group / team*: enter team name, 2–10 member names, + reason for the meeting
 - Confirmation ticket with a unique booking reference
-- Double booking is prevented by a database unique constraint on `(appointment_date, start_hour)`
 
 **Arnemie's Dashboard (`/admin.html`)**
 - Password‑protected (`ADMIN_PASSWORD`)
 - Summary stats: today, next 7 days, all upcoming
-- Upcoming / Past tabs grouped by date, showing individual names or team names + member chips
+- Upcoming / Past tabs grouped by date, showing consultation duration badge (`System / App · 1h 20m` or `Other · 6m`), individual names or team names + member chips
 - Instant search across student names, team names, group members, reasons, and reference codes
 - One‑click cancel to free up a time slot again
 
@@ -34,35 +42,10 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
    | `ADMIN_PASSWORD` | ✅ | Password for Arnemie's dashboard |
    | `MEETING_LOCATION` | | Default `Faculty Office` |
    | `TIMEZONE` | | Default `Asia/Manila` |
-   | `START_HOUR` / `END_HOUR` | | Office hours, 24h clock. Default `9` / `17` |
-   | `BREAK_HOURS` | | Hours without slots, comma separated. Default `12` (lunch) |
-   | `WORKING_DAYS` | | `0`=Sun … `6`=Sat. Default `1,2,3,4,5` |
-   | `MAX_DAYS_AHEAD` | | How far ahead students may book. Default `30` |
+   | `BOOKING_END_DATE` | | Default `YYYY-12-10` (December 10) |
 
 3. **Run locally**
    ```bash
    npm install
    npm run dev        # loads .env, restarts on changes -> http://localhost:3000
    ```
-
-## Project structure
-
-```
-index.js               Express server + REST API
-public/
-  index.html, app.js   Student booking page (individual & group)
-  admin.html, admin.js Arnemie's dashboard
-  styles.css           Clean modern solid-color UI
-supabase/schema.sql    Database table & group columns
-```
-
-## API
-
-| Method | Route | Description |
-| --- | --- | --- |
-| GET | `/api/config` | Teacher info, location, today's date, booking window |
-| GET | `/api/month?month=YYYY-MM` | Open slot count per day |
-| GET | `/api/slots?date=YYYY-MM-DD` | Slots for a day |
-| POST | `/api/bookings` | Individual (`{ type: 'individual', name, reason, date, hour }`) or Group (`{ type: 'group', teamName, members, reason, date, hour }`) |
-| GET | `/api/admin/bookings` | All bookings (header `x-admin-password`) |
-| DELETE | `/api/admin/bookings/:id` | Cancel a booking (header `x-admin-password`) |

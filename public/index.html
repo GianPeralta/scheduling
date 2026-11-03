@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Book a Consultation · Arnemie Gayyed</title>
-    <meta name="description" content="Schedule a one-hour consultation with Arnemie Gayyed — individually or as a group." />
+    <title>Book a Consultation</title>
+    <meta name="description" content="Schedule a consultation with Arnemie Gayyed — individually or as a group." />
     <meta name="theme-color" content="#0f766e" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -15,7 +15,6 @@
 </head>
 <body>
     <header class="topbar">
-      
         <a class="topbar-link" href="/admin.html">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <span>Dashboard</span>
@@ -23,8 +22,6 @@
     </header>
 
     <main class="container">
- 
-
         <section class="scheduler card" id="scheduler">
             <!-- Left: meeting info -->
             <aside class="info-panel">
@@ -39,11 +36,15 @@
                 <ul class="meta">
                     <li>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                        1 hour
+                        <span id="durationMeta">1 hr 20 min (System/App) · 6 min (Other)</span>
                     </li>
                     <li>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                        Individual or group
+                        <span>Individual or group</span>
+                    </li>
+                    <li>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                        <span id="deadlineMeta">Bookings until Dec 10</span>
                     </li>
                     <li>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>
@@ -57,6 +58,7 @@
 
                 <div class="selection hidden" id="selectionBox">
                     <p class="selection-label">Your selection</p>
+                    <p class="selection-purpose" id="selectionPurpose"></p>
                     <p class="selection-date" id="selectionDate"></p>
                     <p class="selection-time" id="selectionTime"></p>
                 </div>
@@ -68,8 +70,37 @@
                 </div>
             </aside>
 
-            <!-- Step 1: date & time -->
+            <!-- Step 1: purpose, date & time -->
             <div class="panel step-panel" id="step1">
+                <div class="purpose-bar">
+                    <div class="purpose-head">
+                        <span class="purpose-title">What is your consultation about?</span>
+                        <span class="muted small">Duration adjusts automatically based on your consultation topic.</span>
+                    </div>
+                    <div class="purpose-cards" role="radiogroup" aria-label="Consultation purpose">
+                        <label class="purpose-card">
+                            <input type="radio" name="consultationPurpose" value="system" checked />
+                            <div class="purpose-card-body">
+                                <div class="purpose-card-top">
+                                    <strong>System / Software / Web App</strong>
+                                    <span class="badge teal">1 hr 20 min</span>
+                                </div>
+                                <p>Consult about the system, software, or web app you/your group made.</p>
+                            </div>
+                        </label>
+                        <label class="purpose-card">
+                            <input type="radio" name="consultationPurpose" value="other" />
+                            <div class="purpose-card-body">
+                                <div class="purpose-card-top">
+                                    <strong>Other Consultation</strong>
+                                    <span class="badge sky">6 minutes</span>
+                                </div>
+                                <p>Short check-in or consultation for any other topic or concern.</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="calendar">
                     <div class="calendar-head">
                         <h3 id="monthLabel">—</h3>
@@ -163,7 +194,7 @@
 
                     <label class="field">
                         <span>Reason for the meeting</span>
-                        <textarea id="reasonInput" rows="4" maxlength="1000" placeholder="e.g. We'd like to ask about our project proposal and the grading criteria."></textarea>
+                        <textarea id="reasonInput" rows="4" maxlength="1000" placeholder="e.g. We'd like to consult about the system/web app we built and get feedback."></textarea>
                         <small class="counter"><span id="reasonCount">0</span>/1000</small>
                     </label>
 
@@ -186,6 +217,7 @@
                     <p class="muted">Your consultation with Arnemie Gayyed is scheduled. Please be on time.</p>
 
                     <div class="ticket">
+                        <div class="ticket-row"><span>Consultation</span><strong id="cPurpose"></strong></div>
                         <div class="ticket-row hidden" id="cTeamRow"><span>Team</span><strong id="cTeam"></strong></div>
                         <div class="ticket-row"><span id="cNameLabel">Name</span><strong id="cName"></strong></div>
                         <div class="ticket-row"><span>Date</span><strong id="cDate"></strong></div>
@@ -203,7 +235,7 @@
     </main>
 
     <footer class="footer">
-        <p>© <span id="year"></span> Arnemie Gayyed · Consultation booking</p>
+        <p>© <span id="year"></span> Consultation booking</p>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
