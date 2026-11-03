@@ -337,6 +337,11 @@
 
         $('#slotsTitle').textContent = formatLongDate(ds);
         $('#slotsSubtitle').textContent = 'Loading available times…';
+        const tabsEl = $('#windowTabs');
+        if (tabsEl) {
+            tabsEl.innerHTML = '';
+            tabsEl.classList.add('hidden');
+        }
         const list = $('#slotList');
         list.innerHTML = '<div class="slot skeleton"></div>'.repeat(4);
 
@@ -399,7 +404,13 @@
 
     function renderSlots(slots) {
         const list = $('#slotList');
+        const tabsEl = $('#windowTabs');
         list.innerHTML = '';
+        if (tabsEl) {
+            tabsEl.innerHTML = '';
+            tabsEl.classList.add('hidden');
+        }
+
         const openCount = slots.filter((s) => s.available).length;
         const durText = state.consultationPurpose === 'other' ? '6 minutes each' : '1 hr 20 min each';
         $('#slotsSubtitle').textContent = openCount
@@ -411,7 +422,7 @@
             return;
         }
 
-        // For 6-minute consultations, group slots by window tabs so the list stays compact and easy to browse
+        // For 6-minute consultations, group slots by 1h 20m block tabs pinned above the scroll list
         if (state.consultationPurpose === 'other') {
             const windows = [];
             const byWindow = new Map();
@@ -424,14 +435,13 @@
                 byWindow.get(w).push(s);
             });
 
-            if (windows.length > 1) {
+            if (windows.length > 1 && tabsEl) {
                 if (!state.activeWindowLabel || !byWindow.has(state.activeWindowLabel)) {
                     state.activeWindowLabel =
                         windows.find((w) => byWindow.get(w).some((s) => s.available)) || windows[0];
                 }
 
-                const tabs = document.createElement('div');
-                tabs.className = 'window-tabs';
+                tabsEl.classList.remove('hidden');
                 windows.forEach((w) => {
                     const winSlots = byWindow.get(w);
                     const winOpen = winSlots.filter((s) => s.available).length;
@@ -439,15 +449,16 @@
                     tab.type = 'button';
                     tab.className = 'window-tab' + (w === state.activeWindowLabel ? ' active' : '');
                     tab.textContent = `${w} (${winOpen})`;
+                    tab.title = `${w} · ${winOpen} open`;
                     tab.disabled = winOpen === 0;
                     tab.addEventListener('click', () => {
                         if (state.activeWindowLabel === w) return;
                         state.activeWindowLabel = w;
                         renderSlots(slots);
+                        list.scrollTop = 0;
                     });
-                    tabs.appendChild(tab);
+                    tabsEl.appendChild(tab);
                 });
-                list.appendChild(tabs);
 
                 const activeSlots = byWindow.get(state.activeWindowLabel) || [];
                 activeSlots.forEach((slot, i) => list.appendChild(createSlotButton(slot, i)));
@@ -636,6 +647,11 @@
         state.selectedDate = null;
         state.loadingSlotsKey = null;
         state.loadedSlotsKey = null;
+        const tabsEl = $('#windowTabs');
+        if (tabsEl) {
+            tabsEl.innerHTML = '';
+            tabsEl.classList.add('hidden');
+        }
         $('#slotsTitle').textContent = 'Select a date';
         $('#slotsSubtitle').textContent = 'Available times will appear here.';
         $('#slotList').innerHTML = `

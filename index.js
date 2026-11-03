@@ -174,6 +174,7 @@ function generateDaySlots(dateStr, purpose = 'system') {
         // Step through 1h 20m (80-minute) blocks inside each window
         for (let blockStart = winStart; blockStart + SYSTEM_DURATION <= winEnd; blockStart += SYSTEM_DURATION) {
             const blockEnd = blockStart + SYSTEM_DURATION;
+            const blockLabel = `${formatMinute(blockStart)} – ${formatMinute(blockEnd)}`;
             if (normalized === 'system') {
                 slots.push({
                     startMinute: blockStart,
@@ -181,7 +182,7 @@ function generateDaySlots(dateStr, purpose = 'system') {
                     durationMinutes: SYSTEM_DURATION,
                     label: formatMinute(blockStart),
                     endLabel: formatMinute(blockEnd),
-                    windowLabel,
+                    windowLabel: blockLabel,
                 });
             } else {
                 // Generate 6-minute slots within each 80-minute block so a 6-minute booking
@@ -193,7 +194,7 @@ function generateDaySlots(dateStr, purpose = 'system') {
                         durationMinutes: OTHER_DURATION,
                         label: formatMinute(m),
                         endLabel: formatMinute(m + OTHER_DURATION),
-                        windowLabel,
+                        windowLabel: blockLabel,
                     });
                 }
             }
