@@ -1196,14 +1196,9 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     const consultationType = normalizePurpose(body.consultationType);
     const typeInfo = CONSULTATION_TYPES[consultationType];
     const isDefense = consultationType === 'defense';
-    const defenseLevel = isDefense ? normalizeDefenseLevel(body.defenseLevel) : null;
-    if (isDefense && !defenseLevel) {
-        return res.status(400).json({
-            field: 'defenseLevel',
-            code: 'DEFENSE_LEVEL_REQUIRED',
-            error: 'Please select whether this is a Capstone 1, Capstone 2, Thesis 1, or Thesis 2 defense.',
-        });
-    }
+    const defenseLevel = isDefense
+        ? (normalizeDefenseLevel(student.project_level) || normalizeDefenseLevel(body.defenseLevel) || 'capstone1')
+        : null;
     const durationMinutes = isDefense ? DEFENSE_LEVELS[defenseLevel].durationMinutes : typeInfo.durationMinutes;
     const isDropoff = consultationType === 'dropoff';
     const requiresAllMembers = consultationType === 'system' || consultationType === 'retrieval' || isDefense;

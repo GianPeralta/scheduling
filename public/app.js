@@ -387,46 +387,6 @@
         $('#beninsigModal').classList.add('hidden');
     }
 
-    /* ---------------- Defense level modal (Capstone 1/2, Thesis 1/2) ---------------- */
-    function openDefenseLevelModal() {
-        const preselected = state.defenseLevel
-            || (isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : null);
-        document.querySelectorAll('input[name="defenseLevel"]').forEach((r) => {
-            r.checked = r.value === preselected;
-        });
-        const errEl = $('#defenseLevelError');
-        if (errEl) {
-            errEl.textContent = '';
-            errEl.classList.add('hidden');
-        }
-        $('#defenseLevelModal')?.classList.remove('hidden');
-    }
-
-    function closeDefenseLevelModal() {
-        $('#defenseLevelModal')?.classList.add('hidden');
-    }
-
-    function confirmDefenseLevel() {
-        const chosen = document.querySelector('input[name="defenseLevel"]:checked')?.value;
-        if (!isDefenseLevel(chosen)) {
-            const errEl = $('#defenseLevelError');
-            if (errEl) {
-                errEl.textContent = 'Please choose your course (Capstone 1, Capstone 2, Thesis 1, or Thesis 2).';
-                errEl.classList.remove('hidden');
-            }
-            return;
-        }
-        const levelChanged = chosen !== state.defenseLevel;
-        state.defenseLevel = chosen;
-        closeDefenseLevelModal();
-        if (levelChanged) {
-            state.selectedSlot = null;
-            state.loadedMonthKey = null;
-            state.loadedSlotsKey = null;
-        }
-        proceedWithConsultationPurpose('defense');
-    }
-
     function onClickConsultationCard(purpose) {
         if (purpose === 'letter') {
             if (state.student?.instructorRole !== 'adviser') {
@@ -438,21 +398,18 @@
                 return;
             }
         }
-        if (purpose === 'defense') {
-            openDefenseLevelModal();
-            return;
-        }
         proceedWithConsultationPurpose(purpose);
     }
 
     function monthLoadKey(y = state.viewYear, m = state.viewMonth, purpose = state.consultationPurpose) {
         const base = `${monthKey(y, m)}#${purpose}`;
-        return purpose === 'defense' ? `${base}#${state.defenseLevel || 'capstone1'}` : base;
+        const level = state.student?.projectLevel || state.defenseLevel || 'capstone1';
+        return purpose === 'defense' ? `${base}#${level}` : base;
     }
 
     async function proceedWithConsultationPurpose(purpose) {
         const nextPurpose = Object.prototype.hasOwnProperty.call(PURPOSE_META, purpose) ? purpose : 'system';
-        if (nextPurpose === 'defense' && !isDefenseLevel(state.defenseLevel)) {
+        if (nextPurpose === 'defense') {
             state.defenseLevel = isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : 'capstone1';
         }
         const purposeChanged = nextPurpose !== state.consultationPurpose;
@@ -885,17 +842,12 @@
         const wrap = document.createElement('div');
         wrap.className = 'defense-picker';
 
-        // 1. Level bar (shows Capstone 1 / 2 / Thesis 1 / 2 and lets student switch)
+        // 1. Level bar (shows the student's registered course and defense duration)
         const levelBar = document.createElement('div');
         levelBar.className = 'defense-level-bar';
         const levelText = document.createElement('span');
         levelText.innerHTML = `Course: <strong>${levelInfo.label}</strong> (${levelInfo.durationLabel} defense)`;
-        const switchBtn = document.createElement('button');
-        switchBtn.type = 'button';
-        switchBtn.className = 'link-btn';
-        switchBtn.textContent = 'Change course';
-        switchBtn.addEventListener('click', () => openDefenseLevelModal());
-        levelBar.append(levelText, switchBtn);
+        levelBar.appendChild(levelText);
         wrap.appendChild(levelBar);
 
         // 2. Windows & free/booked breakdown for this date
@@ -1366,8 +1318,6 @@
             } else if (err.code === 'BENINSIG_REQUIRED') {
                 state.beninsigConfirmed = false;
                 openBeninsigModal();
-            } else if (err.code === 'DEFENSE_LEVEL_REQUIRED') {
-                openDefenseLevelModal();
             } else if (err.field === 'teamName') {
                 setFieldError('#teamInput', err.message);
             } else if (err.field === 'members') {
@@ -1855,6 +1805,7 @@
 
     function setStudent(student, navigateToStep1 = false) {
         state.student = student || null;
+        state.defenseLevel = isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : null;
         const box = $('#accountBox');
         box?.classList.toggle('hidden', !state.student);
         updateRoleVisibility();
@@ -2333,17 +2284,6 @@
             if (e.target.id === 'beninsigModal') closeBeninsigModal();
         });
 
-        // Defense level modal events
-        $('#defenseLevelContinueBtn')?.addEventListener('click', confirmDefenseLevel);
-        $('#defenseLevelCancelBtn')?.addEventListener('click', closeDefenseLevelModal);
-        $('#defenseLevelModal')?.addEventListener('click', (e) => {
-            if (e.target.id === 'defenseLevelModal') closeDefenseLevelModal();
-        });
-        document.querySelectorAll('input[name="defenseLevel"]').forEach((r) => {
-            r.addEventListener('change', () => {
-                $('#defenseLevelError')?.classList.add('hidden');
-            });
-        });
         document.querySelectorAll('input[name="regLevel"]').forEach((r) => {
             r.addEventListener('change', () => clearFieldError('#regLevelField'));
         });
@@ -2366,7 +2306,6 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 closeBeninsigModal();
-                closeDefenseLevelModal();
                 closeMyBookingsModal();
             }
         });

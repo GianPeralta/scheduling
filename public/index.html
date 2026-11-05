@@ -509,41 +509,6 @@
         </div>
     </div>
 
-    <!-- Defense level picker: decides the defense length (1 hour vs 2 hours) -->
-    <div class="modal-backdrop hidden" id="defenseLevelModal" role="dialog" aria-modal="true" aria-labelledby="defenseLevelTitle">
-        <div class="modal-card">
-            <div class="modal-body">
-                <h3 id="defenseLevelTitle">Which defense are you scheduling?</h3>
-                <p class="muted">
-                    This decides how long your defense will be. Pre-selected from your account — change it if your group has moved on (e.g. Capstone 1 → Capstone 2).
-                </p>
-                <div class="level-options" id="defenseLevelOptions" role="radiogroup" aria-label="Defense level">
-                    <label class="level-option">
-                        <input type="radio" name="defenseLevel" value="capstone1" />
-                        <span><strong>Capstone 1</strong><small>1 hour</small></span>
-                    </label>
-                    <label class="level-option">
-                        <input type="radio" name="defenseLevel" value="capstone2" />
-                        <span><strong>Capstone 2</strong><small>2 hours</small></span>
-                    </label>
-                    <label class="level-option">
-                        <input type="radio" name="defenseLevel" value="thesis1" />
-                        <span><strong>Thesis 1</strong><small>1 hour</small></span>
-                    </label>
-                    <label class="level-option">
-                        <input type="radio" name="defenseLevel" value="thesis2" />
-                        <span><strong>Thesis 2</strong><small>2 hours</small></span>
-                    </label>
-                </div>
-                <small class="field-error hidden" id="defenseLevelError" role="alert"></small>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-primary btn-block" id="defenseLevelContinueBtn">Continue</button>
-                    <button type="button" class="btn btn-ghost btn-block" id="defenseLevelCancelBtn">Cancel</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Student Profile & Schedule Modal -->
     <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
         <div class="modal-card modal-profile">
