@@ -27,6 +27,12 @@
         loadedSlotsKey: null,
         activeWindowLabel: null,
         submitting: false,
+        student: null, // { id, name, email } once logged in
+        authMode: 'login', // 'login' | 'register' | 'forgot' | 'otp'
+        otpPurpose: 'register', // 'register' | 'reset'
+        otpEmail: '',
+        resendTimer: null,
+        authBusy: false,
     };
 
     /* ---------------- helpers ---------------- */
@@ -68,6 +74,7 @@
         if (!res.ok) {
             const err = new Error(body.error || `Request failed (${res.status})`);
             err.status = res.status;
+            err.code = body.code;
             throw err;
         }
         return body;
@@ -94,8 +101,17 @@
             el.classList.toggle('done', s < n);
         });
         if (n === 3) {
+            renderStep3();
             setTimeout(() => {
-                const target = state.bookingType === 'group' ? $('#teamInput') : $('#nameInput');
+                let target;
+                if (!state.student) {
+                    target = state.authMode === 'otp' ? $('#otpCode')
+                        : state.authMode === 'register' ? $('#regName')
+                        : state.authMode === 'forgot' ? $('#forgotEmail')
+                        : $('#loginEmail');
+                } else {
+                    target = state.bookingType === 'group' ? $('#teamInput') : $('#reasonInput');
+                }
                 if (target) target.focus({ preventScroll: true });
             }, 50);
         }
@@ -243,10 +259,16 @@
                 ? 'Member 1 — your full name'
                 : `Member ${idx + 1} — full name`;
             const removeBtn = row.querySelector('.remove-member');
-            removeBtn.disabled = rows.length <= MIN_GROUP_MEMBERS;
-            removeBtn.title = rows.length <= MIN_GROUP_MEMBERS
-                ? 'At least 2 members are required'
-                : 'Remove member';
+            // Member 1 is the logged-in student and can't be removed or renamed
+            const isSelf = idx === 0 && Boolean(state.student);
+            input.readOnly = isSelf;
+            if (isSelf) input.value = state.student.name;
+            removeBtn.disabled = isSelf || rows.length <= MIN_GROUP_MEMBERS;
+            removeBtn.title = isSelf
+                ? 'You are always part of your own booking'
+                : rows.length <= MIN_GROUP_MEMBERS
+                    ? 'At least 2 members are required'
+                    : 'Remove member';
         });
         $('#memberCount').textContent = `(${rows.length}/${MAX_MEMBERS})`;
         $('#addMemberBtn').classList.toggle('hidden', rows.length >= MAX_MEMBERS);
@@ -294,14 +316,7 @@
         $('#individualFields').classList.toggle('hidden', isGroup);
         $('#groupFields').classList.toggle('hidden', !isGroup);
         updateReasonPlaceholder();
-
-        if (isGroup) {
-            const firstMember = getMemberInputs()[0];
-            const soloName = $('#nameInput').value.trim();
-            if (firstMember && !firstMember.value.trim() && soloName) {
-                firstMember.value = soloName;
-            }
-        }
+        syncMemberControls();
         setFormError('');
     }
 
@@ -600,6 +615,10 @@
             goToStep(2);
             return;
         }
+        if (!state.student) {
+            renderStep3();
+            return;
+        }
 
         const reason = $('#reasonInput').value.trim();
         let payload;
@@ -638,16 +657,9 @@
                 startMinute: state.selectedSlot.startMinute,
             };
         } else {
-            const name = $('#nameInput').value.trim();
-            if (name.length < 2) {
-                setFormError('Please enter your full name.');
-                $('#nameInput').focus();
-                return;
-            }
             payload = {
                 type: 'individual',
                 consultationType: state.consultationPurpose,
-                name,
                 reason,
                 date: state.selectedDate,
                 startMinute: state.selectedSlot.startMinute,
@@ -668,7 +680,15 @@
             });
             showConfirmation(booking);
         } catch (err) {
-            if (err.status === 409 || err.status === 400) {
+            if (err.status === 401) {
+                // Session expired / logged out in another tab
+                setStudent(null);
+                setAuthMode('login');
+                renderStep3();
+                setAuthError('Your session has expired. Please log in again to finish booking.');
+            } else if (err.code === 'BOOKING_LIMIT') {
+                setFormError(err.message);
+            } else if (err.status === 409 || err.status === 400) {
                 toast(err.message, 'error');
                 const date = state.selectedDate;
                 state.selectedSlot = null;
@@ -741,6 +761,276 @@
             </div>`;
     }
 
+    /* ---------------- student account ---------------- */
+    function initials(name) {
+        return String(name || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+    }
+
+    function setStudent(student) {
+        state.student = student || null;
+        const box = $('#accountBox');
+        box.classList.toggle('hidden', !state.student);
+        if (state.student) {
+            $('#accountAvatar').textContent = initials(state.student.name);
+            $('#accountName').textContent = state.student.name;
+            $('#accountEmail').textContent = state.student.email;
+        }
+        syncMemberControls();
+        if (state.currentStep === 3) renderStep3();
+    }
+
+    /** Step 3 shows the sign-in view until the student is logged in, then the booking form. */
+    function renderStep3() {
+        const signedIn = Boolean(state.student);
+        $('#authView').classList.toggle('hidden', signedIn);
+        $('#bookingForm').classList.toggle('hidden', !signedIn);
+        if (signedIn) {
+            $('#nameInput').value = state.student.name;
+            syncMemberControls();
+        }
+    }
+
+    function setAuthError(msg) {
+        const el = $('#authError');
+        el.textContent = msg || '';
+        el.classList.toggle('hidden', !msg);
+    }
+
+    function setAuthMode(mode) {
+        state.authMode = mode;
+        setAuthError('');
+        $('#loginForm').classList.toggle('hidden', mode !== 'login');
+        $('#registerForm').classList.toggle('hidden', mode !== 'register');
+        $('#forgotForm').classList.toggle('hidden', mode !== 'forgot');
+        $('#otpForm').classList.toggle('hidden', mode !== 'otp');
+        $('#authTabs').classList.toggle('hidden', mode === 'otp' || mode === 'forgot');
+        if (mode === 'login' || mode === 'register') {
+            const radio = document.querySelector(`input[name="authMode"][value="${mode}"]`);
+            if (radio) radio.checked = true;
+        }
+
+        const titles = {
+            login: ['Sign in to book', 'Only students with a university email can book a consultation.'],
+            register: ['Create your account', 'We will email a 6-digit code to verify your university email.'],
+            forgot: ['Reset your password', 'Enter your university email and we will send you a reset code.'],
+            otp: state.otpPurpose === 'reset'
+                ? ['Check your email', 'Enter the code and choose a new password.']
+                : ['Verify your email', 'Enter the code we sent to finish creating your account.'],
+        };
+        $('#authTitle').textContent = titles[mode][0];
+        $('#authSubtitle').textContent = titles[mode][1];
+        $('#resetPasswordFields').classList.toggle('hidden', !(mode === 'otp' && state.otpPurpose === 'reset'));
+    }
+
+    function setButtonBusy(btn, busy, busyLabel) {
+        const label = btn.querySelector('.btn-label');
+        if (!btn.dataset.label) btn.dataset.label = label.textContent;
+        btn.disabled = busy;
+        btn.querySelector('.spinner').classList.toggle('hidden', !busy);
+        label.textContent = busy ? busyLabel : btn.dataset.label;
+    }
+
+    async function runAuth(btn, busyLabel, fn) {
+        if (state.authBusy) return;
+        state.authBusy = true;
+        setAuthError('');
+        setButtonBusy(btn, true, busyLabel);
+        try {
+            await fn();
+        } catch (err) {
+            setAuthError(err.message);
+        } finally {
+            state.authBusy = false;
+            setButtonBusy(btn, false);
+        }
+    }
+
+    function startResendCountdown(seconds = 60) {
+        const btn = $('#resendBtn');
+        clearInterval(state.resendTimer);
+        let left = seconds;
+        const tick = () => {
+            btn.disabled = left > 0;
+            btn.textContent = left > 0 ? `Resend code (${left}s)` : 'Resend code';
+            if (left-- <= 0) clearInterval(state.resendTimer);
+        };
+        tick();
+        state.resendTimer = setInterval(tick, 1000);
+    }
+
+    function showOtpStep(purpose, email, resendSeconds) {
+        state.otpPurpose = purpose;
+        state.otpEmail = email;
+        $('#otpEmail').textContent = email;
+        $('#otpCode').value = '';
+        $('#resetPassword').value = '';
+        setAuthMode('otp');
+        startResendCountdown(resendSeconds || 60);
+        setTimeout(() => $('#otpCode').focus(), 50);
+    }
+
+    function onSignedIn(student, message) {
+        setStudent(student);
+        ['#loginPassword', '#regPassword', '#regPassword2', '#resetPassword', '#otpCode'].forEach((s) => { $(s).value = ''; });
+        clearInterval(state.resendTimer);
+        setAuthMode('login');
+        renderStep3();
+        toast(message, 'success');
+        setTimeout(() => {
+            const target = state.bookingType === 'group' ? $('#teamInput') : $('#reasonInput');
+            if (target) target.focus({ preventScroll: true });
+        }, 50);
+    }
+
+    function handleLogin(e) {
+        e.preventDefault();
+        const email = $('#loginEmail').value.trim();
+        const password = $('#loginPassword').value;
+        if (!email || !password) return setAuthError('Please enter your email and password.');
+        runAuth($('#loginBtn'), 'Logging in…', async () => {
+            const { student } = await api('/api/auth/login', {
+                method: 'POST',
+                body: JSON.stringify({ email, password }),
+            });
+            onSignedIn(student, `Welcome back, ${student.name.split(' ')[0]}!`);
+        });
+    }
+
+    function handleRegister(e) {
+        e.preventDefault();
+        const name = $('#regName').value.trim();
+        const email = $('#regEmail').value.trim().toLowerCase();
+        const password = $('#regPassword').value;
+        const domains = state.config?.allowedEmailDomains || [];
+
+        if (name.length < 2) return setAuthError('Please enter your full name.');
+        if (domains.length && !domains.some((d) => email.endsWith(`@${d}`) || email.endsWith(`.${d}`))) {
+            return setAuthError(`Please use your university email (${domains.map((d) => '@' + d).join(' or ')}).`);
+        }
+        if (password.length < 8) return setAuthError('Password must be at least 8 characters.');
+        if (password !== $('#regPassword2').value) return setAuthError('Passwords do not match.');
+
+        runAuth($('#registerBtn'), 'Sending code…', async () => {
+            const data = await api('/api/auth/register/start', {
+                method: 'POST',
+                body: JSON.stringify({ name, email, password }),
+            });
+            showOtpStep('register', data.email, data.resendSeconds);
+            toast('Verification code sent. Check your email.', 'success');
+        });
+    }
+
+    function handleForgot(e) {
+        e.preventDefault();
+        const email = $('#forgotEmail').value.trim().toLowerCase();
+        if (!email) return setAuthError('Please enter your university email.');
+        runAuth($('#forgotBtn'), 'Sending code…', async () => {
+            const data = await api('/api/auth/forgot/start', {
+                method: 'POST',
+                body: JSON.stringify({ email }),
+            });
+            showOtpStep('reset', data.email, data.resendSeconds);
+            toast('If that email is registered, a reset code is on its way.', 'success');
+        });
+    }
+
+    function handleOtp(e) {
+        e.preventDefault();
+        const code = $('#otpCode').value.replace(/\D/g, '');
+        if (code.length !== 6) return setAuthError('Please enter the 6-digit code from your email.');
+
+        if (state.otpPurpose === 'reset') {
+            const password = $('#resetPassword').value;
+            if (password.length < 8) return setAuthError('New password must be at least 8 characters.');
+            runAuth($('#otpBtn'), 'Verifying…', async () => {
+                const { student } = await api('/api/auth/forgot/verify', {
+                    method: 'POST',
+                    body: JSON.stringify({ email: state.otpEmail, code, password }),
+                });
+                onSignedIn(student, 'Password updated. You are now logged in.');
+            });
+        } else {
+            runAuth($('#otpBtn'), 'Verifying…', async () => {
+                const { student } = await api('/api/auth/register/verify', {
+                    method: 'POST',
+                    body: JSON.stringify({ email: state.otpEmail, code }),
+                });
+                onSignedIn(student, 'Email verified! Your account is ready.');
+            });
+        }
+    }
+
+    async function handleResend() {
+        const btn = $('#resendBtn');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        setAuthError('');
+        try {
+            const data = await api('/api/auth/resend', {
+                method: 'POST',
+                body: JSON.stringify({ email: state.otpEmail, purpose: state.otpPurpose }),
+            });
+            toast('A new code has been sent.', 'success');
+            startResendCountdown(data.resendSeconds || 60);
+        } catch (err) {
+            setAuthError(err.message);
+            btn.disabled = false;
+        }
+    }
+
+    async function logout() {
+        try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+        setStudent(null);
+        setAuthMode('login');
+        toast('You have been logged out.');
+    }
+
+    async function loadCurrentStudent() {
+        try {
+            const { student } = await api('/api/auth/me');
+            setStudent(student);
+        } catch {
+            setStudent(null);
+        }
+    }
+
+    function initAuth() {
+        document.querySelectorAll('input[name="authMode"]').forEach((radio) => {
+            radio.addEventListener('change', (e) => setAuthMode(e.target.value));
+        });
+        $('#loginForm').addEventListener('submit', handleLogin);
+        $('#registerForm').addEventListener('submit', handleRegister);
+        $('#forgotForm').addEventListener('submit', handleForgot);
+        $('#otpForm').addEventListener('submit', handleOtp);
+        $('#resendBtn').addEventListener('click', handleResend);
+        $('#forgotLink').addEventListener('click', () => {
+            $('#forgotEmail').value = $('#loginEmail').value;
+            setAuthMode('forgot');
+            $('#forgotEmail').focus();
+        });
+        $('#forgotCancel').addEventListener('click', () => setAuthMode('login'));
+        $('#otpChangeEmail').addEventListener('click', () => {
+            clearInterval(state.resendTimer);
+            setAuthMode(state.otpPurpose === 'reset' ? 'forgot' : 'register');
+        });
+        $('#otpCode').addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+        });
+        $('#authBackBtn').addEventListener('click', () => goToStep(2));
+        $('#logoutBtn').addEventListener('click', logout);
+        setAuthMode('login');
+    }
+
+    function applyEmailHints(config) {
+        const domains = config.allowedEmailDomains || [];
+        if (!domains.length) return;
+        const example = `yourname@${domains[0]}`;
+        $('#loginEmail').placeholder = example;
+        $('#regEmail').placeholder = example;
+        $('#forgotEmail').placeholder = example;
+        $('#regEmailHint').textContent = `Must end with ${domains.map((d) => '@' + d).join(' or ')}`;
+    }
+
     /* ---------------- init ---------------- */
     async function init() {
         const now = new Date();
@@ -781,8 +1071,12 @@
             setText('#reasonCount', e.target.value.length);
         });
 
+        initAuth();
+        loadCurrentStudent();
+
         try {
-            await ensureConfig();
+            const config = await ensureConfig();
+            applyEmailHints(config);
         } catch (err) {
             toast('Could not connect to the server. Please refresh the page.', 'error');
         }

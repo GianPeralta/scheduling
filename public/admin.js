@@ -173,6 +173,7 @@
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
         if (b.reason.toLowerCase().includes(q)) return true;
         if (b.reference.toLowerCase().includes(q)) return true;
+        if (b.studentEmail && b.studentEmail.toLowerCase().includes(q)) return true;
         return false;
     }
 
@@ -252,7 +253,8 @@
                 }
 
                 body.appendChild(el('p', 'booking-reason', b.reason));
-                body.appendChild(el('p', 'booking-meta', `Booked ${new Date(b.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`));
+                const bookedBy = b.studentEmail ? ` by ${b.studentEmail}` : '';
+                body.appendChild(el('p', 'booking-meta', `Booked${bookedBy} · ${new Date(b.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`));
 
                 card.append(time, body);
 

@@ -1635,3 +1635,117 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ==========================================================================
+   Student accounts: top bar account box + sign-in / register / OTP view
+   ========================================================================== */
+.topbar-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.account-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 4px 4px 4px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    box-shadow: var(--shadow-xs);
+}
+.account-avatar {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background-color: var(--primary-tint);
+    color: var(--primary);
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+.account-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    min-width: 0;
+}
+.account-text strong,
+.account-text small {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+.account-text strong { font-size: 0.84rem; }
+.account-text small { font-size: 0.72rem; color: var(--muted); }
+.account-logout {
+    padding: 6px 10px;
+    border: none;
+    border-radius: 6px;
+    background-color: var(--surface-muted);
+    color: var(--text-soft);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.account-logout:hover { background-color: var(--danger-soft); color: var(--danger); }
+
+.auth-head { display: grid; gap: 6px; }
+.auth-head h3 { font-size: 1.35rem; font-weight: 800; }
+.auth-form { display: grid; gap: 16px; }
+.field-hint { font-size: 0.78rem; }
+.field input[readonly] {
+    background-color: var(--surface-muted);
+    color: var(--text-soft);
+    cursor: not-allowed;
+}
+.link-btn {
+    justify-self: start;
+    padding: 2px 0;
+    border: none;
+    background: none;
+    color: var(--primary);
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.link-btn:hover:not(:disabled) { text-decoration: underline; }
+.link-btn:disabled { color: var(--muted); cursor: not-allowed; }
+.otp-sent {
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background-color: var(--primary-soft);
+    border: 1px solid var(--primary-border);
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+.field input.otp-input {
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: 0.5em;
+    text-align: center;
+    padding-left: 0.5em;
+}
+.otp-actions {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+@media (max-width: 680px) {
+    .account-text small { display: none; }
+    .account-text strong { max-width: 110px; }
+    .topbar-actions { gap: 6px; }
+}
+@media (max-width: 420px) {
+    .account-text { display: none; }
+}

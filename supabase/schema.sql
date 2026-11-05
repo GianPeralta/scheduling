@@ -56,6 +56,42 @@ alter table public.appointments enable row level security;
 
 
 -- ---------------------------------------------------------------------------
+-- Student accounts (university email, verified with a one-time code)
+-- ---------------------------------------------------------------------------
+create table if not exists public.students (
+    id             uuid primary key default gen_random_uuid(),
+    email          text        not null unique check (email = lower(email)),
+    full_name      text        not null check (char_length(full_name) between 2 and 100),
+    password_hash  text        not null,
+    failed_logins  smallint    not null default 0,
+    locked_until   timestamptz,
+    last_login_at  timestamptz,
+    created_at     timestamptz not null default now()
+);
+
+-- One-time codes emailed for registration / password reset (only the hash is stored)
+create table if not exists public.email_otps (
+    email       text        not null,
+    purpose     text        not null check (purpose in ('register', 'reset')),
+    code_hash   text        not null,
+    payload     jsonb,                       -- pending registration details
+    attempts    smallint    not null default 0,
+    expires_at  timestamptz not null,
+    created_at  timestamptz not null default now(),
+    primary key (email, purpose)
+);
+
+-- Link every booking to the student account that made it
+alter table public.appointments add column if not exists student_id uuid
+    references public.students (id) on delete set null;
+alter table public.appointments add column if not exists student_email text;
+create index if not exists appointments_student_idx on public.appointments (student_id);
+
+alter table public.students   enable row level security;
+alter table public.email_otps enable row level security;
+
+
+-- ---------------------------------------------------------------------------
 -- OPTIONAL: only needed if you keep using SUPABASE_ANON_KEY on the server
 -- instead of SUPABASE_SERVICE_ROLE_KEY. Uncomment and run.
 -- (The anon key stays on the server, but anyone who obtains it could then

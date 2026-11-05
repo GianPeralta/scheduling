@@ -6,6 +6,7 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 ## Features
 
 **Students (`/`)**
+- **Student accounts**: students must log in to book. Registration only accepts university emails (`ALLOWED_EMAIL_DOMAINS`) and is verified with a 6‑digit code sent by SMTP. Includes "forgot password" via emailed code, login lockout after repeated failures, and a per‑student limit on upcoming bookings.
 - **Two consultation types**:
   - **System Consultation** (`1 hr 20 min`): For students or groups consulting about the system, software, or web app they made.
   - **Other Consultation** (`6 minutes`): Quick check-in for any other questions or concerns.
@@ -35,8 +36,14 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
    | Variable | Required | Description |
    | --- | --- | --- |
    | `SUPABASE_URL` | ✅ | Your Supabase project URL |
-   | `SUPABASE_SERVICE_ROLE_KEY` | ✅* | Recommended. Server‑only key. (*or `SUPABASE_ANON_KEY` + the optional policies in `schema.sql`) |
+   | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Server‑only key (required for student accounts) |
    | `ADMIN_PASSWORD` | ✅ | Password for Arnemie's dashboard |
+   | `ALLOWED_EMAIL_DOMAINS` | ✅ | University email domain(s) allowed to register, e.g. `myuni.edu.ph` |
+   | `SESSION_SECRET` | ✅ | 32+ random characters used to sign logins |
+   | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | ✅ | SMTP account used to email verification codes |
+   | `SMTP_FROM` | | Sender name/address (defaults to `SMTP_USER`) |
+   | `MAX_ACTIVE_BOOKINGS_PER_STUDENT` | | Default `2` (`0` = unlimited) |
+   | `SESSION_DAYS` | | Default `7` |
    | `MEETING_LOCATION` | | Default `Faculty Office` |
    | `TIMEZONE` | | Default `Asia/Manila` |
    | `BOOKING_END_DATE` | | Default `YYYY-12-10` (December 10) |

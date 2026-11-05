@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(express.json({ limit: '20kb' }));
@@ -78,6 +79,306 @@ function db() {
     }
     supabase = createClient(url, key, { auth: { persistSession: false } });
     return supabase;
+}
+
+/* ------------------------------------------------------------------ */
+/* Student accounts (university email + OTP verification)              */
+/* ------------------------------------------------------------------ */
+const STUDENTS_TABLE = 'students';
+const OTP_TABLE = 'email_otps';
+const SESSION_COOKIE = 'sid';
+
+function intEnv(name, fallback) {
+    const v = parseInt(process.env[name], 10);
+    return Number.isInteger(v) && v >= 0 ? v : fallback;
+}
+
+const AUTH = {
+    // e.g. "myuniversity.edu.ph" or "myuniversity.edu.ph,student.myuniversity.edu.ph"
+    allowedDomains: String(process.env.ALLOWED_EMAIL_DOMAINS || '')
+        .split(',')
+        .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+        .filter(Boolean),
+    sessionDays: intEnv('SESSION_DAYS', 7) || 7,
+    otpMinutes: 10,          // a code is valid for 10 minutes
+    otpMaxAttempts: 5,       // wrong guesses before the code is destroyed
+    otpResendSeconds: 60,    // cooldown between code emails
+    loginMaxFailures: 5,     // wrong passwords before the account is temporarily locked
+    loginLockMinutes: 15,
+    // How many upcoming consultations one student may hold at a time (0 = unlimited)
+    maxActiveBookings: intEnv('MAX_ACTIVE_BOOKINGS_PER_STUDENT', 2),
+};
+
+function httpError(status, message, extra = {}) {
+    const err = new Error(message);
+    err.status = status;
+    Object.assign(err, extra);
+    return err;
+}
+
+function sessionSecret() {
+    const s = process.env.SESSION_SECRET;
+    if (!s || s.length < 32) {
+        throw httpError(500, 'Server is missing SESSION_SECRET (at least 32 random characters).');
+    }
+    return s;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeEmail = (v) => String(v ?? '').trim().toLowerCase();
+
+/** Only emails from the configured university domain(s) (or their subdomains) may register. */
+function isUniversityEmail(email) {
+    if (!AUTH.allowedDomains.length) {
+        throw httpError(500, 'Server is missing ALLOWED_EMAIL_DOMAINS (your university email domain).');
+    }
+    if (email.length > 254 || !EMAIL_RE.test(email)) return false;
+    const domain = email.split('@').pop();
+    return AUTH.allowedDomains.some((d) => domain === d || domain.endsWith(`.${d}`));
+}
+
+function domainHint() {
+    return AUTH.allowedDomains.map((d) => `@${d}`).join(' or ');
+}
+
+/* ---------- passwords (scrypt, built into Node) ---------- */
+const scryptAsync = (password, salt) =>
+    new Promise((resolve, reject) => {
+        crypto.scrypt(password, salt, 64, (err, key) => (err ? reject(err) : resolve(key)));
+    });
+
+async function hashPassword(password) {
+    const salt = crypto.randomBytes(16);
+    const key = await scryptAsync(password, salt);
+    return `scrypt$${salt.toString('base64')}$${key.toString('base64')}`;
+}
+
+async function verifyPassword(password, stored) {
+    const [alg, salt, key] = String(stored || '').split('$');
+    if (alg !== 'scrypt' || !salt || !key) return false;
+    const expected = Buffer.from(key, 'base64');
+    const actual = await scryptAsync(password, Buffer.from(salt, 'base64'));
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function validatePassword(password) {
+    if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
+        return 'Password must be 8–128 characters long.';
+    }
+    return null;
+}
+
+/* ---------- sessions (signed, HttpOnly cookie) ---------- */
+const signValue = (value) => crypto.createHmac('sha256', sessionSecret()).update(value).digest('base64url');
+// Changing the password changes this value, which logs out every other session.
+const passwordVersion = (hash) => crypto.createHash('sha256').update(String(hash)).digest('base64url').slice(0, 16);
+
+function getCookie(req, name) {
+    const header = req.headers.cookie || '';
+    for (const part of header.split(';')) {
+        const i = part.indexOf('=');
+        if (i > -1 && part.slice(0, i).trim() === name) {
+            try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return null; }
+        }
+    }
+    return null;
+}
+
+const cookieOptions = () => ({
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production',
+    path: '/',
+});
+
+function setSession(res, student) {
+    const payload = Buffer.from(JSON.stringify({
+        sid: student.id,
+        pv: passwordVersion(student.password_hash),
+        exp: Date.now() + AUTH.sessionDays * 24 * 60 * 60 * 1000,
+    })).toString('base64url');
+    res.cookie(SESSION_COOKIE, `${payload}.${signValue(payload)}`, {
+        ...cookieOptions(),
+        maxAge: AUTH.sessionDays * 24 * 60 * 60 * 1000,
+    });
+}
+
+function clearSession(res) {
+    res.clearCookie(SESSION_COOKIE, cookieOptions());
+}
+
+function readSession(req) {
+    const token = getCookie(req, SESSION_COOKIE);
+    if (!token) return null;
+    const [payload, sig] = token.split('.');
+    if (!payload || !sig) return null;
+    const a = Buffer.from(sig);
+    const b = Buffer.from(signValue(payload));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    try {
+        const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+        if (!data || typeof data.exp !== 'number' || data.exp < Date.now()) return null;
+        return data;
+    } catch {
+        return null;
+    }
+}
+
+async function currentStudent(req) {
+    const session = readSession(req);
+    if (!session || !/^[0-9a-f-]{36}$/i.test(String(session.sid))) return null;
+    const { data, error } = await db().from(STUDENTS_TABLE).select('*').eq('id', session.sid).maybeSingle();
+    if (error) throw error;
+    if (!data || passwordVersion(data.password_hash) !== session.pv) return null;
+    return data;
+}
+
+async function requireStudent(req, res, next) {
+    const student = await currentStudent(req);
+    if (!student) {
+        clearSession(res);
+        return res.status(401).json({ error: 'Please log in with your university email to book.', code: 'AUTH_REQUIRED' });
+    }
+    req.student = student;
+    next();
+}
+
+const publicStudent = (s) => ({ id: s.id, name: s.full_name, email: s.email });
+
+/* ---------- email (SMTP) ---------- */
+let transporter = null;
+function mailer() {
+    if (transporter) return transporter;
+    const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+        throw httpError(500, 'Server is missing SMTP_HOST / SMTP_USER / SMTP_PASS environment variables.');
+    }
+    const port = Number(process.env.SMTP_PORT) || 587;
+    transporter = nodemailer.createTransport({
+        host: SMTP_HOST,
+        port,
+        secure: port === 465, // 465 = SSL, 587 = STARTTLS
+        auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+    return transporter;
+}
+
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+async function sendOtpEmail(to, code, purpose, name) {
+    const isReset = purpose === 'reset';
+    const subject = isReset
+        ? `${code} is your password reset code`
+        : `${code} is your verification code`;
+    const intro = isReset
+        ? `Use the code below to reset your password for booking consultations with ${TEACHER_NAME}.`
+        : `Use the code below to verify your university email and finish creating your account for booking consultations with ${TEACHER_NAME}.`;
+    const greeting = name ? `Hi ${name},` : 'Hi,';
+    const footer = `This code expires in ${AUTH.otpMinutes} minutes. If you didn't request it, you can ignore this email.`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to,
+        subject,
+        text: `${greeting}\n\n${intro}\n\n    ${code}\n\n${footer}`,
+        html: `
+            <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:auto;color:#0f172a">
+                <p>${escapeHtml(greeting)}</p>
+                <p>${escapeHtml(intro)}</p>
+                <p style="font-size:32px;font-weight:700;letter-spacing:8px;text-align:center;
+                          background:#f0fdfa;color:#0f766e;padding:16px;border-radius:12px">${code}</p>
+                <p style="color:#64748b;font-size:13px">${escapeHtml(footer)}</p>
+            </div>`,
+    });
+}
+
+/* ---------- one-time codes (stored hashed in Supabase) ---------- */
+const otpHash = (email, purpose, code) =>
+    crypto.createHmac('sha256', sessionSecret()).update(`${purpose}:${email}:${code}`).digest('hex');
+
+async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
+    const { data: existing, error } = await db()
+        .from(OTP_TABLE)
+        .select('created_at')
+        .eq('email', email)
+        .eq('purpose', purpose)
+        .maybeSingle();
+    if (error) throw error;
+    if (existing) {
+        const elapsed = Math.floor((Date.now() - new Date(existing.created_at).getTime()) / 1000);
+        const wait = AUTH.otpResendSeconds - elapsed;
+        if (wait > 0) {
+            throw httpError(429, `Please wait ${wait} seconds before requesting a new code.`, { retryAfter: wait });
+        }
+    }
+
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const now = Date.now();
+    const { error: upsertErr } = await db().from(OTP_TABLE).upsert({
+        email,
+        purpose,
+        code_hash: otpHash(email, purpose, code),
+        payload,
+        attempts: 0,
+        created_at: new Date(now).toISOString(),
+        expires_at: new Date(now + AUTH.otpMinutes * 60 * 1000).toISOString(),
+    }, { onConflict: 'email,purpose' });
+    if (upsertErr) throw upsertErr;
+
+    try {
+        await sendOtpEmail(email, code, purpose, name);
+    } catch (err) {
+        console.error('SMTP error:', err);
+        await db().from(OTP_TABLE).delete().eq('email', email).eq('purpose', purpose);
+        if (err.status) throw err;
+        throw httpError(502, 'We could not send the verification email right now. Please try again later.');
+    }
+}
+
+/** Checks a code; returns the stored row (with its payload) on success, otherwise throws. */
+async function consumeOtp(email, purpose, code) {
+    const removeOtp = () => db().from(OTP_TABLE).delete().eq('email', email).eq('purpose', purpose);
+
+    const { data: row, error } = await db()
+        .from(OTP_TABLE)
+        .select('*')
+        .eq('email', email)
+        .eq('purpose', purpose)
+        .maybeSingle();
+    if (error) throw error;
+    if (!row) throw httpError(400, 'No active code for this email. Please request a new one.');
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+        await removeOtp();
+        throw httpError(400, 'That code has expired. Please request a new one.');
+    }
+    if (row.attempts >= AUTH.otpMaxAttempts) {
+        await removeOtp();
+        throw httpError(429, 'Too many incorrect attempts. Please request a new code.');
+    }
+
+    const given = Buffer.from(otpHash(email, purpose, String(code ?? '').trim()));
+    const expected = Buffer.from(row.code_hash);
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+        const attempts = row.attempts + 1;
+        const left = AUTH.otpMaxAttempts - attempts;
+        if (left <= 0) {
+            await removeOtp();
+            throw httpError(429, 'Too many incorrect attempts. Please request a new code.');
+        }
+        await db().from(OTP_TABLE).update({ attempts }).eq('email', email).eq('purpose', purpose);
+        throw httpError(400, `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.`);
+    }
+
+    await removeOtp();
+    return row;
+}
+
+async function findStudentByEmail(email) {
+    const { data, error } = await db().from(STUDENTS_TABLE).select('*').eq('email', email).maybeSingle();
+    if (error) throw error;
+    return data;
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,7 +529,170 @@ app.get('/api/config', (req, res) => {
         workingDays: CONFIG.workingDays,
         today: now.date,
         lastBookableDate: getLastBookableDate(now),
+        allowedEmailDomains: AUTH.allowedDomains,
+        maxActiveBookings: AUTH.maxActiveBookings,
     });
+});
+
+/* ------------------------------------------------------------------ */
+/* Student auth API                                                    */
+/* ------------------------------------------------------------------ */
+app.get('/api/auth/me', async (req, res) => {
+    const student = await currentStudent(req);
+    res.json({ student: student ? publicStudent(student) : null });
+});
+
+// Step 1 of registration: validate details and email a 6-digit code
+app.post('/api/auth/register/start', async (req, res) => {
+    const body = req.body || {};
+    const name = cleanName(body.name);
+    const email = normalizeEmail(body.email);
+    const password = body.password;
+
+    if (name.length < 2 || name.length > 100) {
+        return res.status(400).json({ error: 'Please enter your full name (2–100 characters).' });
+    }
+    if (!isUniversityEmail(email)) {
+        return res.status(400).json({ error: `Please use your university email (${domainHint()}).` });
+    }
+    const pwError = validatePassword(password);
+    if (pwError) return res.status(400).json({ error: pwError });
+
+    if (await findStudentByEmail(email)) {
+        return res.status(409).json({ error: 'This email is already registered. Please log in instead.' });
+    }
+
+    // The account is only created after the code is verified, so keep the details with the code.
+    const passwordHash = await hashPassword(password);
+    await issueOtp(email, 'register', { payload: { name, passwordHash }, name });
+    res.json({ ok: true, email, expiresInMinutes: AUTH.otpMinutes, resendSeconds: AUTH.otpResendSeconds });
+});
+
+// Step 2 of registration: verify the code, create the account and log in
+app.post('/api/auth/register/verify', async (req, res) => {
+    const email = normalizeEmail(req.body?.email);
+    const row = await consumeOtp(email, 'register', req.body?.code);
+    const { name, passwordHash } = row.payload || {};
+    if (!name || !passwordHash) {
+        return res.status(400).json({ error: 'Registration details were lost. Please register again.' });
+    }
+
+    const { data: student, error } = await db()
+        .from(STUDENTS_TABLE)
+        .insert([{ email, full_name: name, password_hash: passwordHash, last_login_at: new Date().toISOString() }])
+        .select('*')
+        .single();
+    if (error) {
+        if (error.code === '23505') {
+            return res.status(409).json({ error: 'This email is already registered. Please log in instead.' });
+        }
+        throw error;
+    }
+
+    setSession(res, student);
+    res.status(201).json({ student: publicStudent(student) });
+});
+
+app.post('/api/auth/resend', async (req, res) => {
+    const email = normalizeEmail(req.body?.email);
+    const purpose = req.body?.purpose === 'reset' ? 'reset' : 'register';
+
+    const { data: row, error } = await db()
+        .from(OTP_TABLE)
+        .select('payload')
+        .eq('email', email)
+        .eq('purpose', purpose)
+        .maybeSingle();
+    if (error) throw error;
+
+    if (purpose === 'register') {
+        if (!row?.payload) {
+            return res.status(400).json({ error: 'Your registration session expired. Please fill in the form again.' });
+        }
+        await issueOtp(email, 'register', { payload: row.payload, name: row.payload.name });
+    } else {
+        const student = await findStudentByEmail(email);
+        if (student) await issueOtp(email, 'reset', { name: student.full_name });
+    }
+    res.json({ ok: true, resendSeconds: AUTH.otpResendSeconds });
+});
+
+// Dummy hash so a login for an unknown email takes as long as a real one
+const DUMMY_HASH_PROMISE = hashPassword(crypto.randomBytes(16).toString('hex'));
+
+app.post('/api/auth/login', async (req, res) => {
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password ?? '');
+    const invalid = () => res.status(401).json({ error: 'Incorrect email or password.' });
+
+    const student = EMAIL_RE.test(email) ? await findStudentByEmail(email) : null;
+    if (!student) {
+        await verifyPassword(password, await DUMMY_HASH_PROMISE);
+        return invalid();
+    }
+
+    if (student.locked_until && new Date(student.locked_until).getTime() > Date.now()) {
+        const mins = Math.ceil((new Date(student.locked_until).getTime() - Date.now()) / 60000);
+        return res.status(429).json({
+            error: `Too many failed attempts. Try again in ${mins} minute${mins === 1 ? '' : 's'}, or reset your password.`,
+        });
+    }
+
+    if (!(await verifyPassword(password, student.password_hash))) {
+        const failures = (student.failed_logins || 0) + 1;
+        const lock = failures >= AUTH.loginMaxFailures;
+        await db().from(STUDENTS_TABLE).update({
+            failed_logins: lock ? 0 : failures,
+            locked_until: lock ? new Date(Date.now() + AUTH.loginLockMinutes * 60000).toISOString() : null,
+        }).eq('id', student.id);
+        return invalid();
+    }
+
+    await db().from(STUDENTS_TABLE).update({
+        failed_logins: 0,
+        locked_until: null,
+        last_login_at: new Date().toISOString(),
+    }).eq('id', student.id);
+
+    setSession(res, student);
+    res.json({ student: publicStudent(student) });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    clearSession(res);
+    res.json({ ok: true });
+});
+
+// Forgot password, step 1: email a reset code (same answer whether or not the account exists)
+app.post('/api/auth/forgot/start', async (req, res) => {
+    const email = normalizeEmail(req.body?.email);
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+    const student = await findStudentByEmail(email);
+    if (student) await issueOtp(email, 'reset', { name: student.full_name });
+    res.json({ ok: true, email, expiresInMinutes: AUTH.otpMinutes, resendSeconds: AUTH.otpResendSeconds });
+});
+
+// Forgot password, step 2: verify the code, set the new password and log in
+app.post('/api/auth/forgot/verify', async (req, res) => {
+    const email = normalizeEmail(req.body?.email);
+    const pwError = validatePassword(req.body?.password);
+    if (pwError) return res.status(400).json({ error: pwError });
+
+    await consumeOtp(email, 'reset', req.body?.code);
+    const student = await findStudentByEmail(email);
+    if (!student) return res.status(400).json({ error: 'Account not found. Please register.' });
+
+    const passwordHash = await hashPassword(req.body.password);
+    const { data: updated, error } = await db()
+        .from(STUDENTS_TABLE)
+        .update({ password_hash: passwordHash, failed_logins: 0, locked_until: null, last_login_at: new Date().toISOString() })
+        .eq('id', student.id)
+        .select('*')
+        .single();
+    if (error) throw error;
+
+    setSession(res, updated);
+    res.json({ student: publicStudent(updated) });
 });
 
 // Number of open slots for every day in a month: /api/month?month=2026-11&purpose=system
@@ -319,6 +783,7 @@ function toBooking(r) {
         durationMinutes,
         durationLabel: durationMinutes === OTHER_DURATION ? '6 min' : '1 hr 20 min',
         name: r.student_name,
+        studentEmail: r.student_email || null,
         teamName: r.team_name || null,
         members,
         reason: r.reason,
@@ -331,8 +796,9 @@ function toBooking(r) {
     };
 }
 
-app.post('/api/bookings', async (req, res) => {
+app.post('/api/bookings', requireStudent, async (req, res) => {
     const body = req.body || {};
+    const student = req.student;
     const type = body.type === 'group' ? 'group' : 'individual';
     const consultationType = normalizePurpose(body.consultationType);
     const durationMinutes = CONSULTATION_TYPES[consultationType].durationMinutes;
@@ -349,6 +815,8 @@ app.post('/api/bookings', async (req, res) => {
             return res.status(400).json({ error: 'Please enter your team name (2–100 characters).' });
         }
         members = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
+        // Member 1 is always the logged-in student (the person responsible for the booking)
+        members[0] = student.full_name;
         if (members.length < 2) {
             return res.status(400).json({ error: 'A group booking needs at least 2 member names.' });
         }
@@ -356,7 +824,8 @@ app.post('/api/bookings', async (req, res) => {
             return res.status(400).json({ error: `A group can have at most ${MAX_MEMBERS} members.` });
         }
     } else {
-        members = [cleanName(body.name)];
+        // Individual bookings always use the verified account's name
+        members = [student.full_name];
     }
 
     if (members.some((m) => m.length < 2 || m.length > 100)) {
@@ -374,6 +843,28 @@ app.post('/api/bookings', async (req, res) => {
     const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
     if (!isBookableDate(date, now) || !validSlot || !isFutureSlot(date, startMinute, now)) {
         return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
+    }
+
+    // Limit how many upcoming consultations one student can hold at once
+    if (AUTH.maxActiveBookings > 0) {
+        const { data: mine, error: mineErr } = await db()
+            .from(TABLE)
+            .select('*')
+            .eq('student_id', student.id)
+            .gte('appointment_date', now.date);
+        if (mineErr) return res.status(500).json({ error: mineErr.message });
+        const upcoming = mine.filter((r) => {
+            const [, end] = rowInterval(r);
+            return r.appointment_date > now.date || end > now.minuteOfDay;
+        });
+        if (upcoming.length >= AUTH.maxActiveBookings) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: AUTH.maxActiveBookings === 1
+                    ? 'You already have an upcoming consultation. You can book again after it is done (or ask your instructor to cancel it).'
+                    : `You already have ${upcoming.length} upcoming consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done.`,
+            });
+        }
     }
 
     // Check for any overlapping booking on the same date
@@ -400,6 +891,8 @@ app.post('/api/bookings', async (req, res) => {
             start_minute: startMinute,
             duration_minutes: durationMinutes,
             consultation_type: consultationType,
+            student_id: student.id,
+            student_email: student.email,
         }])
         .select('*')
         .single();
@@ -475,6 +968,13 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
     console.error(err);
+    // Missing table / column -> the SQL in supabase/schema.sql hasn't been run yet
+    if (['42P01', 'PGRST205', '42703', 'PGRST204'].includes(err.code)) {
+        return res.status(500).json({
+            error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+        });
+    }
+    if (err.retryAfter) res.set('Retry-After', String(err.retryAfter));
     res.status(err.status || 500).json({ error: err.message || 'Something went wrong.' });
 });
 
