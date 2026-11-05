@@ -18,23 +18,43 @@ const TEACHER_NAME = 'Arnemie Gayyed';
 
 const hm = (h, m) => h * 60 + m;
 
-const SYSTEM_DURATION = 80; // 1h 20min for system/software/webapp consultations
-const OTHER_DURATION = 6;   // 6 minutes for all other consultations
+const SYSTEM_DURATION = 15;   // 15 minutes for System Consultation
+const DROPOFF_DURATION = 0;   // Drop-off only (takes 0 minutes off the schedule)
+const RETRIEVAL_DURATION = 5; // 5 minutes for Manuscript Retrieval
+const LETTER_DURATION = 5;    // 5 minutes for Communication Letter Signature
 
 const CONSULTATION_TYPES = {
     system: {
         id: 'system',
         title: 'System Consultation',
-        description: 'Consult about the system, software, or web app you made',
+        description: 'Present and consult about the system, software, or web app your group made.',
+        note: 'All group members must be present during System Consultations.',
         durationMinutes: SYSTEM_DURATION,
-        durationLabel: '1 hr 20 min',
+        durationLabel: '15 minutes',
     },
-    other: {
-        id: 'other',
-        title: 'Other Consultation',
-        description: 'Quick consultation for other questions or concerns',
-        durationMinutes: OTHER_DURATION,
-        durationLabel: '6 minutes',
+    dropoff: {
+        id: 'dropoff',
+        title: 'Drop-off Manuscript',
+        description: 'Drop off your manuscript only — no minutes are taken off the consultation schedule.',
+        note: 'Once your manuscript is checked, you will be notified through the school email you used during registration.',
+        durationMinutes: DROPOFF_DURATION,
+        durationLabel: 'Drop-off only',
+    },
+    retrieval: {
+        id: 'retrieval',
+        title: 'Retrieval of Manuscript',
+        description: 'Once notified by email that your manuscript is checked, schedule this to discuss the needed changes.',
+        note: 'At least 2 group members must be present, otherwise you will not be accommodated.',
+        durationMinutes: RETRIEVAL_DURATION,
+        durationLabel: '5 minutes',
+    },
+    letter: {
+        id: 'letter',
+        title: 'Communication Letter Signature',
+        description: 'Request your adviser’s signature on an official communication letter.',
+        note: 'Your letter must already have the initial of Ma’am Melinda Beninsig before requesting your adviser’s signature.',
+        durationMinutes: LETTER_DURATION,
+        durationLabel: '5 minutes',
     },
 };
 
@@ -468,45 +488,43 @@ function formatMinute(totalMinutes) {
 }
 
 function normalizePurpose(purpose) {
-    return purpose === 'other' ? 'other' : 'system';
+    return Object.prototype.hasOwnProperty.call(CONSULTATION_TYPES, purpose) ? purpose : 'system';
 }
 
-/** Generate all candidate slots for a date and consultation purpose ('system' | 'other'). */
+/** Generate all candidate slots for a date and consultation purpose. */
 function generateDaySlots(dateStr, purpose = 'system') {
     const dt = parseDate(dateStr);
     if (!dt) return [];
     const windows = WINDOWS_BY_DAY[dt.getUTCDay()] || [];
     const normalized = normalizePurpose(purpose);
+    const typeInfo = CONSULTATION_TYPES[normalized];
     const slots = [];
 
     for (const [winStart, winEnd] of windows) {
         const windowLabel = `${formatMinute(winStart)} – ${formatMinute(winEnd)}`;
-        // Step through 1h 20m (80-minute) blocks inside each window
-        for (let blockStart = winStart; blockStart + SYSTEM_DURATION <= winEnd; blockStart += SYSTEM_DURATION) {
-            const blockEnd = blockStart + SYSTEM_DURATION;
-            const blockLabel = `${formatMinute(blockStart)} – ${formatMinute(blockEnd)}`;
-            if (normalized === 'system') {
+        if (normalized === 'dropoff') {
+            // Drop-off takes 0 minutes off the schedule; students may drop off during the window.
+            slots.push({
+                startMinute: winStart,
+                endMinute: winEnd,
+                durationMinutes: 0,
+                isDropoff: true,
+                label: windowLabel,
+                endLabel: 'Drop-off only · 0 min taken',
+                windowLabel,
+            });
+        } else {
+            const dur = typeInfo.durationMinutes;
+            for (let m = winStart; m + dur <= winEnd; m += dur) {
                 slots.push({
-                    startMinute: blockStart,
-                    endMinute: blockEnd,
-                    durationMinutes: SYSTEM_DURATION,
-                    label: formatMinute(blockStart),
-                    endLabel: formatMinute(blockEnd),
-                    windowLabel: blockLabel,
+                    startMinute: m,
+                    endMinute: m + dur,
+                    durationMinutes: dur,
+                    isDropoff: false,
+                    label: formatMinute(m),
+                    endLabel: formatMinute(m + dur),
+                    windowLabel,
                 });
-            } else {
-                // Generate 6-minute slots within each 80-minute block so a 6-minute booking
-                // never straddles two 80-minute blocks.
-                for (let m = blockStart; m + OTHER_DURATION <= blockEnd; m += OTHER_DURATION) {
-                    slots.push({
-                        startMinute: m,
-                        endMinute: m + OTHER_DURATION,
-                        durationMinutes: OTHER_DURATION,
-                        label: formatMinute(m),
-                        endLabel: formatMinute(m + OTHER_DURATION),
-                        windowLabel: blockLabel,
-                    });
-                }
             }
         }
     }
@@ -514,14 +532,23 @@ function generateDaySlots(dateStr, purpose = 'system') {
     return slots;
 }
 
-/** Extract [startMinute, endMinute] from a DB row (compatible with legacy rows). */
+/** Does this DB row occupy timed minutes on the teacher's schedule? (Drop-offs do not.) */
+function isTimedRow(r) {
+    return r.consultation_type !== 'dropoff' && Number(r.duration_minutes) !== 0;
+}
+
+/** Extract [startMinute, endMinute] from a DB row (compatible with legacy & drop-off rows). */
 function rowInterval(r) {
     const start = Number.isFinite(r.start_minute) ? r.start_minute : (Number(r.start_hour) || 0) * 60;
-    const duration = Number.isFinite(r.duration_minutes)
+    if (!isTimedRow(r)) {
+        const dt = parseDate(r.appointment_date);
+        const windows = (dt && WINDOWS_BY_DAY[dt.getUTCDay()]) || [];
+        const matched = windows.find(([ws, we]) => start >= ws && start < we) || windows[0];
+        return [start, matched ? matched[1] : start + 80];
+    }
+    const duration = Number.isFinite(r.duration_minutes) && r.duration_minutes > 0
         ? r.duration_minutes
-        : r.consultation_type === 'other'
-            ? OTHER_DURATION
-            : SYSTEM_DURATION;
+        : CONSULTATION_TYPES[r.consultation_type]?.durationMinutes || SYSTEM_DURATION;
     return [start, start + duration];
 }
 
@@ -532,20 +559,25 @@ function hasOverlap(startMinute, endMinute, intervals) {
     return false;
 }
 
+/** Consultations must be booked at least 1 day before the consultation day. */
+function getFirstBookableDate(now = nowInTz()) {
+    return addDays(now.date, 1);
+}
+
 /** Is this date one the teacher accepts bookings for at all? */
 function isBookableDate(dateStr, now = nowInTz()) {
     const dt = parseDate(dateStr);
     if (!dt) return false;
     const windows = WINDOWS_BY_DAY[dt.getUTCDay()];
     if (!windows || !windows.length) return false;
-    if (dateStr < now.date) return false;
+    if (dateStr < getFirstBookableDate(now)) return false;
     if (dateStr > getLastBookableDate(now)) return false;
     return true;
 }
 
-/** Slots on the current day must start in the future. */
+/** All bookable dates are at least tomorrow (1 day in advance). */
 function isFutureSlot(dateStr, startMinute, now = nowInTz()) {
-    return dateStr > now.date || (dateStr === now.date && startMinute > now.minuteOfDay);
+    return dateStr >= getFirstBookableDate(now);
 }
 
 /* ------------------------------------------------------------------ */
@@ -560,6 +592,7 @@ app.get('/api/config', (req, res) => {
         consultationTypes: CONSULTATION_TYPES,
         workingDays: CONFIG.workingDays,
         today: now.date,
+        firstBookableDate: getFirstBookableDate(now),
         lastBookableDate: getLastBookableDate(now),
         allowedEmailDomains: AUTH.allowedDomains,
         maxActiveBookings: AUTH.maxActiveBookings,
@@ -589,13 +622,13 @@ app.post('/api/auth/register/start', async (req, res) => {
     const password = body.password;
 
     if (name.length < 2 || name.length > 100) {
-        return res.status(400).json({ error: 'Please enter your full name (2–100 characters).' });
+        return res.status(400).json({ field: 'regName', error: 'Please enter your full name (2–100 characters).' });
     }
     if (!isUniversityEmail(email)) {
-        return res.status(400).json({ error: `Please use your university email (${domainHint()}).` });
+        return res.status(400).json({ field: 'regEmail', error: `Please use your university email (${domainHint()}).` });
     }
     if (capstoneTitle.length < 3 || capstoneTitle.length > 200) {
-        return res.status(400).json({ error: 'Please enter your Capstone / Thesis title (3–200 characters).' });
+        return res.status(400).json({ field: 'regCapstone', error: 'Please enter your Capstone / Thesis title (3–200 characters).' });
     }
     if (!instructorRole) {
         return res.status(400).json({ error: `Please select whether ${TEACHER_NAME} is your Adviser or Panel Member.` });
@@ -604,20 +637,20 @@ app.post('/api/auth/register/start', async (req, res) => {
     // Member 1 is always the representative registering; attach remaining group members
     const members = [name, ...rawMembers.slice(1)];
     if (members.length < 2) {
-        return res.status(400).json({ error: 'Please enter at least 2 group member names (yourself and your groupmates).' });
+        return res.status(400).json({ field: 'regMembers', error: 'Please enter at least 2 group member names (yourself and your groupmates).' });
     }
     if (members.length > MAX_MEMBERS) {
-        return res.status(400).json({ error: `A group can have at most ${MAX_MEMBERS} members.` });
+        return res.status(400).json({ field: 'regMembers', error: `A group can have at most ${MAX_MEMBERS} members.` });
     }
     if (members.some((m) => m.length < 2 || m.length > 100)) {
-        return res.status(400).json({ error: 'Each group member needs a full name (2–100 characters).' });
+        return res.status(400).json({ field: 'regMembers', error: 'Each group member needs a full name (2–100 characters).' });
     }
 
     const pwError = validatePassword(password);
-    if (pwError) return res.status(400).json({ error: pwError });
+    if (pwError) return res.status(400).json({ field: 'regPassword', error: pwError });
 
     if (await findStudentByEmail(email)) {
-        return res.status(409).json({ error: 'This email is already registered. Please log in instead.' });
+        return res.status(409).json({ field: 'regEmail', error: 'This email is already registered. Please log in instead.' });
     }
 
     // The account is only created after the code is verified, so keep the details with the code.
@@ -785,6 +818,7 @@ app.get('/api/month', async (req, res) => {
 
     const intervalsByDate = new Map();
     for (const r of data) {
+        if (!isTimedRow(r)) continue; // Drop-offs take 0 minutes off the schedule
         const d = r.appointment_date;
         if (!intervalsByDate.has(d)) intervalsByDate.set(d, []);
         intervalsByDate.get(d).push(rowInterval(r));
@@ -801,7 +835,8 @@ app.get('/api/month', async (req, res) => {
         const daySlots = generateDaySlots(d, purpose);
         const bookedIntervals = intervalsByDate.get(d) || [];
         const open = daySlots.filter(
-            (s) => isFutureSlot(d, s.startMinute, now) && !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)
+            (s) => isFutureSlot(d, s.startMinute, now)
+                && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals))
         ).length;
         days[d] = { bookable: true, open };
     }
@@ -821,15 +856,17 @@ app.get('/api/slots', async (req, res) => {
     const { data, error } = await db().from(TABLE).select('*').eq('appointment_date', date);
     if (error) return res.status(500).json({ error: error.message });
 
-    const bookedIntervals = data.map(rowInterval);
+    const bookedIntervals = data.filter(isTimedRow).map(rowInterval);
     const slots = generateDaySlots(date, purpose).map((s) => ({
         startMinute: s.startMinute,
         endMinute: s.endMinute,
         durationMinutes: s.durationMinutes,
+        isDropoff: Boolean(s.isDropoff),
         label: s.label,
         endLabel: s.endLabel,
         windowLabel: s.windowLabel,
-        available: isFutureSlot(date, s.startMinute, now) && !hasOverlap(s.startMinute, s.endMinute, bookedIntervals),
+        available: isFutureSlot(date, s.startMinute, now)
+            && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
     }));
 
     res.json({ date, purpose, slots });
@@ -838,19 +875,35 @@ app.get('/api/slots', async (req, res) => {
 const MAX_MEMBERS = 10;
 const cleanName = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
 
+function formatDurationLabel(consultationType, durationMinutes) {
+    if (consultationType === 'dropoff' || durationMinutes === 0) return 'Drop-off only';
+    if (durationMinutes === 80) return '1 hr 20 min';
+    return `${durationMinutes} min`;
+}
+
+function formatConsultationTitle(consultationType) {
+    if (CONSULTATION_TYPES[consultationType]) return CONSULTATION_TYPES[consultationType].title;
+    if (consultationType === 'other') return 'Other Consultation';
+    return 'Consultation';
+}
+
 /** Shape a database row for the frontend. */
 function toBooking(r) {
     const members = Array.isArray(r.members) && r.members.length ? r.members : [r.student_name];
+    const timed = isTimedRow(r);
     const [startMinute, endMinute] = rowInterval(r);
-    const durationMinutes = endMinute - startMinute;
-    const consultationType = r.consultation_type || (durationMinutes === OTHER_DURATION ? 'other' : 'system');
+    const durationMinutes = timed ? (endMinute - startMinute) : 0;
+    const consultationType = r.consultation_type || 'system';
+    const timeRange = `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`;
     return {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
-        type: r.team_name ? 'group' : 'individual',
+        type: r.team_name || members.length >= 2 ? 'group' : 'individual',
         consultationType,
+        consultationTitle: formatConsultationTitle(consultationType),
+        isDropoff: !timed,
         durationMinutes,
-        durationLabel: durationMinutes === OTHER_DURATION ? '6 min' : '1 hr 20 min',
+        durationLabel: formatDurationLabel(consultationType, durationMinutes),
         name: r.student_name,
         studentEmail: r.student_email || null,
         capstoneTitle: r.capstone_title || r.team_name || null,
@@ -862,20 +915,60 @@ function toBooking(r) {
         hour: Math.floor(startMinute / 60),
         startMinute,
         endMinute,
-        label: `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`,
+        label: timed ? timeRange : `${timeRange} (Drop-off)`,
+        notifiedAt: r.notified_at || null,
         createdAt: r.created_at,
     };
 }
 
+// Logged-in student's own upcoming bookings
+app.get('/api/my-bookings', requireStudent, async (req, res) => {
+    const now = nowInTz();
+    const { data, error } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('student_id', req.student.id)
+        .gte('appointment_date', now.date)
+        .order('appointment_date', { ascending: true })
+        .order('start_minute', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const bookings = data
+        .filter((r) => {
+            const [, end] = rowInterval(r);
+            return r.appointment_date > now.date || end > now.minuteOfDay;
+        })
+        .map(toBooking);
+
+    res.json({ bookings });
+});
+
 app.post('/api/bookings', requireStudent, async (req, res) => {
     const body = req.body || {};
     const student = req.student;
-    const type = body.type === 'group' ? 'group' : 'individual';
     const consultationType = normalizePurpose(body.consultationType);
-    const durationMinutes = CONSULTATION_TYPES[consultationType].durationMinutes;
-    const reason = String(body.reason ?? '').trim();
+    const typeInfo = CONSULTATION_TYPES[consultationType];
+    const durationMinutes = typeInfo.durationMinutes;
+    const isDropoff = consultationType === 'dropoff';
+    const requiresGroup = consultationType === 'system' || consultationType === 'retrieval';
+    const type = (requiresGroup || body.type === 'group') ? 'group' : 'individual';
     const date = String(body.date ?? '');
     const startMinute = Number(body.startMinute);
+
+    if (consultationType === 'letter' && body.beninsigInitialConfirmed !== true) {
+        return res.status(400).json({
+            code: 'BENINSIG_REQUIRED',
+            error: "Please obtain the initial of Ma'am Melinda Beninsig on your communication letter first before scheduling a signature with your adviser.",
+        });
+    }
+
+    let rawReason = String(body.reason ?? '').trim();
+    if (!rawReason && consultationType === 'dropoff') {
+        rawReason = 'Manuscript drop-off for checking.';
+    } else if (!rawReason && consultationType === 'retrieval') {
+        rawReason = 'Retrieval of checked manuscript to discuss needed revisions.';
+    }
+    const reason = rawReason;
 
     let members;
     let teamName = null;
@@ -883,16 +976,28 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     if (type === 'group') {
         teamName = cleanName(body.teamName || student.capstone_title);
         if (teamName.length < 2 || teamName.length > 200) {
-            return res.status(400).json({ error: 'Please enter your Capstone / Thesis or team name (2–200 characters).' });
+            return res.status(400).json({
+                field: 'teamName',
+                error: 'Please enter your Capstone / Thesis title (2–200 characters).',
+            });
         }
-        members = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
+        const submittedMembers = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
+        const fallbackMembers = Array.isArray(student.members) && student.members.length ? student.members : [student.full_name];
+        members = submittedMembers.length ? submittedMembers : [...fallbackMembers];
         // Member 1 is always the logged-in student (the person responsible for the booking)
         members[0] = student.full_name;
         if (members.length < 2) {
-            return res.status(400).json({ error: 'A group booking needs at least 2 member names.' });
+            return res.status(400).json({
+                field: 'members',
+                error: consultationType === 'retrieval'
+                    ? 'At least 2 group members must be present for Manuscript Retrieval, otherwise you will not be accommodated.'
+                    : consultationType === 'system'
+                        ? 'All group members must be present during System Consultations (at least 2 members).'
+                        : 'A group booking needs at least 2 member names.',
+            });
         }
         if (members.length > MAX_MEMBERS) {
-            return res.status(400).json({ error: `A group can have at most ${MAX_MEMBERS} members.` });
+            return res.status(400).json({ field: 'members', error: `A group can have at most ${MAX_MEMBERS} members.` });
         }
     } else {
         // Individual bookings always use the verified account's name
@@ -901,53 +1006,81 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
 
     if (members.some((m) => m.length < 2 || m.length > 100)) {
         return res.status(400).json({
+            field: 'members',
             error: type === 'group'
                 ? 'Each member needs a full name (2–100 characters).'
                 : 'Please enter your full name (2–100 characters).',
         });
     }
     if (reason.length < 5 || reason.length > 1000) {
-        return res.status(400).json({ error: 'Please describe your reason (5–1000 characters).' });
+        return res.status(400).json({
+            field: 'reason',
+            error: 'Please provide brief details for this consultation (5–1000 characters).',
+        });
     }
 
     const now = nowInTz();
+    if (parseDate(date) && date <= now.date) {
+        return res.status(400).json({
+            error: 'Consultations must be scheduled at least 1 day before the consultation day.',
+        });
+    }
+
     const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
     if (!isBookableDate(date, now) || !validSlot || !isFutureSlot(date, startMinute, now)) {
         return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
     }
 
-    // Limit how many upcoming consultations one student can hold at once
-    if (AUTH.maxActiveBookings > 0) {
-        const { data: mine, error: mineErr } = await db()
-            .from(TABLE)
-            .select('*')
-            .eq('student_id', student.id)
-            .gte('appointment_date', now.date);
-        if (mineErr) return res.status(500).json({ error: mineErr.message });
-        const upcoming = mine.filter((r) => {
-            const [, end] = rowInterval(r);
-            return r.appointment_date > now.date || end > now.minuteOfDay;
-        });
-        if (upcoming.length >= AUTH.maxActiveBookings) {
+    // Check existing upcoming bookings for this student
+    const { data: mine, error: mineErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('student_id', student.id)
+        .gte('appointment_date', now.date);
+    if (mineErr) return res.status(500).json({ error: mineErr.message });
+
+    const upcomingMine = mine.filter((r) => {
+        const [, end] = rowInterval(r);
+        return r.appointment_date > now.date || end > now.minuteOfDay;
+    });
+
+    if (isDropoff) {
+        if (upcomingMine.some((r) => !isTimedRow(r) && r.appointment_date === date)) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: 'Your group has already scheduled a Manuscript Drop-off on this date.',
+            });
+        }
+        if (upcomingMine.filter((r) => !isTimedRow(r)).length >= 2) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: 'You already have pending Manuscript Drop-offs scheduled.',
+            });
+        }
+    } else if (AUTH.maxActiveBookings > 0) {
+        const upcomingTimed = upcomingMine.filter(isTimedRow);
+        if (upcomingTimed.length >= AUTH.maxActiveBookings) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
                 error: AUTH.maxActiveBookings === 1
-                    ? 'You already have an upcoming consultation. You can book again after it is done (or ask your instructor to cancel it).'
-                    : `You already have ${upcoming.length} upcoming consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done.`,
+                    ? 'You already have an upcoming timed consultation. You can book again after it is done (or ask your instructor to cancel it).'
+                    : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done.`,
             });
         }
     }
 
-    // Check for any overlapping booking on the same date
-    const { data: existingRows, error: existingErr } = await db()
-        .from(TABLE)
-        .select('*')
-        .eq('appointment_date', date);
-    if (existingErr) return res.status(500).json({ error: existingErr.message });
+    // For timed consultations, check for any overlapping timed booking on the same date
+    if (!isDropoff) {
+        const { data: existingRows, error: existingErr } = await db()
+            .from(TABLE)
+            .select('*')
+            .eq('appointment_date', date);
+        if (existingErr) return res.status(500).json({ error: existingErr.message });
 
-    const bookedIntervals = existingRows.map(rowInterval);
-    if (hasOverlap(validSlot.startMinute, validSlot.endMinute, bookedIntervals)) {
-        return res.status(409).json({ error: 'Sorry, someone just booked a slot that overlaps with that time. Please pick another time.' });
+        const bookedIntervals = existingRows.filter(isTimedRow).map(rowInterval);
+        if (hasOverlap(validSlot.startMinute, validSlot.endMinute, bookedIntervals)) {
+            return res.status(409).json({ error: 'Sorry, someone just booked a slot that overlaps with that time. Please pick another time.' });
+        }
     }
 
     const { data, error } = await db()
@@ -974,7 +1107,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         if (error.code === '23505') {
             return res.status(409).json({ error: 'Sorry, someone just booked that slot. Please pick another time.' });
         }
-        if (error.code === '42703' || error.code === 'PGRST204') {
+        if (error.code === '23514' || error.code === '42703' || error.code === 'PGRST204') {
             return res.status(500).json({
                 error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
             });
@@ -1024,6 +1157,70 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         currentMinute: now.minuteOfDay,
         bookings,
     });
+});
+
+// Send email notification to student that their dropped-off manuscript has been checked
+app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
+
+    const { data: row, error: fetchErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('id', req.params.id)
+        .maybeSingle();
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!row) return res.status(404).json({ error: 'Booking not found.' });
+    if (!row.student_email) {
+        return res.status(400).json({ error: 'This booking does not have a student email on file.' });
+    }
+
+    const title = row.capstone_title || row.team_name || 'your Capstone / Thesis manuscript';
+    const greeting = `Hi ${row.student_name},`;
+    const siteOrigin = `${req.protocol}://${req.get('host')}`;
+    const subject = `Manuscript Checked — Schedule Your Retrieval (${TEACHER_NAME})`;
+    const bodyText = [
+        greeting,
+        '',
+        `Good day! Your manuscript (${title}) has been checked by ${TEACHER_NAME}.`,
+        '',
+        'Please return to the consultation scheduling website to schedule a "Retrieval of Manuscript" (5 minutes) slot so your instructor can discuss the needed changes with your group:',
+        siteOrigin,
+        '',
+        'Important reminders:',
+        '• Consultations must be booked at least 1 day before the consultation day.',
+        '• At least 2 group members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
+    ].join('\n');
+
+    const bodyHtml = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Good day! Your manuscript (<strong>${escapeHtml(title)}</strong>) has been checked by <strong>${escapeHtml(TEACHER_NAME)}</strong>.</p>
+            <p>Please return to the consultation scheduling website and book a <strong>Retrieval of Manuscript (5 minutes)</strong> slot so your instructor can discuss the needed revisions with your group:</p>
+            <p style="margin:20px 0">
+                <a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">
+                    Schedule Manuscript Retrieval
+                </a>
+            </p>
+            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
+                <strong>Important reminders:</strong>
+                <ul style="margin:6px 0 0;padding-left:18px">
+                    <li>Bookings must be made at least <strong>1 day before</strong> the consultation day.</li>
+                    <li><strong>At least 2 group members must be present</strong> during Manuscript Retrieval, otherwise you will not be accommodated.</li>
+                </ul>
+            </div>
+        </div>`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: row.student_email,
+        subject,
+        text: bodyText,
+        html: bodyHtml,
+    });
+
+    const notifiedAt = new Date().toISOString();
+    await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
+    res.json({ ok: true, notifiedAt });
 });
 
 app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {

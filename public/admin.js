@@ -4,6 +4,14 @@
     const $ = (sel) => document.querySelector(sel);
     const STORAGE_KEY = 'arnemie_admin_pw';
 
+    const TYPE_BADGES = {
+        system: { label: 'System · 15m', cls: 'teal' },
+        dropoff: { label: 'Drop-off · 0m', cls: 'amber' },
+        retrieval: { label: 'Retrieval · 5m', cls: 'sky' },
+        letter: { label: 'Comm. Letter · 5m', cls: 'violet' },
+        other: { label: 'Other · 6m', cls: 'sky' },
+    };
+
     const state = {
         password: sessionStorage.getItem(STORAGE_KEY) || '',
         bookings: [],
@@ -35,7 +43,7 @@
         el.textContent = message;
         el.className = `toast show ${type}`;
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { el.className = 'toast'; }, 3500);
+        toastTimer = setTimeout(() => { el.className = 'toast'; }, 3800);
     }
 
     async function api(url, options = {}) {
@@ -67,7 +75,11 @@
         const errEl = $('#loginError');
         errEl.textContent = error || '';
         errEl.classList.toggle('hidden', !error);
-        setTimeout(() => $('#passwordInput').focus(), 50);
+        const pwInput = $('#passwordInput');
+        if (pwInput) {
+            pwInput.classList.toggle('input-invalid', Boolean(error));
+            setTimeout(() => pwInput.focus(), 50);
+        }
     }
 
     function showDashboard() {
@@ -78,15 +90,21 @@
     async function login(e) {
         e.preventDefault();
         if (state.loggingIn) return;
+        const pw = $('#passwordInput').value;
+        if (!pw) {
+            showLogin('Please enter your dashboard password.');
+            return;
+        }
         state.loggingIn = true;
         const btn = $('#loginBtn');
-        state.password = $('#passwordInput').value;
+        state.password = pw;
         btn.disabled = true;
         btn.querySelector('.spinner').classList.remove('hidden');
         try {
             await api('/api/admin/login', { method: 'POST' });
             sessionStorage.setItem(STORAGE_KEY, state.password);
             $('#passwordInput').value = '';
+            $('#passwordInput').classList.remove('input-invalid');
             showDashboard();
             await loadBookings();
         } catch (err) {
@@ -150,8 +168,8 @@
     };
 
     async function cancelBooking(b, btn) {
-        const who = b.type === 'group' && b.teamName
-            ? `${b.teamName} (${b.members.length} members)`
+        const who = b.type === 'group' && (b.teamName || b.capstoneTitle)
+            ? `${b.teamName || b.capstoneTitle} (${b.members.length} members)`
             : b.name;
         if (!confirm(`Cancel the appointment with ${who} on ${longDate(b.date)} at ${b.label}?`)) return;
         btn.disabled = true;
@@ -159,9 +177,28 @@
             await api(`/api/admin/bookings/${b.id}`, { method: 'DELETE' });
             state.bookings = state.bookings.filter((x) => x.id !== b.id);
             render();
-            toast('Appointment cancelled. The slot is open again.', 'success');
+            toast('Appointment cancelled.', 'success');
         } catch (err) {
             btn.disabled = false;
+            toast(err.message, 'error');
+        }
+    }
+
+    async function notifyManuscriptChecked(b, btn) {
+        const target = b.studentEmail || 'student';
+        const again = b.notifiedAt ? ' again' : '';
+        if (!confirm(`Send "Manuscript Checked — Please Schedule Retrieval" email${again} to ${target}?`)) return;
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = 'Sending…';
+        try {
+            const { notifiedAt } = await api(`/api/admin/bookings/${b.id}/notify-checked`, { method: 'POST' });
+            b.notifiedAt = notifiedAt;
+            render();
+            toast(`Notification emailed to ${target}.`, 'success');
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = prevText;
             toast(err.message, 'error');
         }
     }
@@ -171,6 +208,8 @@
         if (b.name.toLowerCase().includes(q)) return true;
         if (b.teamName && b.teamName.toLowerCase().includes(q)) return true;
         if (b.capstoneTitle && b.capstoneTitle.toLowerCase().includes(q)) return true;
+        if (b.consultationTitle && b.consultationTitle.toLowerCase().includes(q)) return true;
+        if (b.consultationType && b.consultationType.toLowerCase().includes(q)) return true;
         if (b.instructorRole && b.instructorRole.toLowerCase().includes(q)) return true;
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
         if (b.reason.toLowerCase().includes(q)) return true;
@@ -222,24 +261,33 @@
             group.appendChild(title);
 
             items.forEach((b) => {
-                const isGroup = b.type === 'group' && b.teamName;
+                const isGroup = b.type === 'group' && Array.isArray(b.members) && b.members.length >= 2;
                 const card = el('div', 'booking' + (isNow(b) ? ' now' : ''));
                 card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
 
                 const time = el('div', 'booking-time');
-                const [start, end] = b.label.split(' – ');
-                time.appendChild(el('strong', '', start));
-                time.appendChild(el('span', '', `to ${end}`));
+                const cleanRange = b.label.replace(' (Drop-off)', '');
+                const [start, end] = cleanRange.split(' – ');
+                if (b.isDropoff || b.consultationType === 'dropoff') {
+                    time.appendChild(el('strong', '', 'Drop-off'));
+                    time.appendChild(el('span', '', `${start} – ${end}`));
+                } else {
+                    time.appendChild(el('strong', '', start));
+                    time.appendChild(el('span', '', `to ${end}`));
+                }
 
                 const body = el('div', 'booking-body');
                 const header = el('div', 'booking-name');
-                const titleText = isGroup ? b.teamName : (b.capstoneTitle ? `${b.name} · ${b.capstoneTitle}` : b.name);
+                const groupHeading = b.capstoneTitle || b.teamName;
+                const titleText = groupHeading ? `${groupHeading}` : b.name;
                 header.appendChild(el('span', 'booking-title', titleText));
-                if (b.consultationType === 'other') {
-                    header.appendChild(el('span', 'badge sky', 'Other · 6m'));
-                } else {
-                    header.appendChild(el('span', 'badge teal', 'System / App · 1h 20m'));
-                }
+
+                const typeBadge = TYPE_BADGES[b.consultationType] || {
+                    label: `${b.consultationTitle || 'Consultation'} · ${b.durationLabel || ''}`,
+                    cls: 'teal',
+                };
+                header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
+
                 if (b.instructorRole === 'panel') {
                     header.appendChild(el('span', 'badge sky', 'Role: Panel Member'));
                 } else if (b.instructorRole === 'adviser') {
@@ -248,11 +296,14 @@
                 if (isGroup) {
                     header.appendChild(el('span', 'badge amber', `Group · ${b.members.length}`));
                 }
+                if (b.notifiedAt) {
+                    header.appendChild(el('span', 'badge teal', 'Checked email sent ✓'));
+                }
                 header.appendChild(el('code', '', b.reference));
                 if (isNow(b)) header.appendChild(el('span', 'badge teal', 'In progress'));
                 body.appendChild(header);
 
-                if (isGroup && Array.isArray(b.members) && b.members.length) {
+                if (Array.isArray(b.members) && b.members.length) {
                     const membersWrap = el('div', 'booking-members');
                     b.members.forEach((memberName) => {
                         membersWrap.appendChild(el('span', 'member-chip', memberName));
@@ -264,16 +315,25 @@
                 const bookedBy = b.studentEmail ? ` by ${b.studentEmail}` : '';
                 body.appendChild(el('p', 'booking-meta', `Booked${bookedBy} · ${new Date(b.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`));
 
-                card.append(time, body);
-
+                const actions = el('div', 'booking-actions');
+                if (b.consultationType === 'dropoff' && b.studentEmail) {
+                    const notifyBtn = el(
+                        'button',
+                        'btn btn-ghost btn-sm',
+                        b.notifiedAt ? 'Resend Checked Email' : 'Notify Checked'
+                    );
+                    notifyBtn.type = 'button';
+                    notifyBtn.addEventListener('click', () => notifyManuscriptChecked(b, notifyBtn));
+                    actions.appendChild(notifyBtn);
+                }
                 if (state.tab === 'upcoming') {
                     const btn = el('button', 'btn btn-danger-soft', 'Cancel');
                     btn.type = 'button';
                     btn.addEventListener('click', () => cancelBooking(b, btn));
-                    card.appendChild(btn);
-                } else {
-                    card.appendChild(el('span'));
+                    actions.appendChild(btn);
                 }
+
+                card.append(time, body, actions);
                 group.appendChild(card);
             });
 
@@ -284,6 +344,9 @@
     /* ---------------- init ---------------- */
     $('#year').textContent = new Date().getFullYear();
     $('#loginForm').addEventListener('submit', login);
+    $('#passwordInput')?.addEventListener('input', () => {
+        $('#passwordInput').classList.remove('input-invalid');
+    });
     $('#logoutBtn').addEventListener('click', logout);
     $('#refreshBtn').addEventListener('click', async () => {
         const ok = await loadBookings();

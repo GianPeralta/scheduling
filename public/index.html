@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Book a Consultation</title>
-    <meta name="description" content="Schedule a consultation with Arnemie Gayyed — individually or as a group." />
+    <title>Book a Consultation · Arnemie Gayyed</title>
+    <meta name="description" content="Schedule a consultation, manuscript drop-off/retrieval, or communication letter signature with Arnemie Gayyed." />
     <meta name="theme-color" content="#0f766e" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -15,7 +15,19 @@
 </head>
 <body>
     <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand-mark">AG</span>
+            <span class="brand-text">
+                <strong>Consultation Scheduler</strong>
+                <small>Arnemie Gayyed</small>
+            </span>
+        </a>
         <div class="topbar-actions">
+            <button type="button" class="topbar-link hidden" id="myBookingsBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                <span>My bookings</span>
+                <span class="nav-count hidden" id="myBookingsCount">0</span>
+            </button>
             <div class="account-box hidden" id="accountBox">
                 <span class="account-avatar" id="accountAvatar"></span>
                 <span class="account-text">
@@ -43,6 +55,21 @@
                     </div>
                 </div>
 
+                <ul class="meta">
+                    <li>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        <span id="location">Faculty Office</span>
+                    </li>
+                    <li>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                        <span>Book at least 1 day ahead</span>
+                    </li>
+                    <li>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                        <span id="deadlineMeta">Tue – Thu schedule</span>
+                    </li>
+                </ul>
+
                 <div class="selection hidden" id="selectionBox">
                     <p class="selection-label">Your selection</p>
                     <p class="selection-purpose" id="selectionPurpose"></p>
@@ -50,9 +77,9 @@
                     <p class="selection-time" id="selectionTime"></p>
                 </div>
 
-                <div class="steps">
+                <div class="steps" role="navigation" aria-label="Booking progress">
                     <div class="step active" data-step="1"><span>1</span> Consultation type</div>
-                    <div class="step" data-step="2"><span>2</span> Choose date &amp; time</div>
+                    <div class="step" data-step="2"><span>2</span> Date &amp; time</div>
                     <div class="step" data-step="3"><span>3</span> Sign in &amp; details</div>
                     <div class="step" data-step="4"><span>4</span> Confirmed</div>
                 </div>
@@ -62,39 +89,92 @@
             <div class="panel step-panel" id="step1">
                 <div class="type-step">
                     <div class="type-step-header">
-                        <span class="pill"><span class="pulse-dot"></span> Step 1 of 3 · Required first step</span>
-                        <h3>What is your consultation about?</h3>
+                        <span class="pill"><span class="pulse-dot"></span> Step 1 of 3 · Choose consultation purpose</span>
+                        <h3>What would you like to schedule?</h3>
+                        <p class="muted">All consultations must be scheduled at least <strong>1 day before</strong> the consultation day.</p>
                     </div>
 
                     <div class="type-choice-grid">
+                        <!-- 1. System Consultation (15 min) -->
                         <button type="button" class="type-choice-card" data-purpose="system">
                             <div class="type-choice-top">
                                 <div class="type-choice-icon teal">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="m10 9-2 2 2 2M14 9l2 2-2 2"/></svg>
                                 </div>
-                                <span class="type-duration-pill teal">1 hr 20 min</span>
+                                <span class="type-duration-pill teal">15 minutes</span>
                             </div>
                             <div class="type-choice-content">
                                 <h4>System Consultation</h4>
+                                <p>Present and consult about the system, software, or web app your group built.</p>
+                                <div class="type-note teal">
+                                    <strong>Requirement:</strong> All group members must be present during System Consultations.
+                                </div>
                             </div>
                             <div class="type-choice-cta">
-                                <span>Select &amp; choose a time</span>
+                                <span>Select &amp; pick a date</span>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                             </div>
                         </button>
 
-                        <button type="button" class="type-choice-card" data-purpose="other">
+                        <!-- 2. Drop-off Manuscript (0 min) -->
+                        <button type="button" class="type-choice-card" data-purpose="dropoff">
                             <div class="type-choice-top">
-                                <div class="type-choice-icon sky">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>
+                                <div class="type-choice-icon amber">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>
                                 </div>
-                                <span class="type-duration-pill sky">6 minutes</span>
+                                <span class="type-duration-pill amber">Drop-off only · 0 min</span>
                             </div>
                             <div class="type-choice-content">
-                                <h4>Other Consultation</h4>
+                                <h4>Drop-off Manuscript</h4>
+                                <p>Drop off only — no minutes are taken off the consultation schedule.</p>
+                                <div class="type-note amber">
+                                    <strong>Email notice:</strong> Once your manuscript is checked, you will be notified via your registered school email.
+                                </div>
                             </div>
                             <div class="type-choice-cta">
-                                <span>Select &amp; choose a time</span>
+                                <span>Select &amp; pick a date</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                            </div>
+                        </button>
+
+                        <!-- 3. Retrieval of Manuscript (5 min) -->
+                        <button type="button" class="type-choice-card" data-purpose="retrieval">
+                            <div class="type-choice-top">
+                                <div class="type-choice-icon sky">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
+                                </div>
+                                <span class="type-duration-pill sky">5 minutes</span>
+                            </div>
+                            <div class="type-choice-content">
+                                <h4>Retrieval of Manuscript</h4>
+                                <p>Once notified by email that your manuscript is checked, schedule this to discuss needed revisions.</p>
+                                <div class="type-note sky">
+                                    <strong>Requirement:</strong> At least 2 group members must be present, otherwise you will not be accommodated.
+                                </div>
+                            </div>
+                            <div class="type-choice-cta">
+                                <span>Select &amp; pick a date</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                            </div>
+                        </button>
+
+                        <!-- 4. Communication Letter Signature (5 min) -->
+                        <button type="button" class="type-choice-card" data-purpose="letter">
+                            <div class="type-choice-top">
+                                <div class="type-choice-icon violet">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                                </div>
+                                <span class="type-duration-pill violet">5 minutes</span>
+                            </div>
+                            <div class="type-choice-content">
+                                <h4>Communication Letter Signature</h4>
+                                <p>Request your adviser’s signature on an official communication letter.</p>
+                                <div class="type-note violet">
+                                    <strong>Prerequisite:</strong> Letter must already have the initial of <strong>Ma’am Melinda Beninsig</strong> first.
+                                </div>
+                            </div>
+                            <div class="type-choice-cta">
+                                <span>Check prerequisite &amp; schedule</span>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                             </div>
                         </button>
@@ -109,12 +189,13 @@
                         <span class="active-purpose-label">Selected consultation</span>
                         <div class="active-purpose-title">
                             <strong id="bannerPurposeTitle">System Consultation</strong>
-                            <span class="badge teal" id="bannerPurposeBadge">1 hr 20 min</span>
+                            <span class="badge teal" id="bannerPurposeBadge">15 minutes</span>
                         </div>
+                        <p class="active-purpose-note" id="bannerPurposeNote"></p>
                     </div>
                     <button type="button" class="change-purpose-btn" id="changePurposeBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                        Change consultation type
+                        Change type
                     </button>
                 </div>
 
@@ -138,6 +219,9 @@
                         <span><i class="dot dot-open"></i> Available</span>
                         <span><i class="dot dot-full"></i> Fully booked</span>
                     </div>
+                    <p class="calendar-rule muted small">
+                        Bookings must be made at least <strong>1 day before</strong> the consultation day (same-day booking is closed).
+                    </p>
                 </div>
 
                 <div class="slots">
@@ -155,7 +239,7 @@
                 </div>
             </div>
 
-            <!-- Step 3: Details form -->
+            <!-- Step 3: Sign in & Details -->
             <div class="panel step-panel hidden" id="step3">
                 <!-- Step 3a: Log in / register (shown when the student is not signed in) -->
                 <div class="details-form auth-view hidden" id="authView">
@@ -180,6 +264,9 @@
                         </label>
                     </div>
 
+                    <!-- Top-level form alert so general errors are immediately visible -->
+                    <div class="form-error hidden" id="authError" role="alert"></div>
+
                     <!-- Log in -->
                     <form class="auth-form" id="loginForm" novalidate>
                         <label class="field">
@@ -188,11 +275,14 @@
                         </label>
                         <label class="field">
                             <span>Password</span>
-                            <input type="password" id="loginPassword" maxlength="128" autocomplete="current-password" />
+                            <div class="password-wrap">
+                                <input type="password" id="loginPassword" maxlength="128" autocomplete="current-password" />
+                                <button type="button" class="pw-toggle" data-target="loginPassword" aria-label="Show password">Show</button>
+                            </div>
                         </label>
                         <button type="button" class="link-btn" id="forgotLink">Forgot password?</button>
                         <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
-                            <span class="btn-label">Log in</span>
+                            <span class="btn-label">Log in &amp; continue</span>
                             <span class="spinner hidden"></span>
                         </button>
                     </form>
@@ -200,7 +290,7 @@
                     <!-- Register -->
                     <form class="auth-form hidden" id="registerForm" novalidate>
                         <div class="group-register-notice">
-                            <strong>Important:</strong> Only <strong>one representative per Capstone / Thesis group</strong> may register an account. Your single account will be used to book consultations for your entire group.
+                            <strong>One account per group:</strong> Only <strong>one representative per Capstone / Thesis group</strong> may register an account. Your account will be used to book all consultations for your group.
                         </div>
 
                         <label class="field">
@@ -217,7 +307,7 @@
                             <input type="text" id="regCapstone" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
                         </label>
                         <div class="field">
-                            <span>Instructor's role for your group</span>
+                            <span>Arnemie Gayyed’s role for your group</span>
                             <div class="segmented" role="radiogroup" aria-label="Instructor role">
                                 <label>
                                     <input type="radio" name="regRole" value="adviser" checked />
@@ -229,7 +319,7 @@
                                 </label>
                             </div>
                         </div>
-                        <div class="field">
+                        <div class="field" id="regMembersField">
                             <span>Group members <small class="muted" id="regMemberCount"></small></span>
                             <div class="member-list" id="regMemberList"></div>
                             <button type="button" class="add-member" id="regAddMemberBtn">
@@ -239,11 +329,17 @@
                         </div>
                         <label class="field">
                             <span>Password</span>
-                            <input type="password" id="regPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
+                            <div class="password-wrap">
+                                <input type="password" id="regPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
+                                <button type="button" class="pw-toggle" data-target="regPassword" aria-label="Show password">Show</button>
+                            </div>
                         </label>
                         <label class="field">
                             <span>Confirm password</span>
-                            <input type="password" id="regPassword2" maxlength="128" autocomplete="new-password" />
+                            <div class="password-wrap">
+                                <input type="password" id="regPassword2" maxlength="128" placeholder="Re-enter your password" autocomplete="new-password" />
+                                <button type="button" class="pw-toggle" data-target="regPassword2" aria-label="Show password">Show</button>
+                            </div>
                         </label>
                         <button type="submit" class="btn btn-primary btn-block" id="registerBtn">
                             <span class="btn-label">Send verification code</span>
@@ -268,17 +364,20 @@
                     <form class="auth-form hidden" id="otpForm" novalidate>
                         <div class="otp-sent">
                             We sent a 6-digit code to <strong id="otpEmail"></strong>.
-                            Check your inbox (and spam folder).
+                            Check your inbox (and spam/junk folder).
                         </div>
                         <label class="field">
-                            <span>Verification code</span>
+                            <span>6-digit verification code</span>
                             <input type="text" id="otpCode" class="otp-input" maxlength="6" inputmode="numeric"
                                    autocomplete="one-time-code" pattern="[0-9]*" placeholder="••••••" />
                         </label>
                         <div id="resetPasswordFields" class="hidden">
                             <label class="field">
                                 <span>New password</span>
-                                <input type="password" id="resetPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
+                                <div class="password-wrap">
+                                    <input type="password" id="resetPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
+                                    <button type="button" class="pw-toggle" data-target="resetPassword" aria-label="Show password">Show</button>
+                                </div>
                             </label>
                         </div>
                         <button type="submit" class="btn btn-primary btn-block" id="otpBtn">
@@ -287,11 +386,9 @@
                         </button>
                         <div class="otp-actions">
                             <button type="button" class="link-btn" id="resendBtn">Resend code</button>
-                            <button type="button" class="link-btn" id="otpChangeEmail">Use a different email</button>
+                            <button type="button" class="link-btn" id="otpChangeEmail">Edit registration details</button>
                         </div>
                     </form>
-
-                    <div class="form-error hidden" id="authError"></div>
                 </div>
 
                 <!-- Step 3b: Booking details (shown when signed in) -->
@@ -300,47 +397,55 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                         Back to date &amp; time
                     </button>
-                    <h3>Enter your details</h3>
-                    <p class="muted small">Let me know who's coming and what you'd like to discuss.</p>
+                    <div>
+                        <h3 id="bookingFormTitle">Review &amp; confirm your booking</h3>
+                        <p class="muted small" id="bookingFormSubtitle">Verify your group details below before confirming.</p>
+                    </div>
 
-                    <div class="field">
-                        <span>Who is coming?</span>
+                    <!-- Contextual consultation rule callout -->
+                    <div class="policy-callout" id="bookingPolicyNotice"></div>
+
+                    <!-- Top-level form alert so general booking errors are immediately visible -->
+                    <div class="form-error hidden" id="formError" role="alert"></div>
+
+                    <div class="field" id="attendanceToggleField">
+                        <span>Who will attend?</span>
                         <div class="segmented" role="radiogroup" aria-label="Booking type">
                             <label>
-                                <input type="radio" name="bookingType" value="individual" checked />
+                                <input type="radio" name="bookingType" value="individual" />
                                 <span>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                                    Just me
+                                    Representative only
                                 </span>
                             </label>
                             <label>
-                                <input type="radio" name="bookingType" value="group" />
+                                <input type="radio" name="bookingType" value="group" checked />
                                 <span>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                    Group / team
+                                    Group / members
                                 </span>
                             </label>
                         </div>
                     </div>
 
                     <!-- Individual -->
-                    <div id="individualFields">
+                    <div id="individualFields" class="hidden">
                         <label class="field">
-                            <span>Full name</span>
+                            <span>Representative full name</span>
                             <input type="text" id="nameInput" maxlength="100" readonly autocomplete="name" />
-                            <small class="muted field-hint">From your verified account.</small>
+                            <small class="muted field-hint">From your verified university account.</small>
                         </label>
                     </div>
 
                     <!-- Group -->
-                    <div id="groupFields" class="group-fields hidden">
+                    <div id="groupFields" class="group-fields">
                         <label class="field">
                             <span>Capstone / Thesis title</span>
                             <input type="text" id="teamInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
                         </label>
 
-                        <div class="field">
-                            <span>Members <small class="muted" id="memberCount"></small></span>
+                        <div class="field" id="bookingMembersField">
+                            <span><span id="membersFieldLabel">Attending group members</span> <small class="muted" id="memberCount"></small></span>
                             <div class="member-list" id="memberList"></div>
                             <button type="button" class="add-member" id="addMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -350,12 +455,13 @@
                     </div>
 
                     <label class="field">
-                        <span>Reason for the meeting</span>
-                        <textarea id="reasonInput" rows="4" maxlength="1000" placeholder="e.g. We'd like to consult about the system/web app we built and get feedback."></textarea>
+                        <span>
+                            <span id="reasonLabelText">Agenda / Reason for consultation</span>
+                            <small class="muted" id="reasonOptionalHint"></small>
+                        </span>
+                        <textarea id="reasonInput" rows="3" maxlength="1000" placeholder="e.g. Present our system modules and ask for feedback."></textarea>
                         <small class="counter"><span id="reasonCount">0</span>/1000</small>
                     </label>
-
-                    <div class="form-error hidden" id="formError"></div>
 
                     <button type="submit" class="btn btn-primary btn-block" id="submitBtn">
                         <span class="btn-label">Confirm booking</span>
@@ -370,30 +476,85 @@
                     <div class="success-icon">
                         <svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24" fill="none"/><path fill="none" d="m15 27 7 7 15-15"/></svg>
                     </div>
-                    <h3>You're booked!</h3>
-                    <p class="muted">Your consultation with Arnemie Gayyed is scheduled. Please be on time.</p>
+                    <h3 id="confirmHeading">You're scheduled!</h3>
+                    <p class="muted" id="confirmSubheading">Your schedule with Arnemie Gayyed is confirmed. Please arrive on time.</p>
+
+                    <div class="policy-callout" id="cReminderNote"></div>
 
                     <div class="ticket">
                         <div class="ticket-row"><span>Consultation</span><strong id="cPurpose"></strong></div>
                         <div class="ticket-row hidden" id="cRoleRow"><span>Instructor role</span><strong id="cRole"></strong></div>
                         <div class="ticket-row hidden" id="cTeamRow"><span>Capstone / Thesis</span><strong id="cTeam"></strong></div>
-                        <div class="ticket-row"><span id="cNameLabel">Name</span><strong id="cName"></strong></div>
+                        <div class="ticket-row"><span id="cNameLabel">Attending</span><strong id="cName"></strong></div>
                         <div class="ticket-row"><span>Date</span><strong id="cDate"></strong></div>
                         <div class="ticket-row"><span>Time</span><strong id="cTime"></strong></div>
                         <div class="ticket-row"><span>Location</span><strong id="cLocation"></strong></div>
-                        <div class="ticket-row ticket-reason"><span>Reason</span><p id="cReason"></p></div>
+                        <div class="ticket-row ticket-reason"><span>Details</span><p id="cReason"></p></div>
                         <div class="ticket-ref">Reference <code id="cRef"></code></div>
                     </div>
 
-                    <p class="muted small">Take a screenshot of this confirmation for your records.</p>
-                    <button class="btn btn-ghost" id="bookAnother">Book another time</button>
+                    <p class="muted small">Save a screenshot of this confirmation for your group’s records.</p>
+                    <button class="btn btn-ghost" id="bookAnother">Schedule another consultation</button>
                 </div>
             </div>
         </section>
     </main>
 
+    <!-- Prerequisite Gate Modal: Ma'am Melinda Beninsig's Initial for Communication Letter -->
+    <div class="modal-backdrop hidden" id="beninsigModal" role="dialog" aria-modal="true" aria-labelledby="beninsigModalTitle">
+        <div class="modal-card">
+            <!-- View 1: Ask if they already have Ma'am Beninsig's initial -->
+            <div id="beninsigAskView" class="modal-body">
+                <div class="modal-icon violet">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </div>
+                <h3 id="beninsigModalTitle">Prerequisite Check: Communication Letter</h3>
+                <p class="muted">
+                    Does your communication letter already have the <strong>initial of Ma’am Melinda Beninsig</strong> before requesting your adviser’s signature?
+                </p>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="beninsigYesBtn">
+                        Yes, it already has Ma’am Beninsig’s initial
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-block" id="beninsigNoBtn">
+                        No, not yet
+                    </button>
+                </div>
+            </div>
+
+            <!-- View 2: Prompt student to go to Ma'am Beninsig first -->
+            <div id="beninsigNoView" class="modal-body hidden">
+                <div class="modal-icon amber">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                </div>
+                <h3>Please go to Ma’am Melinda Beninsig first</h3>
+                <div class="policy-callout amber">
+                    Your communication letter must have the <strong>initial of Ma’am Melinda Beninsig</strong> before requesting your adviser’s signature. Please visit <strong>Ma’am Melinda Beninsig</strong> first, then come back here to schedule your 5-minute signature slot.
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="beninsigCloseBtn">
+                        Got it, I will go to Ma’am Beninsig first
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logged-in Student's Upcoming Bookings Modal -->
+    <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
+        <div class="modal-card modal-wide">
+            <div class="modal-head">
+                <h3 id="myBookingsTitle">Your Upcoming Schedule</h3>
+                <button type="button" class="icon-btn" id="closeMyBookingsBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="my-bookings-list" id="myBookingsList"></div>
+        </div>
+    </div>
+
     <footer class="footer">
-        <p>© <span id="year"></span> Consultation booking</p>
+        <p>© <span id="year"></span> Consultation Scheduler · Arnemie Gayyed</p>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

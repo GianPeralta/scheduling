@@ -6,25 +6,26 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 ## Features
 
 **Students (`/`)**
-- **Student accounts**: students must log in to book. Registration only accepts university emails (`ALLOWED_EMAIL_DOMAINS`) and is verified with a 6‑digit code sent by SMTP. Includes "forgot password" via emailed code, login lockout after repeated failures, and a per‑student limit on upcoming bookings.
-- **Two consultation types**:
-  - **System Consultation** (`1 hr 20 min`): For students or groups consulting about the system, software, or web app they made.
-  - **Other Consultation** (`6 minutes`): Quick check-in for any other questions or concerns.
+- **Student accounts (1 representative per Capstone/Thesis group)**: students register once per group with their university email (`ALLOWED_EMAIL_DOMAINS`), Capstone/Thesis title, group members, and instructor role (`Adviser` or `Panel Member`), verified via a 6‑digit SMTP OTP.
+- **1-day advance booking rule**: consultations must be scheduled at least 1 day before the consultation day (same-day booking is closed).
+- **Four consultation types**:
+  1. **System Consultation** (`15 minutes`): All group members must be present.
+  2. **Drop-off Manuscript** (`Drop-off only · 0 min`): Deducts 0 minutes from the schedule; students are notified via their school email once their manuscript is checked.
+  3. **Retrieval of Manuscript** (`5 minutes`): Scheduled once students receive the email saying their manuscript is checked; at least 2 group members must be present.
+  4. **Communication Letter Signature** (`5 minutes`): Interactive prerequisite check verifying the letter already bears the initial of **Ma'am Melinda Beninsig** before continuing.
 - **Weekly schedule (Tuesday – Thursday)** until **December 10**:
   - **Tuesday**: 2:10 PM – 3:30 PM
   - **Wednesday**: 12:50 PM – 2:10 PM
   - **Thursday**: 2:10 PM – 3:30 PM
-- Automatic overlap prevention between 1 hr 20 min and 6-minute slots
-- **Individual or Group booking**:
-  - *Just me*: enter full name + reason for the meeting
-  - *Group / team*: enter team name, 2–10 member names, + reason for the meeting
-- Confirmation ticket with a unique booking reference
+- Automatic overlap prevention across 15-minute and 5-minute timed slots (while 0-minute Drop-offs never block timed slots)
+- Confirmation ticket with a unique booking reference + **"My bookings"** modal for signed-in students
 
 **Arnemie's Dashboard (`/admin.html`)**
 - Password‑protected (`ADMIN_PASSWORD`)
 - Summary stats: today, next 7 days, all upcoming
-- Upcoming / Past tabs grouped by date, showing consultation duration badge (`System / App · 1h 20m` or `Other · 6m`), individual names or team names + member chips
-- Instant search across student names, team names, group members, reasons, and reference codes
+- Upcoming / Past tabs grouped by date, showing consultation badges (`System · 15m`, `Drop-off · 0m`, `Retrieval · 5m`, `Comm. Letter · 5m`), `Adviser` / `Panel Member` role badges, Capstone/Thesis titles, and member chips
+- One‑click **"Notify Checked"** button on Drop-off Manuscript cards to automatically email the group's registered university address when their manuscript is ready for retrieval
+- Instant search across student names, emails, Capstone/Thesis titles, group members, reasons, and reference codes
 - One‑click cancel to free up a time slot again
 
 ## Setup

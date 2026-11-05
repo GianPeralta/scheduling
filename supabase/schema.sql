@@ -8,12 +8,11 @@ create table if not exists public.appointments (
     appointment_date  date        not null,
     start_hour        smallint    not null,
     start_minute      smallint    not null check (start_minute between 0 and 1439),
-    duration_minutes  smallint    not null default 80 check (duration_minutes in (6, 80)),
-    consultation_type text        not null default 'system' check (consultation_type in ('system', 'other')),
-    created_at        timestamptz not null default now(),
-
-    -- A specific start minute on a date can only be booked once
-    constraint appointments_date_start_minute_unique unique (appointment_date, start_minute)
+    duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 15, 80)),
+    consultation_type text        not null default 'system'
+                                  check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other')),
+    notified_at       timestamptz,
+    created_at        timestamptz not null default now()
 );
 
 -- Group bookings:
@@ -38,18 +37,22 @@ update public.appointments
  where start_minute is null;
 
 alter table public.appointments alter column start_minute set not null;
+alter table public.appointments add column if not exists notified_at timestamptz;
 alter table public.appointments drop constraint if exists appointments_slot_unique;
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
+alter table public.appointments drop constraint if exists appointments_duration_minutes_check;
+alter table public.appointments add constraint appointments_duration_minutes_check
+    check (duration_minutes in (0, 5, 6, 15, 80));
+alter table public.appointments drop constraint if exists appointments_consultation_type_check;
+alter table public.appointments add constraint appointments_consultation_type_check
+    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other'));
 
-do $$
-begin
-    if not exists (
-        select 1 from pg_constraint where conname = 'appointments_date_start_minute_unique'
-    ) then
-        alter table public.appointments
-            add constraint appointments_date_start_minute_unique unique (appointment_date, start_minute);
-    end if;
-end $$;
+-- Drop-off manuscripts have duration_minutes = 0 and take no time off the schedule,
+-- so only timed consultations (duration_minutes > 0) lock a specific start_minute.
+alter table public.appointments drop constraint if exists appointments_date_start_minute_unique;
+create unique index if not exists appointments_timed_slot_unique
+    on public.appointments (appointment_date, start_minute)
+    where duration_minutes > 0;
 
 create index if not exists appointments_date_idx on public.appointments (appointment_date);
 
