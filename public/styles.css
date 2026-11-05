@@ -1844,6 +1844,15 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     font-size: 0.8rem;
     line-height: 1.45;
 }
+.type-note ul {
+    margin: 5px 0 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+}
+.type-note li {
+    margin: 0;
+}
 .type-note.teal {
     background-color: var(--primary-soft);
     border: 1px solid var(--primary-border);
