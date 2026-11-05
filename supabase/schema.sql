@@ -8,9 +8,9 @@ create table if not exists public.appointments (
     appointment_date  date        not null,
     start_hour        smallint    not null,
     start_minute      smallint    not null check (start_minute between 0 and 1439),
-    duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 15, 80)),
+    duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 15, 60, 80, 120)),
     consultation_type   text        not null default 'system'
-                                    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other')),
+                                    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other')),
     status              text        not null default 'scheduled'
                                     check (status in ('scheduled', 'cancelled')),
     cancellation_reason text        check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500),
@@ -58,10 +58,16 @@ alter table public.appointments drop constraint if exists appointments_slot_uniq
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
 alter table public.appointments drop constraint if exists appointments_duration_minutes_check;
 alter table public.appointments add constraint appointments_duration_minutes_check
-    check (duration_minutes in (0, 5, 6, 15, 80));
+    check (duration_minutes in (0, 5, 6, 15, 60, 80, 120));
 alter table public.appointments drop constraint if exists appointments_consultation_type_check;
 alter table public.appointments add constraint appointments_consultation_type_check
-    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other'));
+    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other'));
+
+-- Defenses: 'capstone1' / 'thesis1' = 1 hour (60), 'capstone2' / 'thesis2' = 2 hours (120)
+alter table public.appointments add column if not exists defense_level text;
+alter table public.appointments drop constraint if exists appointments_defense_level_check;
+alter table public.appointments add constraint appointments_defense_level_check
+    check (defense_level is null or defense_level in ('capstone1', 'capstone2', 'thesis1', 'thesis2'));
 
 -- Drop-off manuscripts (duration_minutes = 0) and cancelled appointments (status = 'cancelled')
 -- do not lock time slots on the schedule.
@@ -72,6 +78,24 @@ create unique index appointments_timed_slot_unique
     where duration_minutes > 0 and status <> 'cancelled';
 
 create index if not exists appointments_date_idx on public.appointments (appointment_date);
+
+-- Safety net against double-booking: no two active timed appointments (consultations or defenses)
+-- may overlap on the same day. The server already checks this; the constraint also blocks the rare
+-- case of two students submitting overlapping times at the same instant.
+-- If old data already contains overlaps, this step is skipped with a notice (everything else still works).
+create extension if not exists btree_gist;
+do $$
+begin
+    if not exists (select 1 from pg_constraint where conname = 'appointments_no_overlap') then
+        alter table public.appointments add constraint appointments_no_overlap
+            exclude using gist (
+                appointment_date with =,
+                int4range(start_minute, start_minute + duration_minutes) with &&
+            ) where (duration_minutes > 0 and status <> 'cancelled');
+    end if;
+exception when others then
+    raise notice 'Skipped appointments_no_overlap constraint: %', sqlerrm;
+end $$;
 
 -- Row Level Security: nobody can read/write the table directly from a browser.
 -- The Express server talks to Supabase using SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS.
@@ -104,6 +128,12 @@ alter table public.students add column if not exists members text[] not null def
 alter table public.students drop constraint if exists students_members_check;
 alter table public.students add constraint students_members_check
     check (cardinality(members) <= 3) not valid;
+
+-- The group's current course (chosen at registration, updated when they book a defense)
+alter table public.students add column if not exists project_level text;
+alter table public.students drop constraint if exists students_project_level_check;
+alter table public.students add constraint students_project_level_check
+    check (project_level is null or project_level in ('capstone1', 'capstone2', 'thesis1', 'thesis2'));
 
 -- One-time codes emailed for registration / password reset (permanent log of all attempts)
 create table if not exists public.email_otps (

@@ -54,7 +54,10 @@
                 <div class="project-box hidden" id="studentProjectBox">
                     <div class="project-box-head">
                         <span class="selection-label">Capstone / Thesis</span>
-                        <span class="badge teal" id="projectRoleBadge">Adviser</span>
+                        <div class="badge-row">
+                            <span class="badge rose hidden" id="projectLevelBadge"></span>
+                            <span class="badge teal" id="projectRoleBadge">Adviser</span>
+                        </div>
                     </div>
                     <p class="project-box-title" id="projectTitleText"></p>
                     <p class="muted small" id="projectMembersText"></p>
@@ -154,6 +157,27 @@
                                 </label>
                             </div>
                         </div>
+                        <div class="field" id="regLevelField">
+                            <span>Course <small class="muted">(used for defense length)</small></span>
+                            <div class="segmented level-segmented" role="radiogroup" aria-label="Course">
+                                <label>
+                                    <input type="radio" name="regLevel" value="capstone1" />
+                                    <span>Capstone 1</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="regLevel" value="capstone2" />
+                                    <span>Capstone 2</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="regLevel" value="thesis1" />
+                                    <span>Thesis 1</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="regLevel" value="thesis2" />
+                                    <span>Thesis 2</span>
+                                </label>
+                            </div>
+                        </div>
                         <div class="field" id="regMembersField">
                             <span>Members <small class="muted" id="regMemberCount"></small></span>
                             <div class="member-list" id="regMemberList"></div>
@@ -232,7 +256,7 @@
                     <div class="cancelled-alert hidden" id="cancelledAlertBanner" role="alert"></div>
 
                     <div class="type-step-header">
-                        <h3>Select a consultation</h3>
+                        <h3>Select a consultation or defense</h3>
                         <p class="muted">Schedule at least <strong>1 day before</strong> the consultation day. Note: You can only cancel an appointment at least <strong>2 hours before</strong> the schedule.</p>
                     </div>
 
@@ -302,6 +326,25 @@
                                 <h4>Communication Letter Signature</h4>
                                 <div class="type-note violet">
                                     <strong>Prerequisite:</strong> Letter must already have the initial of <strong>Ma’am Melinda Beninsig</strong> first.
+                                </div>
+                            </div>
+                        </button>
+
+                        <!-- 5. Capstone / Thesis Defense (1 hour or 2 hours depending on course) -->
+                        <button type="button" class="type-choice-card defense-choice-card" id="defenseChoiceCard" data-purpose="defense">
+                            <div class="type-choice-top">
+                                <div class="type-choice-icon rose">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                                </div>
+                                <span class="type-duration-pill rose" id="defenseCardPill">1–2 hours</span>
+                            </div>
+                            <div class="type-choice-content">
+                                <h4>Capstone / Thesis Defense</h4>
+                                <div class="type-note rose">
+                                    <ul>
+                                        <li><strong>Capstone 1 / Thesis 1:</strong> 1 hour &nbsp;·&nbsp; <strong>Capstone 2 / Thesis 2:</strong> 2 hours</li>
+                                        <li>Type your preferred start time within the defense schedule (Mon–Sat). All members must be present.</li>
+                                    </ul>
                                 </div>
                             </div>
                         </button>
@@ -414,7 +457,7 @@
                     <h3 id="confirmHeading">Scheduled!</h3>
 
                     <div class="ticket">
-                        <div class="ticket-row"><span>Consultation</span><strong id="cPurpose"></strong></div>
+                        <div class="ticket-row"><span id="cPurposeLabel">Consultation</span><strong id="cPurpose"></strong></div>
                         <div class="ticket-row hidden" id="cTeamRow"><span>Capstone / Thesis</span><strong id="cTeam"></strong></div>
                         <div class="ticket-row"><span id="cNameLabel">Members</span><strong id="cName"></strong></div>
                         <div class="ticket-row"><span>Date</span><strong id="cDate"></strong></div>
@@ -466,6 +509,41 @@
         </div>
     </div>
 
+    <!-- Defense level picker: decides the defense length (1 hour vs 2 hours) -->
+    <div class="modal-backdrop hidden" id="defenseLevelModal" role="dialog" aria-modal="true" aria-labelledby="defenseLevelTitle">
+        <div class="modal-card">
+            <div class="modal-body">
+                <h3 id="defenseLevelTitle">Which defense are you scheduling?</h3>
+                <p class="muted">
+                    This decides how long your defense will be. Pre-selected from your account — change it if your group has moved on (e.g. Capstone 1 → Capstone 2).
+                </p>
+                <div class="level-options" id="defenseLevelOptions" role="radiogroup" aria-label="Defense level">
+                    <label class="level-option">
+                        <input type="radio" name="defenseLevel" value="capstone1" />
+                        <span><strong>Capstone 1</strong><small>1 hour</small></span>
+                    </label>
+                    <label class="level-option">
+                        <input type="radio" name="defenseLevel" value="capstone2" />
+                        <span><strong>Capstone 2</strong><small>2 hours</small></span>
+                    </label>
+                    <label class="level-option">
+                        <input type="radio" name="defenseLevel" value="thesis1" />
+                        <span><strong>Thesis 1</strong><small>1 hour</small></span>
+                    </label>
+                    <label class="level-option">
+                        <input type="radio" name="defenseLevel" value="thesis2" />
+                        <span><strong>Thesis 2</strong><small>2 hours</small></span>
+                    </label>
+                </div>
+                <small class="field-error hidden" id="defenseLevelError" role="alert"></small>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="defenseLevelContinueBtn">Continue</button>
+                    <button type="button" class="btn btn-ghost btn-block" id="defenseLevelCancelBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Student Profile & Schedule Modal -->
     <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
         <div class="modal-card modal-profile">
@@ -482,7 +560,10 @@
                         <span class="selection-label">Capstone / Thesis</span>
                         <h4 id="profileCapstoneTitle">—</h4>
                     </div>
-                    <span class="badge teal" id="profileRoleBadge">Adviser</span>
+                    <div class="badge-row">
+                        <span class="badge rose hidden" id="profileLevelBadge"></span>
+                        <span class="badge teal" id="profileRoleBadge">Adviser</span>
+                    </div>
                 </div>
                 <div class="profile-meta-row">
                     <span id="profileRepName"></span>

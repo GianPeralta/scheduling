@@ -275,6 +275,7 @@
         if (b.capstoneTitle && b.capstoneTitle.toLowerCase().includes(q)) return true;
         if (b.consultationTitle && b.consultationTitle.toLowerCase().includes(q)) return true;
         if (b.consultationType && b.consultationType.toLowerCase().includes(q)) return true;
+        if (b.defenseLevelLabel && b.defenseLevelLabel.toLowerCase().includes(q)) return true;
         if (b.instructorRole && b.instructorRole.toLowerCase().includes(q)) return true;
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
         if (b.reason.toLowerCase().includes(q)) return true;
@@ -365,10 +366,12 @@
                     header.appendChild(el('span', 'badge danger', 'Cancelled'));
                 }
 
-                const typeBadge = TYPE_BADGES[b.consultationType] || {
-                    label: `${b.consultationTitle || 'Consultation'} · ${b.durationLabel || ''}`,
-                    cls: 'teal',
-                };
+                const typeBadge = b.consultationType === 'defense'
+                    ? { label: `${b.consultationTitle || 'Defense'} · ${b.durationLabel || ''}`, cls: 'rose' }
+                    : TYPE_BADGES[b.consultationType] || {
+                        label: `${b.consultationTitle || 'Consultation'} · ${b.durationLabel || ''}`,
+                        cls: 'teal',
+                    };
                 header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
 
                 if (b.instructorRole === 'panel') {

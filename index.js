@@ -61,6 +61,45 @@ const CONSULTATION_TYPES = {
         durationLabel: '5 minutes',
         adviserOnly: true,
     },
+    defense: {
+        id: 'defense',
+        title: 'Defense',
+        description: 'Schedule your Capstone / Thesis defense.',
+        note: 'All members must be present. Capstone 1 / Thesis 1 = 1 hour, Capstone 2 / Thesis 2 = 2 hours.',
+        durationMinutes: null, // depends on the defense level (see DEFENSE_LEVELS)
+        durationLabel: '1–2 hours',
+    },
+};
+
+/* ---------- Defense (Capstone / Thesis) ---------- */
+// The group's level is saved on the account at registration and can be updated when booking a defense.
+const DEFENSE_LEVELS = {
+    capstone1: { id: 'capstone1', label: 'Capstone 1', durationMinutes: 60, durationLabel: '1 hour' },
+    capstone2: { id: 'capstone2', label: 'Capstone 2', durationMinutes: 120, durationLabel: '2 hours' },
+    thesis1: { id: 'thesis1', label: 'Thesis 1', durationMinutes: 60, durationLabel: '1 hour' },
+    thesis2: { id: 'thesis2', label: 'Thesis 2', durationMinutes: 120, durationLabel: '2 hours' },
+};
+const DEFENSE_START_STEP = 5;          // students may start a defense on any 5-minute mark
+const MAX_UPCOMING_DEFENSES = 1;       // one upcoming defense per group at a time
+
+const normalizeDefenseLevel = (v) =>
+    (Object.prototype.hasOwnProperty.call(DEFENSE_LEVELS, v) ? v : null);
+
+// Available defense windows per day of week (0 = Sun ... 6 = Sat).
+// A defense must fit entirely inside one window.
+const DEFENSE_WINDOWS_BY_DAY = {
+    // MONDAY: 11:30AM - 2:10PM, 3:30PM - 4:50PM
+    1: [[hm(11, 30), hm(14, 10)], [hm(15, 30), hm(16, 50)]],
+    // TUESDAY: 10:10AM - 11:30AM, 2:10PM - 3:30PM, 4:50PM - 6:10PM
+    2: [[hm(10, 10), hm(11, 30)], [hm(14, 10), hm(15, 30)], [hm(16, 50), hm(18, 10)]],
+    // WEDNESDAY: 11:30AM - 2:10PM, 3:30PM - 4:50PM
+    3: [[hm(11, 30), hm(14, 10)], [hm(15, 30), hm(16, 50)]],
+    // THURSDAY: 10:10AM - 11:30AM, 2:10PM - 3:30PM, 4:50PM - 6:10PM
+    4: [[hm(10, 10), hm(11, 30)], [hm(14, 10), hm(15, 30)], [hm(16, 50), hm(18, 10)]],
+    // FRIDAY: 7:30AM - 8:30AM, 11:30AM - 12:50PM, 4:50PM - 6:10PM
+    5: [[hm(7, 30), hm(8, 30)], [hm(11, 30), hm(12, 50)], [hm(16, 50), hm(18, 10)]],
+    // SATURDAY: 8:50AM - 12:50PM, 2:10PM - 6:10PM
+    6: [[hm(8, 50), hm(12, 50)], [hm(14, 10), hm(18, 10)]],
 };
 
 // Available consultation windows per day of week (0 = Sun ... 6 = Sat)
@@ -274,6 +313,7 @@ const publicStudent = (s) => ({
     email: s.email,
     capstoneTitle: s.capstone_title || null,
     instructorRole: s.instructor_role || null,
+    projectLevel: normalizeDefenseLevel(s.project_level),
     members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
 });
 
@@ -500,8 +540,9 @@ function normalizePurpose(purpose) {
 function generateDaySlots(dateStr, purpose = 'system') {
     const dt = parseDate(dateStr);
     if (!dt) return [];
-    const windows = WINDOWS_BY_DAY[dt.getUTCDay()] || [];
     const normalized = normalizePurpose(purpose);
+    if (normalized === 'defense') return []; // defenses use typed start times (see defenseDayAvailability)
+    const windows = WINDOWS_BY_DAY[dt.getUTCDay()] || [];
     const typeInfo = CONSULTATION_TYPES[normalized];
     const slots = [];
 
@@ -574,15 +615,89 @@ function getFirstBookableDate(now = nowInTz()) {
     return addDays(now.date, 1);
 }
 
+/** Time windows open on a given date for this purpose (defenses use their own weekly schedule). */
+function windowsForDate(dateStr, purpose = 'system') {
+    const dt = parseDate(dateStr);
+    if (!dt) return [];
+    const table = purpose === 'defense' ? DEFENSE_WINDOWS_BY_DAY : WINDOWS_BY_DAY;
+    return table[dt.getUTCDay()] || [];
+}
+
 /** Is this date one the teacher accepts bookings for at all? */
-function isBookableDate(dateStr, now = nowInTz()) {
+function isBookableDate(dateStr, now = nowInTz(), purpose = 'system') {
     const dt = parseDate(dateStr);
     if (!dt) return false;
-    const windows = WINDOWS_BY_DAY[dt.getUTCDay()];
-    if (!windows || !windows.length) return false;
+    if (!windowsForDate(dateStr, purpose).length) return false;
     if (dateStr < getFirstBookableDate(now)) return false;
     if (dateStr > getLastBookableDate(now)) return false;
     return true;
+}
+
+/**
+ * Defense availability for a date: every defense window with its free gaps
+ * (anything already booked — consultations or other defenses — is subtracted).
+ */
+function defenseDayAvailability(dateStr, durationMinutes, bookedIntervals) {
+    return windowsForDate(dateStr, 'defense').map(([ws, we]) => {
+        const busy = bookedIntervals
+            .filter(([s, e]) => s < we && e > ws)
+            .map(([s, e]) => [Math.max(s, ws), Math.min(e, we)])
+            .sort((a, b) => a[0] - b[0]);
+
+        const mergedBusy = [];
+        for (const [s, e] of busy) {
+            const last = mergedBusy[mergedBusy.length - 1];
+            if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+            else mergedBusy.push([s, e]);
+        }
+
+        const free = [];
+        let cursor = ws;
+        for (const [s, e] of mergedBusy) {
+            if (s > cursor) free.push([cursor, s]);
+            cursor = Math.max(cursor, e);
+        }
+        if (cursor < we) free.push([cursor, we]);
+
+        return {
+            startMinute: ws,
+            endMinute: we,
+            label: `${formatMinute(ws)} – ${formatMinute(we)}`,
+            busy: mergedBusy.map(([s, e]) => ({
+                startMinute: s,
+                endMinute: e,
+                label: `${formatMinute(s)} – ${formatMinute(e)}`,
+            })),
+            free: free.map(([s, e]) => {
+                const earliest = Math.ceil(s / DEFENSE_START_STEP) * DEFENSE_START_STEP;
+                const latest = Math.floor((e - durationMinutes) / DEFENSE_START_STEP) * DEFENSE_START_STEP;
+                const fits = latest >= earliest;
+                return {
+                    startMinute: s,
+                    endMinute: e,
+                    label: `${formatMinute(s)} – ${formatMinute(e)}`,
+                    fits,
+                    earliestStartMinute: fits ? earliest : null,
+                    latestStartMinute: fits ? latest : null,
+                };
+            }),
+        };
+    });
+}
+
+/** Can a defense of this length start at startMinute on this date? */
+function isValidDefenseStart(dateStr, startMinute, durationMinutes, bookedIntervals) {
+    if (!Number.isInteger(startMinute) || startMinute % DEFENSE_START_STEP !== 0) return false;
+    const endMinute = startMinute + durationMinutes;
+    const insideWindow = windowsForDate(dateStr, 'defense')
+        .some(([ws, we]) => startMinute >= ws && endMinute <= we);
+    return insideWindow && !hasOverlap(startMinute, endMinute, bookedIntervals);
+}
+
+/** Number of free gaps on a date that can fit a defense of this length (used for the calendar). */
+function countOpenDefenseRanges(dateStr, durationMinutes, bookedIntervals) {
+    return defenseDayAvailability(dateStr, durationMinutes, bookedIntervals)
+        .reduce((n, w) => n + w.free.filter((f) => f.fits).length, 0);
 }
 
 /** All bookable dates are at least tomorrow (1 day in advance). */
@@ -618,6 +733,14 @@ app.get('/api/config', (req, res) => {
         minGroupMembers: MIN_MEMBERS,
         maxGroupMembers: MAX_MEMBERS,
         cancelCutoffMinutes: CANCEL_CUTOFF_MINUTES,
+        defenseLevels: DEFENSE_LEVELS,
+        defenseStartStep: DEFENSE_START_STEP,
+        defenseWindowsByDay: Object.fromEntries(
+            Object.entries(DEFENSE_WINDOWS_BY_DAY).map(([day, wins]) => [
+                day,
+                wins.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
+            ])
+        ),
     });
 });
 
@@ -640,6 +763,7 @@ app.post('/api/auth/register/start', async (req, res) => {
         : body.instructorRole === 'adviser'
             ? 'adviser'
             : null;
+    const projectLevel = normalizeDefenseLevel(body.projectLevel);
     const rawMembers = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
     const password = body.password;
 
@@ -654,6 +778,9 @@ app.post('/api/auth/register/start', async (req, res) => {
     }
     if (!instructorRole) {
         return res.status(400).json({ field: 'regRole', error: `Please select whether ${TEACHER_NAME} is your Adviser or Panel Member.` });
+    }
+    if (!projectLevel) {
+        return res.status(400).json({ field: 'regLevel', error: 'Please select your course: Capstone 1, Capstone 2, Thesis 1, or Thesis 2.' });
     }
 
     // Member 1 is always the representative registering; attach up to 2 additional members (1–3 total)
@@ -677,7 +804,7 @@ app.post('/api/auth/register/start', async (req, res) => {
 
     // The account is only created after the code is verified, so keep the details with the code.
     const passwordHash = await hashPassword(password);
-    const payload = { name, capstoneTitle, instructorRole, members, passwordHash };
+    const payload = { name, capstoneTitle, instructorRole, projectLevel, members, passwordHash };
     await issueOtp(email, 'register', { payload, name });
     res.json({ ok: true, email, expiresInMinutes: AUTH.otpMinutes, resendSeconds: AUTH.otpResendSeconds });
 });
@@ -686,7 +813,7 @@ app.post('/api/auth/register/start', async (req, res) => {
 app.post('/api/auth/register/verify', async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const row = await consumeOtp(email, 'register', req.body?.code);
-    const { name, capstoneTitle, instructorRole, members, passwordHash } = row.payload || {};
+    const { name, capstoneTitle, instructorRole, projectLevel, members, passwordHash } = row.payload || {};
     if (!name || !passwordHash) {
         return res.status(400).json({ error: 'Registration details were lost. Please register again.' });
     }
@@ -698,6 +825,7 @@ app.post('/api/auth/register/verify', async (req, res) => {
             full_name: name,
             capstone_title: capstoneTitle || null,
             instructor_role: instructorRole || null,
+            project_level: normalizeDefenseLevel(projectLevel),
             members: Array.isArray(members) && members.length ? members : [name],
             password_hash: passwordHash,
             last_login_at: new Date().toISOString(),
@@ -820,9 +948,13 @@ app.post('/api/auth/forgot/verify', async (req, res) => {
 });
 
 // Number of open slots for every day in a month: /api/month?month=2026-11&purpose=system
+// For defenses also pass the level: /api/month?month=2026-11&purpose=defense&level=capstone2
 app.get('/api/month', async (req, res) => {
     const month = String(req.query.month || '');
     const purpose = normalizePurpose(req.query.purpose);
+    const isDefense = purpose === 'defense';
+    const level = isDefense ? (normalizeDefenseLevel(req.query.level) || 'capstone1') : null;
+    const defenseDuration = isDefense ? DEFENSE_LEVELS[level].durationMinutes : 0;
     if (!/^\d{4}-\d{2}$/.test(month) || !parseDate(`${month}-01`)) {
         return res.status(400).json({ error: 'Invalid month. Use YYYY-MM.' });
     }
@@ -850,12 +982,16 @@ app.get('/api/month', async (req, res) => {
     const days = {};
 
     for (let d = first; d <= last; d = addDays(d, 1)) {
-        if (!isBookableDate(d, now)) {
+        if (!isBookableDate(d, now, purpose)) {
             days[d] = { bookable: false, open: 0 };
             continue;
         }
-        const daySlots = generateDaySlots(d, purpose);
         const bookedIntervals = intervalsByDate.get(d) || [];
+        if (isDefense) {
+            days[d] = { bookable: true, open: countOpenDefenseRanges(d, defenseDuration, bookedIntervals) };
+            continue;
+        }
+        const daySlots = generateDaySlots(d, purpose);
         const open = daySlots.filter(
             (s) => isFutureSlot(d, s.startMinute, now)
                 && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals))
@@ -863,22 +999,41 @@ app.get('/api/month', async (req, res) => {
         days[d] = { bookable: true, open };
     }
 
-    res.json({ month, purpose, days });
+    res.json({ month, purpose, level, days });
 });
 
 // Slots for one day: /api/slots?date=2026-11-04&purpose=system
+// Defenses return free time ranges instead: /api/slots?date=2026-11-07&purpose=defense&level=capstone1
 app.get('/api/slots', async (req, res) => {
     const date = String(req.query.date || '');
     const purpose = normalizePurpose(req.query.purpose);
     if (!parseDate(date)) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
 
+    const isDefense = purpose === 'defense';
+    const level = isDefense ? (normalizeDefenseLevel(req.query.level) || 'capstone1') : null;
     const now = nowInTz();
-    if (!isBookableDate(date, now)) return res.json({ date, purpose, slots: [] });
+    if (!isBookableDate(date, now, purpose)) {
+        return res.json({ date, purpose, level, slots: [], windows: [] });
+    }
 
     const { data, error } = await db().from(TABLE).select('*').eq('appointment_date', date);
     if (error) return res.status(500).json({ error: error.message });
 
     const bookedIntervals = data.filter((r) => isActiveRow(r) && isTimedRow(r)).map(rowInterval);
+
+    if (isDefense) {
+        const durationMinutes = DEFENSE_LEVELS[level].durationMinutes;
+        return res.json({
+            date,
+            purpose,
+            level,
+            durationMinutes,
+            startStep: DEFENSE_START_STEP,
+            windows: defenseDayAvailability(date, durationMinutes, bookedIntervals),
+            slots: [],
+        });
+    }
+
     const slots = generateDaySlots(date, purpose).map((s) => ({
         startMinute: s.startMinute,
         endMinute: s.endMinute,
@@ -899,10 +1054,18 @@ const cleanName = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
 function formatDurationLabel(consultationType, durationMinutes) {
     if (consultationType === 'dropoff' || durationMinutes === 0) return 'Drop-off only';
     if (durationMinutes === 80) return '1 hr 20 min';
+    if (durationMinutes > 0 && durationMinutes % 60 === 0) {
+        const hours = durationMinutes / 60;
+        return `${hours} hour${hours === 1 ? '' : 's'}`;
+    }
     return `${durationMinutes} min`;
 }
 
-function formatConsultationTitle(consultationType) {
+function formatConsultationTitle(consultationType, defenseLevel = null) {
+    if (consultationType === 'defense') {
+        const level = DEFENSE_LEVELS[defenseLevel];
+        return level ? `${level.label} Defense` : 'Defense';
+    }
     if (CONSULTATION_TYPES[consultationType]) return CONSULTATION_TYPES[consultationType].title;
     if (consultationType === 'other') return 'Other Consultation';
     return 'Consultation';
@@ -920,12 +1083,15 @@ function toBooking(r, now) {
     const status = r.status === 'cancelled' ? 'cancelled' : 'scheduled';
     const minutesUntilStart = minutesUntilBooking(r.appointment_date, startMinute, current);
     const canCancel = status === 'scheduled' && minutesUntilStart >= CANCEL_CUTOFF_MINUTES;
+    const defenseLevel = consultationType === 'defense' ? normalizeDefenseLevel(r.defense_level) : null;
     return {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
         type: r.team_name || members.length >= 2 ? 'group' : 'individual',
         consultationType,
-        consultationTitle: formatConsultationTitle(consultationType),
+        consultationTitle: formatConsultationTitle(consultationType, defenseLevel),
+        defenseLevel,
+        defenseLevelLabel: defenseLevel ? DEFENSE_LEVELS[defenseLevel].label : null,
         isDropoff: !timed,
         durationMinutes,
         durationLabel: formatDurationLabel(consultationType, durationMinutes),
@@ -1029,9 +1195,18 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     const student = req.student;
     const consultationType = normalizePurpose(body.consultationType);
     const typeInfo = CONSULTATION_TYPES[consultationType];
-    const durationMinutes = typeInfo.durationMinutes;
+    const isDefense = consultationType === 'defense';
+    const defenseLevel = isDefense ? normalizeDefenseLevel(body.defenseLevel) : null;
+    if (isDefense && !defenseLevel) {
+        return res.status(400).json({
+            field: 'defenseLevel',
+            code: 'DEFENSE_LEVEL_REQUIRED',
+            error: 'Please select whether this is a Capstone 1, Capstone 2, Thesis 1, or Thesis 2 defense.',
+        });
+    }
+    const durationMinutes = isDefense ? DEFENSE_LEVELS[defenseLevel].durationMinutes : typeInfo.durationMinutes;
     const isDropoff = consultationType === 'dropoff';
-    const requiresAllMembers = consultationType === 'system' || consultationType === 'retrieval';
+    const requiresAllMembers = consultationType === 'system' || consultationType === 'retrieval' || isDefense;
     const type = (requiresAllMembers || body.type === 'group') ? 'group' : 'individual';
     const date = String(body.date ?? '');
     const startMinute = Number(body.startMinute);
@@ -1056,6 +1231,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         rawReason = 'Manuscript drop-off for checking.';
     } else if (!rawReason && consultationType === 'retrieval') {
         rawReason = 'Retrieval of checked manuscript to discuss needed revisions.';
+    } else if (!rawReason && isDefense) {
+        rawReason = `${DEFENSE_LEVELS[defenseLevel].label} defense.`;
     }
     const reason = rawReason;
 
@@ -1105,13 +1282,31 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     const now = nowInTz();
     if (parseDate(date) && date <= now.date) {
         return res.status(400).json({
-            error: 'Consultations must be scheduled at least 1 day before the consultation day.',
+            error: isDefense
+                ? 'Defenses must be scheduled at least 1 day before the defense day.'
+                : 'Consultations must be scheduled at least 1 day before the consultation day.',
         });
     }
 
-    const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
-    if (!isBookableDate(date, now) || !validSlot || !isFutureSlot(date, startMinute, now)) {
-        return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
+    let slotStart;
+    let slotEnd;
+    if (isDefense) {
+        // Defenses use a typed start time; it must fit entirely inside one defense window.
+        if (!isBookableDate(date, now, 'defense') || !Number.isInteger(startMinute)
+            || !isValidDefenseStart(date, startMinute, durationMinutes, [])) {
+            return res.status(400).json({
+                error: `That start time is not within the defense schedule for this day, or a ${DEFENSE_LEVELS[defenseLevel].durationLabel} defense would not fit before the window ends. Please choose another time.`,
+            });
+        }
+        slotStart = startMinute;
+        slotEnd = startMinute + durationMinutes;
+    } else {
+        const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
+        if (!isBookableDate(date, now) || !validSlot || !isFutureSlot(date, startMinute, now)) {
+            return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
+        }
+        slotStart = validSlot.startMinute;
+        slotEnd = validSlot.endMinute;
     }
 
     // Check existing upcoming bookings for this student
@@ -1128,7 +1323,16 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         return r.appointment_date > now.date || end > now.minuteOfDay;
     });
 
-    if (isDropoff) {
+    if (isDefense) {
+        // Defenses have their own limit and do not use up the group's consultation slots.
+        const upcomingDefenses = upcomingMine.filter((r) => r.consultation_type === 'defense');
+        if (upcomingDefenses.length >= MAX_UPCOMING_DEFENSES) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: 'Your group already has an upcoming defense scheduled. You can cancel it in your Profile (at least 2 hours before the schedule) if you need to move it.',
+            });
+        }
+    } else if (isDropoff) {
         if (upcomingMine.some((r) => !isTimedRow(r) && r.appointment_date === date)) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
@@ -1142,7 +1346,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             });
         }
     } else if (AUTH.maxActiveBookings > 0) {
-        const upcomingTimed = upcomingMine.filter(isTimedRow);
+        const upcomingTimed = upcomingMine.filter((r) => isTimedRow(r) && r.consultation_type !== 'defense');
         if (upcomingTimed.length >= AUTH.maxActiveBookings) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
@@ -1153,7 +1357,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         }
     }
 
-    // For timed consultations, check for any overlapping timed booking on the same date
+    // For timed bookings (consultations AND defenses), reject anything overlapping an existing timed booking.
+    // This is what prevents a defense from taking time already booked for a consultation, and vice versa.
     if (!isDropoff) {
         const { data: existingRows, error: existingErr } = await db()
             .from(TABLE)
@@ -1162,34 +1367,42 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         if (existingErr) return res.status(500).json({ error: existingErr.message });
 
         const bookedIntervals = existingRows.filter((r) => isActiveRow(r) && isTimedRow(r)).map(rowInterval);
-        if (hasOverlap(validSlot.startMinute, validSlot.endMinute, bookedIntervals)) {
-            return res.status(409).json({ error: 'Sorry, someone just booked a slot that overlaps with that time. Please pick another time.' });
+        if (hasOverlap(slotStart, slotEnd, bookedIntervals)) {
+            return res.status(409).json({
+                error: isDefense
+                    ? `${formatMinute(slotStart)} – ${formatMinute(slotEnd)} overlaps with a time that is already booked (a consultation or another defense). Please pick another start time.`
+                    : 'Sorry, someone just booked a slot that overlaps with that time. Please pick another time.',
+            });
         }
     }
 
+    const row = {
+        student_name: members[0], // the person booking (group representative)
+        team_name: teamName,
+        members,
+        reason,
+        appointment_date: date,
+        start_hour: Math.floor(slotStart / 60),
+        start_minute: slotStart,
+        duration_minutes: durationMinutes,
+        consultation_type: consultationType,
+        student_id: student.id,
+        student_email: student.email,
+        capstone_title: student.capstone_title || teamName || null,
+        instructor_role: student.instructor_role || null,
+    };
+    if (isDefense) row.defense_level = defenseLevel;
+
     const { data, error } = await db()
         .from(TABLE)
-        .insert([{
-            student_name: members[0], // the person booking (group representative)
-            team_name: teamName,
-            members,
-            reason,
-            appointment_date: date,
-            start_hour: Math.floor(startMinute / 60),
-            start_minute: startMinute,
-            duration_minutes: durationMinutes,
-            consultation_type: consultationType,
-            student_id: student.id,
-            student_email: student.email,
-            capstone_title: student.capstone_title || teamName || null,
-            instructor_role: student.instructor_role || null,
-        }])
+        .insert([row])
         .select('*')
         .single();
 
     if (error) {
-        if (error.code === '23505') {
-            return res.status(409).json({ error: 'Sorry, someone just booked that slot. Please pick another time.' });
+        if (error.code === '23505' || error.code === '23P01') {
+            // 23505 = same start time taken, 23P01 = overlapping time range taken (appointments_no_overlap)
+            return res.status(409).json({ error: 'Sorry, someone just booked that time. Please pick another time.' });
         }
         if (error.code === '23514' || error.code === '42703' || error.code === 'PGRST204') {
             return res.status(500).json({
@@ -1199,7 +1412,20 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
 
-    res.status(201).json({ booking: toBooking(data) });
+    // Remember the group's current Capstone / Thesis level (e.g. after moving from Capstone 1 to Capstone 2)
+    let updatedStudent = null;
+    if (isDefense && student.project_level !== defenseLevel) {
+        const { data: s, error: levelErr } = await db()
+            .from(STUDENTS_TABLE)
+            .update({ project_level: defenseLevel })
+            .eq('id', student.id)
+            .select('*')
+            .maybeSingle();
+        if (levelErr) console.error('Could not save project level:', levelErr);
+        else if (s) updatedStudent = publicStudent(s);
+    }
+
+    res.status(201).json({ booking: toBooking(data), student: updatedStudent });
 });
 
 /* ------------------------------------------------------------------ */

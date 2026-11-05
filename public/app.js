@@ -64,7 +64,27 @@
             reasonLabel: 'Purpose of the communication letter',
             reasonPlaceholder: 'e.g. Request letter to conduct survey / data gathering with target respondents.',
         },
+        defense: {
+            title: 'Defense',
+            badge: '1–2 hours',
+            summary: 'Defense',
+            color: 'rose',
+            requiresAllMembers: true,
+            reasonOptional: true,
+            bannerNote: 'All members must be present during the defense.',
+            reasonLabel: 'Notes for your defense',
+            reasonPlaceholder: 'e.g. Panel members attending, equipment you will bring, etc. (optional)',
+        },
     };
+
+    // Capstone / Thesis level -> defense length (kept in sync with the server's DEFENSE_LEVELS)
+    const DEFENSE_LEVELS = {
+        capstone1: { label: 'Capstone 1', durationMinutes: 60, durationLabel: '1 hour' },
+        capstone2: { label: 'Capstone 2', durationMinutes: 120, durationLabel: '2 hours' },
+        thesis1: { label: 'Thesis 1', durationMinutes: 60, durationLabel: '1 hour' },
+        thesis2: { label: 'Thesis 2', durationMinutes: 120, durationLabel: '2 hours' },
+    };
+    const isDefenseLevel = (v) => Object.prototype.hasOwnProperty.call(DEFENSE_LEVELS, v);
 
     const state = {
         config: null,
@@ -75,7 +95,9 @@
         monthDays: {}, // { 'YYYY-MM-DD': { bookable, open } }
         selectedDate: null,
         selectedSlot: null, // { startMinute, endMinute, durationMinutes, isDropoff, label, endLabel }
-        consultationPurpose: null, // 'system' | 'dropoff' | 'retrieval' | 'letter'
+        consultationPurpose: null, // 'system' | 'dropoff' | 'retrieval' | 'letter' | 'defense'
+        defenseLevel: null, // 'capstone1' | 'capstone2' | 'thesis1' | 'thesis2' (only for defenses)
+        defenseDay: null, // last /api/slots response for a defense date (windows + free ranges)
         beninsigConfirmed: false,
         bookingType: 'group', // 'individual' | 'group'
         monthRequest: 0,
@@ -119,7 +141,30 @@
         });
     }
 
-    function getMeta(purpose = state.consultationPurpose) {
+    function formatMinute(totalMinutes) {
+        const h = Math.floor(totalMinutes / 60) % 24;
+        const m = totalMinutes % 60;
+        const suffix = h >= 12 ? 'PM' : 'AM';
+        const hr = h % 12 === 0 ? 12 : h % 12;
+        return `${hr}:${pad(m)} ${suffix}`;
+    }
+
+    function getDefenseLevelInfo(level = state.defenseLevel || state.student?.projectLevel) {
+        return DEFENSE_LEVELS[level] || null;
+    }
+
+    function getMeta(purpose = state.consultationPurpose, levelOverride = null) {
+        if (purpose === 'defense') {
+            const base = PURPOSE_META.defense;
+            const info = getDefenseLevelInfo(levelOverride || state.defenseLevel);
+            if (!info) return base;
+            return {
+                ...base,
+                title: `${info.label} Defense`,
+                badge: info.durationLabel,
+                summary: `${info.label} Defense · ${info.durationLabel}`,
+            };
+        }
         return PURPOSE_META[purpose] || PURPOSE_META.system;
     }
 
@@ -278,7 +323,9 @@
                 : `${state.selectedSlot.label} – ${state.selectedSlot.endLabel}`;
         } else if (state.selectedDate) {
             $('#selectionDate').textContent = formatLongDate(state.selectedDate);
-            $('#selectionTime').textContent = 'Select a time slot';
+            $('#selectionTime').textContent = state.consultationPurpose === 'defense'
+                ? 'Type or pick a start time'
+                : 'Select a time slot';
         } else {
             $('#selectionDate').textContent = 'Select a date & time';
             $('#selectionTime').textContent = '';
@@ -340,6 +387,46 @@
         $('#beninsigModal').classList.add('hidden');
     }
 
+    /* ---------------- Defense level modal (Capstone 1/2, Thesis 1/2) ---------------- */
+    function openDefenseLevelModal() {
+        const preselected = state.defenseLevel
+            || (isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : null);
+        document.querySelectorAll('input[name="defenseLevel"]').forEach((r) => {
+            r.checked = r.value === preselected;
+        });
+        const errEl = $('#defenseLevelError');
+        if (errEl) {
+            errEl.textContent = '';
+            errEl.classList.add('hidden');
+        }
+        $('#defenseLevelModal')?.classList.remove('hidden');
+    }
+
+    function closeDefenseLevelModal() {
+        $('#defenseLevelModal')?.classList.add('hidden');
+    }
+
+    function confirmDefenseLevel() {
+        const chosen = document.querySelector('input[name="defenseLevel"]:checked')?.value;
+        if (!isDefenseLevel(chosen)) {
+            const errEl = $('#defenseLevelError');
+            if (errEl) {
+                errEl.textContent = 'Please choose your course (Capstone 1, Capstone 2, Thesis 1, or Thesis 2).';
+                errEl.classList.remove('hidden');
+            }
+            return;
+        }
+        const levelChanged = chosen !== state.defenseLevel;
+        state.defenseLevel = chosen;
+        closeDefenseLevelModal();
+        if (levelChanged) {
+            state.selectedSlot = null;
+            state.loadedMonthKey = null;
+            state.loadedSlotsKey = null;
+        }
+        proceedWithConsultationPurpose('defense');
+    }
+
     function onClickConsultationCard(purpose) {
         if (purpose === 'letter') {
             if (state.student?.instructorRole !== 'adviser') {
@@ -351,11 +438,23 @@
                 return;
             }
         }
+        if (purpose === 'defense') {
+            openDefenseLevelModal();
+            return;
+        }
         proceedWithConsultationPurpose(purpose);
+    }
+
+    function monthLoadKey(y = state.viewYear, m = state.viewMonth, purpose = state.consultationPurpose) {
+        const base = `${monthKey(y, m)}#${purpose}`;
+        return purpose === 'defense' ? `${base}#${state.defenseLevel || 'capstone1'}` : base;
     }
 
     async function proceedWithConsultationPurpose(purpose) {
         const nextPurpose = Object.prototype.hasOwnProperty.call(PURPOSE_META, purpose) ? purpose : 'system';
+        if (nextPurpose === 'defense' && !isDefenseLevel(state.defenseLevel)) {
+            state.defenseLevel = isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : 'capstone1';
+        }
         const purposeChanged = nextPurpose !== state.consultationPurpose;
 
         state.consultationPurpose = nextPurpose;
@@ -370,6 +469,7 @@
             state.loadingSlotsKey = null;
             state.loadedSlotsKey = null;
             state.activeWindowLabel = null;
+            state.defenseDay = null;
         }
         updateSelectionBox();
 
@@ -382,7 +482,7 @@
 
         goToStep(2);
 
-        const targetMonthLoadKey = `${monthKey(state.viewYear, state.viewMonth)}#${nextPurpose}`;
+        const targetMonthLoadKey = monthLoadKey(state.viewYear, state.viewMonth, nextPurpose);
         if (!purposeChanged && state.loadedMonthKey === targetMonthLoadKey && state.selectedDate) {
             return;
         }
@@ -494,13 +594,17 @@
     async function loadMonth() {
         const reqId = ++state.monthRequest;
         const purpose = state.consultationPurpose || 'system';
+        const level = purpose === 'defense' ? (state.defenseLevel || state.student?.projectLevel || 'capstone1') : '';
         const key = monthKey(state.viewYear, state.viewMonth);
+        const query = purpose === 'defense'
+            ? `/api/month?month=${key}&purpose=defense&level=${encodeURIComponent(level)}`
+            : `/api/month?month=${key}&purpose=${purpose}`;
         renderCalendar(true);
         try {
-            const data = await api(`/api/month?month=${key}&purpose=${purpose}`);
+            const data = await api(query);
             if (reqId !== state.monthRequest) return false;
             state.monthDays = data.days;
-            state.loadedMonthKey = `${key}#${purpose}`;
+            state.loadedMonthKey = monthLoadKey(state.viewYear, state.viewMonth, purpose);
         } catch (err) {
             if (reqId !== state.monthRequest) return false;
             state.monthDays = {};
@@ -547,7 +651,7 @@
 
             if (ds === config.today) {
                 btn.classList.add('today');
-                btn.title = 'Today — bookings must be made at least 1 day before the consultation day';
+                btn.title = 'Today — bookings must be made at least 1 day before the scheduled day';
             }
 
             if (loading || !info || !info.bookable) {
@@ -560,7 +664,9 @@
                 btn.classList.add('available');
                 btn.title = state.consultationPurpose === 'dropoff'
                     ? 'Open for manuscript drop-off'
-                    : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
+                    : state.consultationPurpose === 'defense'
+                        ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
+                        : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
                 btn.addEventListener('click', () => selectDate(ds, true));
             }
 
@@ -589,7 +695,8 @@
     /* ---------------- slots ---------------- */
     async function selectDate(ds, fromUser = false, force = false) {
         const purpose = state.consultationPurpose || 'system';
-        const key = `${ds}#${purpose}`;
+        const level = purpose === 'defense' ? (state.defenseLevel || state.student?.projectLevel || 'capstone1') : '';
+        const key = purpose === 'defense' ? `${ds}#defense#${level}` : `${ds}#${purpose}`;
         if (!force && ds === state.selectedDate && (state.loadingSlotsKey === key || state.loadedSlotsKey === key)) {
             return;
         }
@@ -599,6 +706,7 @@
         state.loadingSlotsKey = key;
         state.loadedSlotsKey = null;
         state.activeWindowLabel = null;
+        state.defenseDay = null;
         updateSelectionBox();
 
         document.querySelectorAll('.day.selected').forEach((el) => el.classList.remove('selected'));
@@ -616,12 +724,20 @@
         list.innerHTML = '<div class="slot skeleton"></div>'.repeat(purpose === 'dropoff' ? 1 : 4);
 
         const reqId = ++state.slotsRequest;
+        const query = purpose === 'defense'
+            ? `/api/slots?date=${ds}&purpose=defense&level=${encodeURIComponent(level)}`
+            : `/api/slots?date=${ds}&purpose=${purpose}`;
         try {
-            const data = await api(`/api/slots?date=${ds}&purpose=${purpose}`);
+            const data = await api(query);
             if (reqId !== state.slotsRequest) return;
             state.loadingSlotsKey = null;
             state.loadedSlotsKey = key;
-            renderSlots(data.slots);
+            if (purpose === 'defense') {
+                state.defenseDay = data;
+                renderDefenseSlots(data);
+            } else {
+                renderSlots(data.slots);
+            }
             if (fromUser && window.innerWidth <= 680) {
                 $('.slots').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
@@ -631,6 +747,365 @@
             list.innerHTML = '';
             $('#slotsSubtitle').textContent = 'Could not load time slots.';
             toast(err.message, 'error');
+        }
+    }
+
+    /**
+     * Parse a typed start time like "2:30", "2:30 PM", "11:30am", or "14:30".
+     * If AM/PM is omitted (e.g. "2:30"), we check which meridiem fits the day's defense windows
+     * (and in school hours 7:00–11:59 defaults to AM while 12:00–6:59 defaults to PM).
+     */
+    function parseTypedDefenseTime(raw, windows = [], durationMinutes = 60) {
+        const str = String(raw || '').trim();
+        if (!str) return { error: 'Please type your preferred start time (e.g. 2:30 PM).' };
+
+        const match = str.match(/^(\d{1,2})\s*:\s*(\d{2})\s*(am|pm|a\.m\.|p\.m\.|a|p)?$/i);
+        if (!match) {
+            return { error: 'Use H:MM format, for example 11:30 AM or 2:30 PM.' };
+        }
+        const hourNum = parseInt(match[1], 10);
+        const minNum = parseInt(match[2], 10);
+        const merRaw = (match[3] || '').toLowerCase().replace(/\./g, '');
+
+        if (minNum < 0 || minNum > 59) {
+            return { error: 'Minutes must be between 00 and 59.' };
+        }
+
+        const candidates = [];
+        if (merRaw) {
+            if (hourNum < 1 || hourNum > 12) {
+                return { error: 'Hour must be between 1 and 12 when using AM/PM.' };
+            }
+            const isPm = merRaw.startsWith('p');
+            const h24 = (hourNum % 12) + (isPm ? 12 : 0);
+            candidates.push(h24 * 60 + minNum);
+        } else if (hourNum >= 13 && hourNum <= 23) {
+            candidates.push(hourNum * 60 + minNum);
+        } else if (hourNum >= 1 && hourNum <= 12) {
+            const amMin = (hourNum % 12) * 60 + minNum;
+            const pmMin = ((hourNum % 12) + 12) * 60 + minNum;
+            // School schedule heuristic: 7:00–11:55 is morning first, 12:00 and 1:00–6:55 is afternoon first
+            if (hourNum >= 7 && hourNum <= 11) {
+                candidates.push(amMin, pmMin);
+            } else {
+                candidates.push(pmMin, amMin);
+            }
+        } else {
+            return { error: 'Please enter a valid hour (e.g. 11:30 AM or 2:30 PM).' };
+        }
+
+        // Prefer a candidate that falls inside one of today's defense windows
+        const inWindow = candidates.find((m) =>
+            windows.some((w) => m >= w.startMinute && m + durationMinutes <= w.endMinute)
+        );
+        const TouchWindow = candidates.find((m) =>
+            windows.some((w) => m >= w.startMinute && m < w.endMinute)
+        );
+        const chosen = inWindow ?? TouchWindow ?? candidates[0];
+        return { startMinute: chosen };
+    }
+
+    function validateDefenseStartMinute(startMinute, data) {
+        const duration = data.durationMinutes || 60;
+        const step = data.startStep || 5;
+        const endMinute = startMinute + duration;
+        const windows = data.windows || [];
+
+        if (startMinute % step !== 0) {
+            return {
+                ok: false,
+                startMinute,
+                endMinute,
+                error: `Start times must be in ${step}-minute increments (for example ${formatMinute(Math.floor(startMinute / step) * step)}).`,
+            };
+        }
+
+        const matchingWin = windows.find((w) => startMinute >= w.startMinute && startMinute < w.endMinute);
+        if (!matchingWin) {
+            const winLabels = windows.map((w) => w.label).join(', ');
+            return {
+                ok: false,
+                startMinute,
+                endMinute,
+                error: `${formatMinute(startMinute)} is outside the defense schedule on this day (${winLabels}).`,
+            };
+        }
+
+        if (endMinute > matchingWin.endMinute) {
+            const latestStart = matchingWin.endMinute - duration;
+            return {
+                ok: false,
+                startMinute,
+                endMinute,
+                error: `${formatMinute(startMinute)} – ${formatMinute(endMinute)} goes past the end of the ${matchingWin.label} window.${latestStart >= matchingWin.startMinute ? ` Latest start in this window is ${formatMinute(latestStart)}.` : ' This window is shorter than your defense duration.'}`,
+            };
+        }
+
+        const conflict = (matchingWin.busy || []).find((b) => startMinute < b.endMinute && endMinute > b.startMinute);
+        if (conflict) {
+            return {
+                ok: false,
+                startMinute,
+                endMinute,
+                error: `${formatMinute(startMinute)} – ${formatMinute(endMinute)} overlaps with an existing booking (${conflict.label}). Please choose another time.`,
+            };
+        }
+
+        return {
+            ok: true,
+            startMinute,
+            endMinute,
+            windowLabel: matchingWin.label,
+        };
+    }
+
+    function renderDefenseSlots(data) {
+        const list = $('#slotList');
+        const tabsEl = $('#windowTabs');
+        list.innerHTML = '';
+        if (tabsEl) {
+            tabsEl.innerHTML = '';
+            tabsEl.classList.add('hidden');
+        }
+
+        const levelInfo = getDefenseLevelInfo(data.level) || DEFENSE_LEVELS.capstone1;
+        const duration = data.durationMinutes || levelInfo.durationMinutes;
+        const windows = data.windows || [];
+        const fittingGaps = [];
+        windows.forEach((w) => {
+            (w.free || []).forEach((f) => {
+                if (f.fits) fittingGaps.push({ ...f, windowLabel: w.label });
+            });
+        });
+
+        $('#slotsSubtitle').textContent = fittingGaps.length
+            ? `${levelInfo.label} (${levelInfo.durationLabel}) · Type a start time or pick a suggestion below`
+            : `No open ${levelInfo.durationLabel} gap left on this day for ${levelInfo.label}.`;
+
+        const wrap = document.createElement('div');
+        wrap.className = 'defense-picker';
+
+        // 1. Level bar (shows Capstone 1 / 2 / Thesis 1 / 2 and lets student switch)
+        const levelBar = document.createElement('div');
+        levelBar.className = 'defense-level-bar';
+        const levelText = document.createElement('span');
+        levelText.innerHTML = `Course: <strong>${levelInfo.label}</strong> (${levelInfo.durationLabel} defense)`;
+        const switchBtn = document.createElement('button');
+        switchBtn.type = 'button';
+        switchBtn.className = 'link-btn';
+        switchBtn.textContent = 'Change course';
+        switchBtn.addEventListener('click', () => openDefenseLevelModal());
+        levelBar.append(levelText, switchBtn);
+        wrap.appendChild(levelBar);
+
+        // 2. Windows & free/booked breakdown for this date
+        const winBox = document.createElement('div');
+        winBox.className = 'defense-windows-box';
+        const winHeading = document.createElement('div');
+        winHeading.className = 'defense-windows-heading';
+        winHeading.textContent = 'Available defense windows on this day';
+        winBox.appendChild(winHeading);
+
+        windows.forEach((w) => {
+            const row = document.createElement('div');
+            row.className = 'defense-window-item';
+
+            const top = document.createElement('div');
+            top.className = 'defense-window-top';
+            const title = document.createElement('strong');
+            title.textContent = w.label;
+            top.appendChild(title);
+
+            const fitsAny = (w.free || []).some((f) => f.fits);
+            const pill = document.createElement('span');
+            pill.className = `badge ${fitsAny ? 'teal' : 'muted-badge'}`;
+            if (fitsAny) {
+                pill.textContent = 'Available';
+            } else if (w.endMinute - w.startMinute < duration) {
+                pill.textContent = `Window shorter than ${levelInfo.durationLabel}`;
+            } else {
+                pill.textContent = 'No room left';
+            }
+            top.appendChild(pill);
+            row.appendChild(top);
+
+            if (w.busy && w.busy.length) {
+                const busyEl = document.createElement('div');
+                busyEl.className = 'defense-window-busy';
+                busyEl.textContent = `Already booked: ${w.busy.map((b) => b.label).join(', ')}`;
+                row.appendChild(busyEl);
+            }
+
+            (w.free || []).filter((f) => f.fits).forEach((f) => {
+                const hint = document.createElement('div');
+                hint.className = 'defense-window-valid';
+                if (f.earliestStartMinute === f.latestStartMinute) {
+                    hint.textContent = `Open: ${f.label} — start at ${formatMinute(f.earliestStartMinute)}`;
+                } else {
+                    hint.textContent = `Open: ${f.label} — start any time from ${formatMinute(f.earliestStartMinute)} to ${formatMinute(f.latestStartMinute)}`;
+                }
+                row.appendChild(hint);
+            });
+
+            winBox.appendChild(row);
+        });
+        wrap.appendChild(winBox);
+
+        if (!fittingGaps.length) {
+            list.appendChild(wrap);
+            return;
+        }
+
+        // 3. Quick-pick suggested start times + custom typed start time
+        const suggestions = [];
+        const seenStarts = new Set();
+        fittingGaps.forEach((f) => {
+            for (let m = f.earliestStartMinute; m <= f.latestStartMinute; m += 30) {
+                if (!seenStarts.has(m)) {
+                    seenStarts.add(m);
+                    suggestions.push(m);
+                }
+            }
+            if (!seenStarts.has(f.latestStartMinute)) {
+                seenStarts.add(f.latestStartMinute);
+                suggestions.push(f.latestStartMinute);
+            }
+        });
+
+        const inputCard = document.createElement('div');
+        inputCard.className = 'defense-input-card';
+
+        const label = document.createElement('label');
+        label.className = 'field';
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = `Type your start time (${levelInfo.durationLabel} will be reserved automatically)`;
+
+        const inputRow = document.createElement('div');
+        inputRow.className = 'defense-time-input-row';
+
+        const timeInput = document.createElement('input');
+        timeInput.type = 'text';
+        timeInput.id = 'defenseStartInput';
+        timeInput.placeholder = `e.g. ${formatMinute(fittingGaps[0].earliestStartMinute)} or 2:30`;
+        timeInput.autocomplete = 'off';
+
+        inputRow.appendChild(timeInput);
+        label.append(labelSpan, inputRow);
+        inputCard.appendChild(label);
+
+        if (suggestions.length) {
+            const quickWrap = document.createElement('div');
+            quickWrap.className = 'defense-quick-picks';
+            const quickLabel = document.createElement('small');
+            quickLabel.className = 'muted';
+            quickLabel.textContent = 'Or tap a start time:';
+            quickWrap.appendChild(quickLabel);
+
+            const chipsRow = document.createElement('div');
+            chipsRow.className = 'defense-chip-list';
+            suggestions.forEach((m) => {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'defense-time-chip';
+                chip.dataset.minute = String(m);
+                chip.textContent = formatMinute(m);
+                chip.addEventListener('click', () => {
+                    timeInput.value = formatMinute(m);
+                    applyTypedTime(timeInput.value, true);
+                });
+                chipsRow.appendChild(chip);
+            });
+            quickWrap.appendChild(chipsRow);
+            inputCard.appendChild(quickWrap);
+        }
+
+        const feedback = document.createElement('div');
+        feedback.className = 'defense-time-feedback hidden';
+        feedback.id = 'defenseTimeFeedback';
+        inputCard.appendChild(feedback);
+
+        const continueBtn = document.createElement('button');
+        continueBtn.type = 'button';
+        continueBtn.className = 'btn btn-primary btn-block hidden';
+        continueBtn.id = 'defenseContinueBtn';
+        continueBtn.textContent = 'Continue →';
+        continueBtn.addEventListener('click', () => {
+            if (state.selectedSlot) goToStep(3);
+        });
+        inputCard.appendChild(continueBtn);
+
+        function applyTypedTime(rawValue, fromChip = false) {
+            const raw = String(rawValue || '').trim();
+            document.querySelectorAll('.defense-time-chip').forEach((c) => c.classList.remove('active'));
+            if (!raw) {
+                state.selectedSlot = null;
+                updateSelectionBox();
+                feedback.className = 'defense-time-feedback hidden';
+                feedback.textContent = '';
+                continueBtn.classList.add('hidden');
+                timeInput.classList.remove('input-invalid');
+                return;
+            }
+
+            const parsed = parseTypedDefenseTime(raw, windows, duration);
+            if (parsed.error) {
+                state.selectedSlot = null;
+                updateSelectionBox();
+                feedback.className = 'defense-time-feedback is-error';
+                feedback.textContent = parsed.error;
+                continueBtn.classList.add('hidden');
+                timeInput.classList.add('input-invalid');
+                return;
+            }
+
+            const check = validateDefenseStartMinute(parsed.startMinute, data);
+            if (!check.ok) {
+                state.selectedSlot = null;
+                updateSelectionBox();
+                feedback.className = 'defense-time-feedback is-error';
+                feedback.textContent = check.error;
+                continueBtn.classList.add('hidden');
+                timeInput.classList.add('input-invalid');
+                return;
+            }
+
+            timeInput.classList.remove('input-invalid');
+            const matchingChip = document.querySelector(`.defense-time-chip[data-minute="${check.startMinute}"]`);
+            if (matchingChip) matchingChip.classList.add('active');
+            if (fromChip) timeInput.value = formatMinute(check.startMinute);
+
+            state.selectedSlot = {
+                startMinute: check.startMinute,
+                endMinute: check.endMinute,
+                durationMinutes: duration,
+                isDropoff: false,
+                label: formatMinute(check.startMinute),
+                endLabel: formatMinute(check.endMinute),
+                windowLabel: check.windowLabel,
+            };
+            updateSelectionBox();
+
+            feedback.className = 'defense-time-feedback is-valid';
+            feedback.innerHTML = `<strong>${formatMinute(check.startMinute)} – ${formatMinute(check.endMinute)}</strong> (${levelInfo.durationLabel} · ${levelInfo.label} Defense) is available.`;
+            continueBtn.textContent = `Continue with ${formatMinute(check.startMinute)} – ${formatMinute(check.endMinute)} →`;
+            continueBtn.classList.remove('hidden');
+        }
+
+        timeInput.addEventListener('input', () => applyTypedTime(timeInput.value, false));
+        timeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyTypedTime(timeInput.value, true);
+                if (state.selectedSlot) goToStep(3);
+            }
+        });
+
+        wrap.appendChild(inputCard);
+        list.appendChild(wrap);
+
+        if (state.selectedSlot) {
+            timeInput.value = state.selectedSlot.label;
+            applyTypedTime(timeInput.value, true);
         }
     }
 
@@ -838,6 +1313,7 @@
             payload = {
                 type: 'group',
                 consultationType: state.consultationPurpose,
+                defenseLevel: state.consultationPurpose === 'defense' ? state.defenseLevel : undefined,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
                 teamName,
                 members,
@@ -849,6 +1325,7 @@
             payload = {
                 type: 'individual',
                 consultationType: state.consultationPurpose,
+                defenseLevel: state.consultationPurpose === 'defense' ? state.defenseLevel : undefined,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
                 teamName,
                 reason,
@@ -868,10 +1345,14 @@
 
         setSubmitting(true);
         try {
-            const { booking } = await api('/api/bookings', {
+            const { booking, student: updatedStudent } = await api('/api/bookings', {
                 method: 'POST',
                 body: JSON.stringify(payload),
             });
+            if (updatedStudent) {
+                state.student = updatedStudent;
+                updateRoleVisibility();
+            }
             loadMyBookings();
             showConfirmation(booking);
         } catch (err) {
@@ -885,6 +1366,8 @@
             } else if (err.code === 'BENINSIG_REQUIRED') {
                 state.beninsigConfirmed = false;
                 openBeninsigModal();
+            } else if (err.code === 'DEFENSE_LEVEL_REQUIRED') {
+                openDefenseLevelModal();
             } else if (err.field === 'teamName') {
                 setFieldError('#teamInput', err.message);
             } else if (err.field === 'members') {
@@ -911,11 +1394,13 @@
     }
 
     function showConfirmation(b) {
-        const meta = getMeta(b.consultationType);
+        const meta = getMeta(b.consultationType, b.defenseLevel);
         const hasMultipleMembers = Array.isArray(b.members) && b.members.length >= 2;
         const capstone = b.capstoneTitle || b.teamName || state.student?.capstoneTitle || null;
+        const isDefense = b.consultationType === 'defense';
 
-        setText('#confirmHeading', b.isDropoff ? 'Drop-off scheduled!' : "Scheduled!");
+        setText('#confirmHeading', b.isDropoff ? 'Drop-off scheduled!' : isDefense ? 'Defense scheduled!' : 'Scheduled!');
+        setText('#cPurposeLabel', isDefense ? 'Defense' : 'Consultation');
         setText('#cPurpose', `${b.consultationTitle || meta.title} (${b.durationLabel || meta.badge})`);
 
         $('#cTeamRow')?.classList.toggle('hidden', !capstone);
@@ -947,6 +1432,8 @@
         }
         resetMembers();
         state.consultationPurpose = null;
+        state.defenseLevel = isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : null;
+        state.defenseDay = null;
         state.beninsigConfirmed = false;
         state.selectedSlot = null;
         state.loadedMonthKey = null;
@@ -1130,6 +1617,13 @@
         setText('#profileRepName', s.name);
         setText('#profileRepEmail', s.email);
 
+        const levelBadge = $('#profileLevelBadge');
+        if (levelBadge) {
+            const levelInfo = getDefenseLevelInfo(s.projectLevel);
+            levelBadge.textContent = levelInfo ? levelInfo.label : '';
+            levelBadge.classList.toggle('hidden', !levelInfo);
+        }
+
         const roleBadge = $('#profileRoleBadge');
         if (roleBadge) {
             const isPanel = s.instructorRole === 'panel';
@@ -1208,7 +1702,7 @@
 
         items.forEach((b) => {
             const cat = bookingCategory(b);
-            const meta = getMeta(b.consultationType);
+            const meta = getMeta(b.consultationType, b.defenseLevel);
             const item = document.createElement('div');
             item.className = 'my-booking-item' + (cat === 'cancelled' ? ' is-cancelled' : '');
 
@@ -1328,6 +1822,18 @@
                 const count = Array.isArray(state.student.members) && state.student.members.length
                     ? state.student.members.length
                     : 1;
+                const levelInfo = getDefenseLevelInfo(state.student.projectLevel);
+                const levelBadge = $('#projectLevelBadge');
+                if (levelBadge) {
+                    levelBadge.textContent = levelInfo ? levelInfo.label : '';
+                    levelBadge.classList.toggle('hidden', !levelInfo);
+                }
+                const defensePill = $('#defenseCardPill');
+                if (defensePill) {
+                    defensePill.textContent = levelInfo
+                        ? `${levelInfo.label} · ${levelInfo.durationLabel}`
+                        : '1–2 hours';
+                }
                 const roleBadge = $('#projectRoleBadge');
                 if (roleBadge) {
                     const isPanel = state.student.instructorRole === 'panel';
@@ -1434,6 +1940,7 @@
         regEmail: '#regEmail',
         regCapstone: '#regCapstone',
         regRole: '#regRoleField',
+        regLevel: '#regLevelField',
         regMembers: '#regMembersField',
         regPassword: '#regPassword',
     };
@@ -1590,6 +2097,7 @@
         const email = $('#regEmail').value.trim().toLowerCase();
         const capstoneTitle = $('#regCapstone').value.trim();
         const instructorRole = document.querySelector('input[name="regRole"]:checked')?.value || 'adviser';
+        const projectLevel = document.querySelector('input[name="regLevel"]:checked')?.value || '';
         const regInputs = getRegMemberInputs();
         const password = $('#regPassword').value;
         const password2 = $('#regPassword2').value;
@@ -1606,6 +2114,10 @@
         }
         if (capstoneTitle.length < 3) {
             setFieldError('#regCapstone', 'Please enter your Capstone / Thesis title (at least 3 characters).');
+            return;
+        }
+        if (!isDefenseLevel(projectLevel)) {
+            setFieldError('#regLevelField', 'Please select your course: Capstone 1, Capstone 2, Thesis 1, or Thesis 2.');
             return;
         }
 
@@ -1638,7 +2150,7 @@
         runAuth($('#registerBtn'), 'Sending code…', async () => {
             const data = await api('/api/auth/register/start', {
                 method: 'POST',
-                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, members, password }),
+                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, projectLevel, members, password }),
             });
             showOtpStep('register', data.email, data.resendSeconds);
             toast('Verification code sent. Check your inbox or spam folder.', 'success');
@@ -1821,6 +2333,21 @@
             if (e.target.id === 'beninsigModal') closeBeninsigModal();
         });
 
+        // Defense level modal events
+        $('#defenseLevelContinueBtn')?.addEventListener('click', confirmDefenseLevel);
+        $('#defenseLevelCancelBtn')?.addEventListener('click', closeDefenseLevelModal);
+        $('#defenseLevelModal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'defenseLevelModal') closeDefenseLevelModal();
+        });
+        document.querySelectorAll('input[name="defenseLevel"]').forEach((r) => {
+            r.addEventListener('change', () => {
+                $('#defenseLevelError')?.classList.add('hidden');
+            });
+        });
+        document.querySelectorAll('input[name="regLevel"]').forEach((r) => {
+            r.addEventListener('change', () => clearFieldError('#regLevelField'));
+        });
+
         // Student profile & bookings modal events
         $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
         $('#accountProfileBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
@@ -1839,6 +2366,7 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 closeBeninsigModal();
+                closeDefenseLevelModal();
                 closeMyBookingsModal();
             }
         });
