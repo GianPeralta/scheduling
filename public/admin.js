@@ -341,7 +341,6 @@
             group.appendChild(title);
 
             items.forEach((b) => {
-                const isGroup = b.type === 'group' && Array.isArray(b.members) && b.members.length >= 2;
                 const card = el('div', 'booking' + (isNow(b) ? ' now' : '') + (isCancelled(b) ? ' booking-cancelled' : ''));
                 card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
 
@@ -373,20 +372,13 @@
                 header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
 
                 if (b.instructorRole === 'panel') {
-                    header.appendChild(el('span', 'badge sky', 'Role: Panel Member'));
+                    header.appendChild(el('span', 'badge sky', 'Panel'));
                 } else if (b.instructorRole === 'adviser') {
-                    header.appendChild(el('span', 'badge teal', 'Role: Adviser'));
-                }
-                if (isGroup) {
-                    header.appendChild(el('span', 'badge amber', `Group · ${b.members.length}`));
-                } else if (groupHeading) {
-                    header.appendChild(el('span', 'badge amber', '1 member'));
+                    header.appendChild(el('span', 'badge teal', 'Adviser'));
                 }
                 if (b.notifiedAt) {
-                    header.appendChild(el('span', 'badge teal', 'Checked email sent ✓'));
+                    header.appendChild(el('span', 'badge teal', 'Checked ✓'));
                 }
-                header.appendChild(el('code', '', b.reference));
-                if (isNow(b)) header.appendChild(el('span', 'badge teal', 'In progress'));
                 body.appendChild(header);
 
                 if (Array.isArray(b.members) && b.members.length) {
@@ -397,29 +389,23 @@
                     body.appendChild(membersWrap);
                 }
 
-                body.appendChild(el('p', 'booking-reason', b.reason));
+                if (b.reason) {
+                    body.appendChild(el('p', 'booking-reason', b.reason));
+                }
 
                 if (isCancelled(b) && b.cancellationReason) {
                     const reasonBox = el('div', 'cancel-reason-box');
-                    reasonBox.appendChild(el('strong', '', 'Cancellation reason shown to student:'));
+                    reasonBox.appendChild(el('strong', '', 'Reason:'));
                     reasonBox.appendChild(el('p', '', b.cancellationReason));
-                    if (b.cancelledAt) {
-                        reasonBox.appendChild(
-                            el('small', 'muted', `Cancelled ${new Date(b.cancelledAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`)
-                        );
-                    }
                     body.appendChild(reasonBox);
                 }
-
-                const bookedBy = b.studentEmail ? ` by ${b.studentEmail}` : '';
-                body.appendChild(el('p', 'booking-meta', `Booked${bookedBy} · ${new Date(b.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`));
 
                 const actions = el('div', 'booking-actions');
                 if (!isCancelled(b) && b.consultationType === 'dropoff' && b.studentEmail) {
                     const notifyBtn = el(
                         'button',
                         'btn btn-ghost btn-sm',
-                        b.notifiedAt ? 'Resend Checked Email' : 'Notify Checked'
+                        b.notifiedAt ? 'Resend Email' : 'Notify Checked'
                     );
                     notifyBtn.type = 'button';
                     notifyBtn.addEventListener('click', () => notifyManuscriptChecked(b, notifyBtn));

@@ -290,49 +290,19 @@
         const meta = getMeta();
 
         // Step 2 banner
-        $('#bannerPurposeTitle').textContent = meta.title;
+        setText('#bannerPurposeTitle', meta.title);
         const badge = $('#bannerPurposeBadge');
-        badge.textContent = meta.badge;
-        badge.className = `badge ${meta.color}`;
-        $('#bannerPurposeNote').textContent = meta.bannerNote;
-
-        // Step 3 policy callout & form fields
-        const policyEl = $('#bookingPolicyNotice');
-        if (policyEl) {
-            policyEl.className = `policy-callout ${meta.color}`;
-            policyEl.innerHTML = meta.policyHtml;
-            const emailSpan = policyEl.querySelector('[data-student-email]');
-            if (emailSpan) {
-                emailSpan.textContent = state.student?.email || 'your university email';
-            }
+        if (badge) {
+            badge.textContent = meta.badge;
+            badge.className = `badge ${meta.color}`;
         }
 
-        // Attendance mode rules:
-        // System & Retrieval require all members to be present (1, 2, or 3 members).
-        // Solo (1-member) projects also skip the Representative vs All Members toggle.
-        const toggleField = $('#attendanceToggleField');
-        const registeredCount = Array.isArray(state.student?.members) ? state.student.members.length : 1;
-        if (meta.requiresAllMembers) {
-            toggleField.classList.add('hidden');
-            setBookingType('group');
-            setText(
-                '#membersFieldLabel',
-                registeredCount <= 1
-                    ? 'Capstone / Thesis member (must be present)'
-                    : 'Capstone / Thesis members (all members must be present)'
-            );
-        } else if (registeredCount <= 1) {
-            toggleField.classList.add('hidden');
-            setBookingType('group');
-            setText('#membersFieldLabel', 'Capstone / Thesis member');
-        } else {
-            toggleField.classList.remove('hidden');
-            setText('#membersFieldLabel', 'Attending group members');
-        }
-
+        setBookingType('group');
+        setText('#membersFieldLabel', 'Members');
         setText('#reasonLabelText', meta.reasonLabel);
         setText('#reasonOptionalHint', meta.reasonOptional ? '(optional)' : '');
-        $('#reasonInput').placeholder = meta.reasonPlaceholder;
+        const reasonEl = $('#reasonInput');
+        if (reasonEl) reasonEl.placeholder = meta.reasonPlaceholder;
     }
 
     async function ensureConfig() {
@@ -943,45 +913,26 @@
         const meta = getMeta(b.consultationType);
         const hasMultipleMembers = Array.isArray(b.members) && b.members.length >= 2;
         const capstone = b.capstoneTitle || b.teamName || state.student?.capstoneTitle || null;
-        const role = b.instructorRole || state.student?.instructorRole || null;
 
-        $('#confirmHeading').textContent = b.isDropoff ? 'Drop-off scheduled!' : "You're booked!";
-        $('#confirmSubheading').textContent = b.isDropoff
-            ? `Bring your printed manuscript to ${state.config?.location || 'the Faculty Office'} during the drop-off window.`
-            : `Your consultation with ${state.config?.teacherName || 'Arnemie Gayyed'} is confirmed. Please arrive on time.`;
+        setText('#confirmHeading', b.isDropoff ? 'Drop-off scheduled!' : "Scheduled!");
+        setText('#cPurpose', `${b.consultationTitle || meta.title} (${b.durationLabel || meta.badge})`);
 
-        const reminder = $('#cReminderNote');
-        if (reminder) {
-            reminder.className = `policy-callout ${meta.color}`;
-            reminder.innerHTML = meta.confirmHtml;
-        }
-
-        $('#cPurpose').textContent = `${b.consultationTitle || meta.title} (${b.durationLabel || meta.badge})`;
-
-        const roleRow = $('#cRoleRow');
-        if (roleRow) {
-            roleRow.classList.toggle('hidden', !role);
-            if (role) {
-                $('#cRole').textContent = role === 'panel' ? 'Panel Member' : 'Adviser';
-            }
-        }
-
-        $('#cTeamRow').classList.toggle('hidden', !capstone);
+        $('#cTeamRow')?.classList.toggle('hidden', !capstone);
         if (capstone) {
-            $('#cTeam').textContent = capstone;
+            setText('#cTeam', capstone);
         }
         if (hasMultipleMembers) {
-            $('#cNameLabel').textContent = `Attending (${b.members.length})`;
-            $('#cName').textContent = b.members.join(', ');
+            setText('#cNameLabel', `Members (${b.members.length})`);
+            setText('#cName', b.members.join(', '));
         } else {
-            $('#cNameLabel').textContent = 'Attending';
-            $('#cName').textContent = b.members?.[0] || b.name;
+            setText('#cNameLabel', 'Member');
+            setText('#cName', b.members?.[0] || b.name);
         }
-        $('#cDate').textContent = formatLongDate(b.date);
-        $('#cTime').textContent = b.label;
-        $('#cLocation').textContent = state.config?.location || 'Faculty Office';
-        $('#cReason').textContent = b.reason;
-        $('#cRef').textContent = b.reference;
+        setText('#cDate', formatLongDate(b.date));
+        setText('#cTime', b.label);
+        setText('#cLocation', state.config?.location || 'Faculty Office');
+        setText('#cReason', b.reason);
+        setText('#cRef', b.reference);
         goToStep(4);
     }
 
@@ -1015,11 +966,11 @@
             tabsEl.classList.add('hidden');
         }
         $('#slotsTitle').textContent = 'Select a date';
-        $('#slotsSubtitle').textContent = 'Available times will appear here.';
+        $('#slotsSubtitle').textContent = 'Pick an available day on the calendar.';
         $('#slotList').innerHTML = `
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                <p>Pick a highlighted day on the calendar to see open time slots.</p>
+                <p>Pick a highlighted day on the calendar.</p>
             </div>`;
     }
 
@@ -1086,10 +1037,10 @@
         body.className = 'cancelled-alert-body';
 
         const title = document.createElement('strong');
-        title.textContent = `Schedule cancelled: ${latest.consultationTitle} on ${formatLongDate(latest.date)} (${latest.label})`;
+        title.textContent = `Cancelled: ${latest.consultationTitle} on ${formatLongDate(latest.date)} (${latest.label})`;
 
         const reasonLine = document.createElement('p');
-        reasonLine.textContent = `Reason from ${state.config?.teacherName || 'Arnemie Gayyed'}: “${latest.cancellationReason || 'Please reschedule for another available slot.'}”`;
+        reasonLine.textContent = `Reason: ${latest.cancellationReason || 'Please reschedule for another available slot.'}`;
 
         body.append(title, reasonLine);
 
@@ -1099,8 +1050,8 @@
         const viewBtn = document.createElement('button');
         viewBtn.type = 'button';
         viewBtn.className = 'btn btn-ghost btn-sm';
-        viewBtn.textContent = 'View in Profile';
-        viewBtn.addEventListener('click', () => openMyBookingsModal('cancelled'));
+        viewBtn.textContent = 'View Profile';
+        viewBtn.addEventListener('click', () => openMyBookingsModal());
 
         const dismissBtn = document.createElement('button');
         dismissBtn.type = 'button';
@@ -1126,18 +1077,6 @@
             roleBadge.textContent = isPanel ? 'Panel Member' : 'Adviser';
             roleBadge.className = `badge ${isPanel ? 'sky' : 'teal'}`;
             roleBadge.classList.toggle('hidden', !s.instructorRole);
-        }
-
-        const chipsWrap = $('#profileMemberChips');
-        if (chipsWrap) {
-            chipsWrap.innerHTML = '';
-            const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
-            members.forEach((m, idx) => {
-                const chip = document.createElement('span');
-                chip.className = 'member-chip';
-                chip.textContent = idx === 0 ? `${m} (Rep)` : m;
-                chipsWrap.appendChild(chip);
-            });
         }
     }
 
@@ -1184,44 +1123,17 @@
             .filter((b) => bookingCategory(b) === 'past')
             .sort((a, b) => b.date.localeCompare(a.date) || b.startMinute - a.startMinute);
 
-        const allOrdered = [...upcoming, ...cancelled, ...past];
-
-        setText('#pCountAll', allOrdered.length);
-        setText('#pCountUpcoming', upcoming.length);
-        setText('#pCountCancelled', cancelled.length);
-        setText('#pCountPast', past.length);
-
-        document.querySelectorAll('.profile-pill').forEach((pill) => {
-            pill.classList.toggle('active', pill.dataset.pfilter === state.profileFilter);
-        });
-
-        const items = state.profileFilter === 'upcoming'
-            ? upcoming
-            : state.profileFilter === 'cancelled'
-                ? cancelled
-                : state.profileFilter === 'past'
-                    ? past
-                    : allOrdered;
+        const items = [...upcoming, ...cancelled, ...past];
 
         if (!items.length) {
-            const emptyMsg = state.profileFilter === 'upcoming'
-                ? 'You have no upcoming scheduled consultations.'
-                : state.profileFilter === 'cancelled'
-                    ? 'You have no cancelled consultations.'
-                    : state.profileFilter === 'past'
-                        ? 'No past consultations yet.'
-                        : 'You have not scheduled any consultations yet.';
             const empty = document.createElement('div');
             empty.className = 'empty-state';
             const p = document.createElement('p');
-            p.textContent = emptyMsg;
+            p.textContent = 'No consultations scheduled yet.';
             empty.appendChild(p);
             list.appendChild(empty);
             return;
         }
-
-        const teacherName = state.config?.teacherName || 'Arnemie Gayyed';
-        const location = state.config?.location || 'Faculty Office';
 
         items.forEach((b) => {
             const cat = bookingCategory(b);
@@ -1243,7 +1155,7 @@
             const statusBadge = document.createElement('span');
             if (cat === 'cancelled') {
                 statusBadge.className = 'badge danger';
-                statusBadge.textContent = 'Cancelled by Instructor';
+                statusBadge.textContent = 'Cancelled';
             } else if (cat === 'upcoming') {
                 statusBadge.className = 'badge teal';
                 statusBadge.textContent = 'Scheduled';
@@ -1253,46 +1165,24 @@
             }
             badges.appendChild(statusBadge);
 
-            const ref = document.createElement('code');
-            ref.textContent = `Ref: ${b.reference}`;
-
-            top.append(badges, ref);
+            top.appendChild(badges);
 
             const dateStrong = document.createElement('strong');
-            dateStrong.textContent = formatLongDate(b.date);
+            dateStrong.textContent = `${formatLongDate(b.date)} · ${b.label}`;
 
-            const timeSpan = document.createElement('span');
-            timeSpan.className = 'muted small';
-            timeSpan.textContent = `${b.label} · ${location}`;
-
-            item.append(top, dateStrong, timeSpan);
-
-            if (b.reason) {
-                const agenda = document.createElement('p');
-                agenda.className = 'my-booking-agenda muted small';
-                agenda.textContent = b.reason;
-                item.appendChild(agenda);
-            }
+            item.append(top, dateStrong);
 
             if (cat === 'cancelled') {
                 const reasonBox = document.createElement('div');
                 reasonBox.className = 'cancel-reason-box';
 
                 const reasonHeading = document.createElement('strong');
-                reasonHeading.textContent = `Reason from ${teacherName}:`;
+                reasonHeading.textContent = 'Reason for cancellation:';
 
                 const reasonText = document.createElement('p');
                 reasonText.textContent = b.cancellationReason || 'No reason provided.';
 
                 reasonBox.append(reasonHeading, reasonText);
-
-                if (b.cancelledAt) {
-                    const stamp = document.createElement('small');
-                    stamp.className = 'muted';
-                    stamp.textContent = `Cancelled ${new Date(b.cancelledAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`;
-                    reasonBox.appendChild(stamp);
-                }
-
                 item.appendChild(reasonBox);
             }
 
@@ -1300,10 +1190,7 @@
         });
     }
 
-    async function openMyBookingsModal(initialFilter = null) {
-        if (typeof initialFilter === 'string') {
-            state.profileFilter = initialFilter;
-        }
+    async function openMyBookingsModal() {
         renderProfileSummary();
         $('#myBookingsModal').classList.remove('hidden');
         $('#myBookingsList').innerHTML = '<div class="slot skeleton"></div>';
@@ -1316,10 +1203,6 @@
     }
 
     /* ---------------- student account ---------------- */
-    function initials(name) {
-        return String(name || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
-    }
-
     function updateRoleVisibility() {
         const isAdviser = state.student?.instructorRole === 'adviser';
         const letterCard = $('#letterChoiceCard');
@@ -1335,9 +1218,6 @@
         const projBox = $('#studentProjectBox');
         if (projBox) {
             if (state.student) {
-                const count = Array.isArray(state.student.members) && state.student.members.length
-                    ? state.student.members.length
-                    : 1;
                 const roleBadge = $('#projectRoleBadge');
                 if (roleBadge) {
                     const isPanel = state.student.instructorRole === 'panel';
@@ -1346,7 +1226,6 @@
                     roleBadge.classList.toggle('hidden', !state.student.instructorRole);
                 }
                 setText('#projectTitleText', state.student.capstoneTitle || state.student.name);
-                setText('#projectMembersText', `${count} ${count === 1 ? 'member' : 'members'} · ${state.student.members?.join(', ') || state.student.name}`);
                 projBox.classList.remove('hidden');
             } else {
                 projBox.classList.add('hidden');
@@ -1357,13 +1236,10 @@
     function setStudent(student, navigateToStep1 = false) {
         state.student = student || null;
         const box = $('#accountBox');
-        box.classList.toggle('hidden', !state.student);
+        box?.classList.toggle('hidden', !state.student);
         updateRoleVisibility();
 
         if (state.student) {
-            $('#accountAvatar').textContent = initials(state.student.name);
-            $('#accountName').textContent = state.student.name;
-            $('#accountEmail').textContent = state.student.email;
             if (state.student.capstoneTitle && $('#teamInput')) {
                 $('#teamInput').value = state.student.capstoneTitle;
             }
@@ -1393,8 +1269,7 @@
             showAuthGate();
             return;
         }
-        $('#nameInput').value = state.student.name;
-        if (state.student.capstoneTitle && !$('#teamInput').value.trim()) {
+        if (state.student.capstoneTitle && $('#teamInput') && !$('#teamInput').value.trim()) {
             $('#teamInput').value = state.student.capstoneTitle;
         }
         updatePurposeUI();
@@ -1416,15 +1291,12 @@
         }
 
         const titles = {
-            login: ['Sign in to schedule', 'Log in with your verified university account to view and book consultations.'],
-            register: ['Create Capstone / Thesis account', 'Register once using your university email (1 to 3 members max).'],
-            forgot: ['Reset your password', 'Enter your university email and we will send a 6-digit reset code.'],
-            otp: state.otpPurpose === 'reset'
-                ? ['Check your email', 'Enter the 6-digit code and choose your new password.']
-                : ['Verify your university email', 'Enter the 6-digit code we sent to activate your account.'],
+            login: 'Sign in to schedule',
+            register: 'Create account',
+            forgot: 'Reset password',
+            otp: state.otpPurpose === 'reset' ? 'Enter reset code' : 'Verify email',
         };
-        $('#authTitle').textContent = titles[mode][0];
-        $('#authSubtitle').textContent = titles[mode][1];
+        setText('#authTitle', titles[mode]);
         $('#resetPasswordFields').classList.toggle('hidden', !(mode === 'otp' && state.otpPurpose === 'reset'));
     }
 

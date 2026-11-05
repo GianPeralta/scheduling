@@ -25,18 +25,11 @@
         <div class="topbar-actions">
             <button type="button" class="topbar-link hidden" id="myBookingsBtn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                <span>My Profile</span>
+                <span>Profile</span>
                 <span class="nav-count hidden" id="myBookingsCount">0</span>
                 <span class="nav-alert-dot hidden" id="profileCancelDot" title="Schedule update"></span>
             </button>
             <div class="account-box hidden" id="accountBox">
-                <button type="button" class="account-profile-trigger" id="accountProfileBtn" title="View Student Profile &amp; Schedule">
-                    <span class="account-avatar" id="accountAvatar"></span>
-                    <span class="account-text">
-                        <strong id="accountName"></strong>
-                        <small id="accountEmail"></small>
-                    </span>
-                </button>
                 <button type="button" class="account-logout" id="logoutBtn">Log out</button>
             </div>
             <a class="topbar-link" href="/admin.html">
@@ -53,48 +46,31 @@
                 <div class="info-head">
                     <div class="avatar">AG</div>
                     <div>
-                        <p class="muted small">Consultation with</p>
                         <h2>Arnemie Gayyed</h2>
+                        <p class="muted small" id="location">Faculty Office</p>
                     </div>
                 </div>
-
-                <ul class="meta">
-                    <li>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                        <span id="location">Faculty Office</span>
-                    </li>
-                    <li>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                        <span>Book at least 1 day ahead</span>
-                    </li>
-                    <li>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                        <span id="deadlineMeta">Tue – Thu schedule</span>
-                    </li>
-                </ul>
 
                 <div class="project-box hidden" id="studentProjectBox">
                     <div class="project-box-head">
-                        <span class="selection-label">Registered project</span>
+                        <span class="selection-label">Capstone / Thesis</span>
                         <span class="badge teal" id="projectRoleBadge">Adviser</span>
                     </div>
                     <p class="project-box-title" id="projectTitleText"></p>
-                    <p class="muted small" id="projectMembersText"></p>
-                    <button type="button" class="link-btn project-profile-link" id="sidebarProfileBtn">View profile &amp; schedule →</button>
                 </div>
 
                 <div class="selection hidden" id="selectionBox">
-                    <p class="selection-label">Your selection</p>
+                    <p class="selection-label">Selection</p>
                     <p class="selection-purpose" id="selectionPurpose"></p>
                     <p class="selection-date" id="selectionDate"></p>
                     <p class="selection-time" id="selectionTime"></p>
                 </div>
 
                 <div class="steps hidden" id="bookingSteps" role="navigation" aria-label="Booking progress">
-                    <div class="step active" data-step="1"><span>1</span> Consultation type</div>
+                    <div class="step active" data-step="1"><span>1</span> Type</div>
                     <div class="step" data-step="2"><span>2</span> Date &amp; time</div>
-                    <div class="step" data-step="3"><span>3</span> Confirm details</div>
-                    <div class="step" data-step="4"><span>4</span> Confirmed</div>
+                    <div class="step" data-step="3"><span>3</span> Confirm</div>
+                    <div class="step" data-step="4"><span>4</span> Done</div>
                 </div>
             </aside>
 
@@ -109,9 +85,7 @@
             <div class="panel step-panel hidden" id="authPanel">
                 <div class="details-form auth-view" id="authView">
                     <div class="auth-head">
-                        <span class="pill"><span class="pulse-dot"></span> Student Portal · University Email Verification</span>
                         <h3 id="authTitle">Sign in to schedule</h3>
-                        <p class="muted small" id="authSubtitle">Log in with your verified university account, or create one for your Capstone / Thesis.</p>
                     </div>
 
                     <div class="segmented" role="tablist" aria-label="Sign in or register" id="authTabs">
@@ -125,7 +99,6 @@
                         </label>
                     </div>
 
-                    <!-- Top-level form alert so general errors are immediately visible -->
                     <div class="form-error hidden" id="authError" role="alert"></div>
 
                     <!-- Log in -->
@@ -151,11 +124,11 @@
                     <!-- Register -->
                     <form class="auth-form hidden" id="registerForm" novalidate>
                         <div class="group-register-notice">
-                            <strong>One account per Capstone / Thesis (1–3 members max):</strong> Only <strong>one representative</strong> per Capstone / Thesis may register an account. Solo (1 member) and 2-member projects are also supported.
+                            Only <strong>one representative</strong> per Capstone / Thesis group (1–3 members) may register.
                         </div>
 
                         <label class="field">
-                            <span>Your full name</span>
+                            <span>Full name</span>
                             <input type="text" id="regName" maxlength="100" placeholder="e.g. Juan Dela Cruz" autocomplete="name" />
                         </label>
                         <label class="field">
@@ -168,7 +141,7 @@
                             <input type="text" id="regCapstone" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
                         </label>
                         <div class="field" id="regRoleField">
-                            <span>Arnemie Gayyed’s role for your Capstone / Thesis</span>
+                            <span>Instructor role</span>
                             <div class="segmented" role="radiogroup" aria-label="Instructor role">
                                 <label>
                                     <input type="radio" name="regRole" value="adviser" checked />
@@ -181,13 +154,12 @@
                             </div>
                         </div>
                         <div class="field" id="regMembersField">
-                            <span>Capstone / Thesis members <small class="muted" id="regMemberCount"></small></span>
+                            <span>Members <small class="muted" id="regMemberCount"></small></span>
                             <div class="member-list" id="regMemberList"></div>
                             <button type="button" class="add-member" id="regAddMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
                                 Add member (max 3)
                             </button>
-                            <small class="muted field-hint">1 to 3 members allowed. Leave as 1 member if working solo, or add up to 2 groupmates.</small>
                         </div>
                         <label class="field">
                             <span>Password</span>
@@ -199,7 +171,7 @@
                         <label class="field">
                             <span>Confirm password</span>
                             <div class="password-wrap">
-                                <input type="password" id="regPassword2" maxlength="128" placeholder="Re-enter your password" autocomplete="new-password" />
+                                <input type="password" id="regPassword2" maxlength="128" placeholder="Re-enter password" autocomplete="new-password" />
                                 <button type="button" class="pw-toggle" data-target="regPassword2" aria-label="Show password">Show</button>
                             </div>
                         </label>
@@ -225,8 +197,7 @@
                     <!-- Enter the emailed code (registration or password reset) -->
                     <form class="auth-form hidden" id="otpForm" novalidate>
                         <div class="otp-sent">
-                            We sent a 6-digit code to <strong id="otpEmail"></strong>.
-                            Check your inbox (and spam/junk folder).
+                            Code sent to <strong id="otpEmail"></strong>.
                         </div>
                         <label class="field">
                             <span>6-digit verification code</span>
@@ -248,7 +219,7 @@
                         </button>
                         <div class="otp-actions">
                             <button type="button" class="link-btn" id="resendBtn">Resend code</button>
-                            <button type="button" class="link-btn" id="otpChangeEmail">Edit registration details</button>
+                            <button type="button" class="link-btn" id="otpChangeEmail">Back</button>
                         </div>
                     </form>
                 </div>
@@ -260,9 +231,8 @@
                     <div class="cancelled-alert hidden" id="cancelledAlertBanner" role="alert"></div>
 
                     <div class="type-step-header">
-                        <span class="pill"><span class="pulse-dot"></span> Step 1 of 3 · Choose consultation purpose</span>
-                        <h3>What would you like to schedule?</h3>
-                        <p class="muted">All consultations must be scheduled at least <strong>1 day before</strong> the consultation day.</p>
+                        <h3>Select a consultation</h3>
+                        <p class="muted">Schedule at least <strong>1 day before</strong> the consultation day.</p>
                     </div>
 
                     <div class="type-choice-grid" id="typeChoiceGrid">
@@ -276,14 +246,9 @@
                             </div>
                             <div class="type-choice-content">
                                 <h4>System Consultation</h4>
-                                
                                 <div class="type-note teal">
                                     <strong>Requirement:</strong> All members must be present during System Consultations.
                                 </div>
-                            </div>
-                            <div class="type-choice-cta">
-                                <span>Select &amp; pick a date</span>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                             </div>
                         </button>
 
@@ -297,14 +262,9 @@
                             </div>
                             <div class="type-choice-content">
                                 <h4>Drop-off Manuscript</h4>
-                                
                                 <div class="type-note amber">
                                     <strong>Email notice:</strong> Once your manuscript is checked, you will be notified via your registered school email.
                                 </div>
-                            </div>
-                            <div class="type-choice-cta">
-                                <span>Select &amp; pick a date</span>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                             </div>
                         </button>
 
@@ -327,10 +287,6 @@
                                     </ul>
                                 </div>
                             </div>
-                            <div class="type-choice-cta">
-                                <span>Select &amp; pick a date</span>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
-                            </div>
                         </button>
 
                         <!-- 4. Communication Letter Signature (5 min — Adviser students ONLY) -->
@@ -343,14 +299,9 @@
                             </div>
                             <div class="type-choice-content">
                                 <h4>Communication Letter Signature</h4>
-                            
                                 <div class="type-note violet">
                                     <strong>Prerequisite:</strong> Letter must already have the initial of <strong>Ma’am Melinda Beninsig</strong> first.
                                 </div>
-                            </div>
-                            <div class="type-choice-cta">
-                                <span>Check prerequisite &amp; schedule</span>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                             </div>
                         </button>
                     </div>
@@ -361,16 +312,14 @@
             <div class="panel step-panel hidden" id="step2">
                 <div class="active-purpose-banner" id="activePurposeBanner">
                     <div class="active-purpose-info">
-                        <span class="active-purpose-label">Selected consultation</span>
                         <div class="active-purpose-title">
                             <strong id="bannerPurposeTitle">System Consultation</strong>
                             <span class="badge teal" id="bannerPurposeBadge">15 minutes</span>
                         </div>
-                        <p class="active-purpose-note" id="bannerPurposeNote"></p>
                     </div>
                     <button type="button" class="change-purpose-btn" id="changePurposeBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                        Change type
+                        Change
                     </button>
                 </div>
 
@@ -392,23 +341,20 @@
                     <div class="days" id="days"></div>
                     <div class="legend">
                         <span><i class="dot dot-open"></i> Available</span>
-                        <span><i class="dot dot-full"></i> Fully booked</span>
+                        <span><i class="dot dot-full"></i> Full</span>
                     </div>
-                    <p class="calendar-rule muted small">
-                        Bookings must be made at least <strong>1 day before</strong> the consultation day (same-day booking is closed).
-                    </p>
                 </div>
 
                 <div class="slots">
                     <div class="slots-head">
                         <h3 id="slotsTitle">Select a date</h3>
-                        <p class="muted small" id="slotsSubtitle">Available times will appear here.</p>
+                        <p class="muted small" id="slotsSubtitle">Pick an available day on the calendar.</p>
                     </div>
                     <div class="window-tabs hidden" id="windowTabs"></div>
                     <div class="slot-list" id="slotList">
                         <div class="empty-state">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                            <p>Pick a highlighted day on the calendar to see open time slots.</p>
+                            <p>Pick a highlighted day on the calendar.</p>
                         </div>
                     </div>
                 </div>
@@ -419,17 +365,10 @@
                 <form class="details-form" id="bookingForm" novalidate>
                     <button type="button" class="back-btn" id="backBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                        Back to date &amp; time
+                        Back
                     </button>
-                    <div>
-                        <h3 id="bookingFormTitle">Review &amp; confirm your booking</h3>
-                        <p class="muted small" id="bookingFormSubtitle">Verify your Capstone / Thesis details below before confirming.</p>
-                    </div>
+                    <h3 id="bookingFormTitle">Confirm booking</h3>
 
-                    <!-- Contextual consultation rule callout -->
-                    <div class="policy-callout" id="bookingPolicyNotice"></div>
-
-                    <!-- Top-level form alert so general booking errors are immediately visible -->
                     <div class="form-error hidden" id="formError" role="alert"></div>
 
                     <label class="field">
@@ -437,39 +376,10 @@
                         <input type="text" id="teamInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
                     </label>
 
-                    <div class="field hidden" id="attendanceToggleField">
-                        <span>Who will attend?</span>
-                        <div class="segmented" role="radiogroup" aria-label="Booking type">
-                            <label>
-                                <input type="radio" name="bookingType" value="individual" />
-                                <span>
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                                    Representative only
-                                </span>
-                            </label>
-                            <label>
-                                <input type="radio" name="bookingType" value="group" checked />
-                                <span>
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                    All members
-                                </span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Representative only -->
-                    <div id="individualFields" class="hidden">
-                        <label class="field">
-                            <span>Attending student</span>
-                            <input type="text" id="nameInput" maxlength="100" readonly autocomplete="name" />
-                            <small class="muted field-hint">From your verified university account.</small>
-                        </label>
-                    </div>
-
                     <!-- Capstone / Thesis members (1 to 3) -->
                     <div id="groupFields" class="group-fields">
                         <div class="field" id="bookingMembersField">
-                            <span><span id="membersFieldLabel">Capstone / Thesis members</span> <small class="muted" id="memberCount"></small></span>
+                            <span><span id="membersFieldLabel">Members</span> <small class="muted" id="memberCount"></small></span>
                             <div class="member-list" id="memberList"></div>
                             <button type="button" class="add-member" id="addMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -480,10 +390,10 @@
 
                     <label class="field">
                         <span>
-                            <span id="reasonLabelText">Agenda / Reason for consultation</span>
+                            <span id="reasonLabelText">Notes / Agenda</span>
                             <small class="muted" id="reasonOptionalHint"></small>
                         </span>
-                        <textarea id="reasonInput" rows="3" maxlength="1000" placeholder="e.g. Present our system modules and ask for feedback."></textarea>
+                        <textarea id="reasonInput" rows="3" maxlength="1000" placeholder="Brief agenda or notes"></textarea>
                         <small class="counter"><span id="reasonCount">0</span>/1000</small>
                     </label>
 
@@ -500,25 +410,20 @@
                     <div class="success-icon">
                         <svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24" fill="none"/><path fill="none" d="m15 27 7 7 15-15"/></svg>
                     </div>
-                    <h3 id="confirmHeading">You're scheduled!</h3>
-                    <p class="muted" id="confirmSubheading">Your schedule with Arnemie Gayyed is confirmed. Please arrive on time.</p>
-
-                    <div class="policy-callout" id="cReminderNote"></div>
+                    <h3 id="confirmHeading">Scheduled!</h3>
 
                     <div class="ticket">
                         <div class="ticket-row"><span>Consultation</span><strong id="cPurpose"></strong></div>
-                        <div class="ticket-row hidden" id="cRoleRow"><span>Instructor role</span><strong id="cRole"></strong></div>
                         <div class="ticket-row hidden" id="cTeamRow"><span>Capstone / Thesis</span><strong id="cTeam"></strong></div>
-                        <div class="ticket-row"><span id="cNameLabel">Attending</span><strong id="cName"></strong></div>
+                        <div class="ticket-row"><span id="cNameLabel">Members</span><strong id="cName"></strong></div>
                         <div class="ticket-row"><span>Date</span><strong id="cDate"></strong></div>
                         <div class="ticket-row"><span>Time</span><strong id="cTime"></strong></div>
                         <div class="ticket-row"><span>Location</span><strong id="cLocation"></strong></div>
-                        <div class="ticket-row ticket-reason"><span>Details</span><p id="cReason"></p></div>
+                        <div class="ticket-row ticket-reason"><span>Notes</span><p id="cReason"></p></div>
                         <div class="ticket-ref">Reference <code id="cRef"></code></div>
                     </div>
 
-                    <p class="muted small">Save a screenshot of this confirmation for your group’s records.</p>
-                    <button class="btn btn-ghost" id="bookAnother">Schedule another consultation</button>
+                    <button class="btn btn-ghost" id="bookAnother">Book another</button>
                 </div>
             </div>
         </section>
@@ -527,18 +432,14 @@
     <!-- Prerequisite Gate Modal: Ma'am Melinda Beninsig's Initial for Communication Letter -->
     <div class="modal-backdrop hidden" id="beninsigModal" role="dialog" aria-modal="true" aria-labelledby="beninsigModalTitle">
         <div class="modal-card">
-            <!-- View 1: Ask if they already have Ma'am Beninsig's initial -->
             <div id="beninsigAskView" class="modal-body">
-                <div class="modal-icon violet">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                </div>
-                <h3 id="beninsigModalTitle">Prerequisite Check: Communication Letter</h3>
+                <h3 id="beninsigModalTitle">Communication Letter Check</h3>
                 <p class="muted">
-                    Does your communication letter already have the <strong>initial of Ma’am Melinda Beninsig</strong> before requesting your adviser’s signature?
+                    Does your communication letter already have the <strong>initial of Ma’am Melinda Beninsig</strong>?
                 </p>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-primary btn-block" id="beninsigYesBtn">
-                        Yes, it already has Ma’am Beninsig’s initial
+                        Yes, it has Ma’am Beninsig’s initial
                     </button>
                     <button type="button" class="btn btn-ghost btn-block" id="beninsigNoBtn">
                         No, not yet
@@ -546,29 +447,25 @@
                 </div>
             </div>
 
-            <!-- View 2: Prompt student to go to Ma'am Beninsig first -->
             <div id="beninsigNoView" class="modal-body hidden">
-                <div class="modal-icon amber">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-                </div>
-                <h3>Please go to Ma’am Melinda Beninsig first</h3>
-                <div class="policy-callout amber">
-                    Your communication letter must have the <strong>initial of Ma’am Melinda Beninsig</strong> before requesting your adviser’s signature. Please visit <strong>Ma’am Melinda Beninsig</strong> first, then come back here to schedule your 5-minute signature slot.
-                </div>
+                <h3>Visit Ma’am Melinda Beninsig first</h3>
+                <p class="muted">
+                    Please get the initial of <strong>Ma’am Melinda Beninsig</strong> on your communication letter first, then return here to schedule.
+                </p>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-primary btn-block" id="beninsigCloseBtn">
-                        Got it, I will go to Ma’am Beninsig first
+                        Got it
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Student Profile & Schedule Modal (shows upcoming, past, and cancelled schedules with instructor's reason) -->
+    <!-- Student Profile & Schedule Modal -->
     <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
         <div class="modal-card modal-profile">
             <div class="modal-head">
-                <h3 id="myBookingsTitle">Student Profile</h3>
+                <h3 id="myBookingsTitle">Profile &amp; Schedule</h3>
                 <button type="button" class="icon-btn" id="closeMyBookingsBtn" aria-label="Close">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
@@ -576,27 +473,13 @@
 
             <div class="profile-summary-card" id="profileSummaryCard">
                 <div class="profile-summary-top">
-                    <div>
-                        <span class="selection-label">Capstone / Thesis</span>
-                        <h4 id="profileCapstoneTitle">—</h4>
-                    </div>
+                    <h4 id="profileCapstoneTitle">—</h4>
                     <span class="badge teal" id="profileRoleBadge">Adviser</span>
                 </div>
                 <div class="profile-meta-row">
                     <span id="profileRepName"></span>
                     <span class="muted">·</span>
                     <span class="muted" id="profileRepEmail"></span>
-                </div>
-                <div class="booking-members" id="profileMemberChips"></div>
-            </div>
-
-            <div class="profile-schedule-head">
-                <h4>Consultation Schedule &amp; History</h4>
-                <div class="profile-filter-pills" role="tablist" aria-label="Filter consultations">
-                    <button type="button" class="profile-pill active" data-pfilter="all">All <span id="pCountAll">0</span></button>
-                    <button type="button" class="profile-pill" data-pfilter="upcoming">Upcoming <span id="pCountUpcoming">0</span></button>
-                    <button type="button" class="profile-pill" data-pfilter="cancelled">Cancelled <span id="pCountCancelled">0</span></button>
-                    <button type="button" class="profile-pill" data-pfilter="past">Past <span id="pCountPast">0</span></button>
                 </div>
             </div>
 

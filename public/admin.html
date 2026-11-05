@@ -26,8 +26,7 @@
         <section class="login-wrap" id="loginView">
             <form class="card login-card" id="loginForm">
                 <div class="avatar">AG</div>
-                <h1>Arnemie's Dashboard</h1>
-                <p class="muted small">Enter your password to view and manage your consultation schedule.</p>
+                <h1>Dashboard</h1>
                 <label class="field">
                     <span>Password</span>
                     <input type="password" id="passwordInput" autocomplete="current-password" placeholder="••••••••" required />
@@ -45,7 +44,7 @@
             <div class="dash-head">
                 <div>
                     <p class="muted small" id="todayLabel"></p>
-                    <h1>Welcome back, <span class="accent-text">Arnemie</span></h1>
+                    <h1>Consultations</h1>
                 </div>
                 <div class="dash-actions">
                     <button class="btn btn-ghost" id="refreshBtn">
@@ -84,7 +83,7 @@
                     </div>
                     <div>
                         <div class="stat-value" id="statUpcoming">0</div>
-                        <div class="stat-label">All upcoming</div>
+                        <div class="stat-label">Upcoming</div>
                     </div>
                 </div>
             </div>
@@ -98,7 +97,7 @@
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                        <input type="search" id="searchInput" placeholder="Search student, team, or reason…" />
+                        <input type="search" id="searchInput" placeholder="Search…" />
                     </label>
                 </div>
                 <div class="bookings" id="bookingList"></div>
@@ -118,24 +117,15 @@
             <form class="modal-body" id="cancelBookingForm" novalidate>
                 <div class="cancel-target-summary" id="cancelTargetSummary"></div>
 
-                <div class="quick-reasons" aria-label="Quick cancellation reasons">
-                    <span class="muted small">Quick reasons:</span>
-                    <div class="quick-reason-chips">
-                        <button type="button" class="reason-chip" data-reason="Faculty meeting / schedule conflict — please reschedule for another available day.">Faculty meeting / conflict</button>
-                        <button type="button" class="reason-chip" data-reason="Instructor unavailable on this date — please book another consultation slot.">Unavailable on this date</button>
-                        <button type="button" class="reason-chip" data-reason="Please complete required prerequisites first before scheduling.">Prerequisites incomplete</button>
-                    </div>
-                </div>
-
                 <label class="field" id="cancelReasonField">
-                    <span>Reason for cancellation <small class="muted">(shown in student’s profile)</small></span>
-                    <textarea id="cancelReasonInput" rows="3" maxlength="500" placeholder="Explain why this schedule is cancelled so the student knows what to do next…"></textarea>
+                    <span>Reason for cancellation</span>
+                    <textarea id="cancelReasonInput" rows="3" maxlength="500" placeholder="Enter reason for cancellation…"></textarea>
                     <small class="counter"><span id="cancelReasonCount">0</span>/500</small>
                     <small class="field-error hidden" id="cancelReasonError" role="alert"></small>
                 </label>
 
                 <div class="modal-actions modal-actions-row">
-                    <button type="button" class="btn btn-ghost" id="keepAppointmentBtn">Keep appointment</button>
+                    <button type="button" class="btn btn-ghost" id="keepAppointmentBtn">Keep</button>
                     <button type="submit" class="btn btn-danger" id="confirmCancelBtn">
                         <span class="btn-label">Cancel consultation</span>
                         <span class="spinner hidden"></span>
