@@ -199,8 +199,12 @@
 
                     <!-- Register -->
                     <form class="auth-form hidden" id="registerForm" novalidate>
+                        <div class="group-register-notice">
+                            <strong>Important:</strong> Only <strong>one representative per Capstone / Thesis group</strong> may register an account. Your single account will be used to book consultations for your entire group.
+                        </div>
+
                         <label class="field">
-                            <span>Full name</span>
+                            <span>Your full name (Group Representative)</span>
                             <input type="text" id="regName" maxlength="100" placeholder="e.g. Juan Dela Cruz" autocomplete="name" />
                         </label>
                         <label class="field">
@@ -208,6 +212,31 @@
                             <input type="email" id="regEmail" maxlength="254" autocomplete="email" inputmode="email" />
                             <small class="muted field-hint" id="regEmailHint"></small>
                         </label>
+                        <label class="field">
+                            <span>Capstone / Thesis title</span>
+                            <input type="text" id="regCapstone" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
+                        </label>
+                        <div class="field">
+                            <span>Instructor's role for your group</span>
+                            <div class="segmented" role="radiogroup" aria-label="Instructor role">
+                                <label>
+                                    <input type="radio" name="regRole" value="adviser" checked />
+                                    <span>Adviser</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="regRole" value="panel" />
+                                    <span>Panel Member</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <span>Group members <small class="muted" id="regMemberCount"></small></span>
+                            <div class="member-list" id="regMemberList"></div>
+                            <button type="button" class="add-member" id="regAddMemberBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                                Add group member
+                            </button>
+                        </div>
                         <label class="field">
                             <span>Password</span>
                             <input type="password" id="regPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
@@ -306,8 +335,8 @@
                     <!-- Group -->
                     <div id="groupFields" class="group-fields hidden">
                         <label class="field">
-                            <span>Team name</span>
-                            <input type="text" id="teamInput" maxlength="100" placeholder="e.g. Team Alpha" />
+                            <span>Capstone / Thesis title</span>
+                            <input type="text" id="teamInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
                         </label>
 
                         <div class="field">
@@ -346,7 +375,8 @@
 
                     <div class="ticket">
                         <div class="ticket-row"><span>Consultation</span><strong id="cPurpose"></strong></div>
-                        <div class="ticket-row hidden" id="cTeamRow"><span>Team</span><strong id="cTeam"></strong></div>
+                        <div class="ticket-row hidden" id="cRoleRow"><span>Instructor role</span><strong id="cRole"></strong></div>
+                        <div class="ticket-row hidden" id="cTeamRow"><span>Capstone / Thesis</span><strong id="cTeam"></strong></div>
                         <div class="ticket-row"><span id="cNameLabel">Name</span><strong id="cName"></strong></div>
                         <div class="ticket-row"><span>Date</span><strong id="cDate"></strong></div>
                         <div class="ticket-row"><span>Time</span><strong id="cTime"></strong></div>

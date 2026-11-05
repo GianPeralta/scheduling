@@ -21,7 +21,10 @@ create table if not exists public.appointments (
 --   members   : every student attending (for individuals it's just their own name).
 --               student_name holds the first member (the person who booked).
 alter table public.appointments add column if not exists team_name text
-    check (team_name is null or char_length(team_name) between 2 and 100);
+    check (team_name is null or char_length(team_name) between 2 and 200);
+alter table public.appointments drop constraint if exists appointments_team_name_check;
+alter table public.appointments add constraint appointments_team_name_check
+    check (team_name is null or char_length(team_name) between 2 and 200);
 alter table public.appointments add column if not exists members text[] not null default '{}'
     check (cardinality(members) <= 10);
 
@@ -59,32 +62,78 @@ alter table public.appointments enable row level security;
 -- Student accounts (university email, verified with a one-time code)
 -- ---------------------------------------------------------------------------
 create table if not exists public.students (
-    id             uuid primary key default gen_random_uuid(),
-    email          text        not null unique check (email = lower(email)),
-    full_name      text        not null check (char_length(full_name) between 2 and 100),
-    password_hash  text        not null,
-    failed_logins  smallint    not null default 0,
-    locked_until   timestamptz,
-    last_login_at  timestamptz,
-    created_at     timestamptz not null default now()
+    id               uuid primary key default gen_random_uuid(),
+    email            text        not null unique check (email = lower(email)),
+    full_name        text        not null check (char_length(full_name) between 2 and 100),
+    capstone_title   text        check (capstone_title is null or char_length(capstone_title) between 2 and 200),
+    instructor_role  text        check (instructor_role is null or instructor_role in ('adviser', 'panel')),
+    members          text[]      not null default '{}' check (cardinality(members) <= 10),
+    password_hash    text        not null,
+    failed_logins    smallint    not null default 0,
+    locked_until     timestamptz,
+    last_login_at    timestamptz,
+    created_at       timestamptz not null default now()
 );
 
--- One-time codes emailed for registration / password reset (only the hash is stored)
+alter table public.students add column if not exists capstone_title text
+    check (capstone_title is null or char_length(capstone_title) between 2 and 200);
+alter table public.students add column if not exists instructor_role text
+    check (instructor_role is null or instructor_role in ('adviser', 'panel'));
+alter table public.students add column if not exists members text[] not null default '{}'
+    check (cardinality(members) <= 10);
+
+-- One-time codes emailed for registration / password reset (permanent log of all attempts)
 create table if not exists public.email_otps (
-    email       text        not null,
-    purpose     text        not null check (purpose in ('register', 'reset')),
-    code_hash   text        not null,
-    payload     jsonb,                       -- pending registration details
-    attempts    smallint    not null default 0,
-    expires_at  timestamptz not null,
-    created_at  timestamptz not null default now(),
-    primary key (email, purpose)
+    id               uuid primary key default gen_random_uuid(),
+    email            text        not null,
+    student_name     text,
+    capstone_title   text,
+    instructor_role  text,
+    members          text[],
+    purpose          text        not null check (purpose in ('register', 'reset')),
+    otp_code         text,
+    code_hash        text        not null,
+    status           text        not null default 'pending'
+                                 check (status in ('pending', 'verified', 'expired', 'failed', 'superseded', 'send_failed')),
+    payload          jsonb,                       -- pending registration details
+    attempts         smallint    not null default 0,
+    expires_at       timestamptz not null,
+    verified_at      timestamptz,
+    created_at       timestamptz not null default now()
 );
+
+-- Upgrade path if email_otps was created with an older schema:
+alter table public.email_otps drop constraint if exists email_otps_pkey;
+alter table public.email_otps add column if not exists id uuid default gen_random_uuid();
+update public.email_otps set id = gen_random_uuid() where id is null;
+alter table public.email_otps alter column id set not null;
+
+do $$
+begin
+    if not exists (
+        select 1 from pg_constraint
+        where conrelid = 'public.email_otps'::regclass and contype = 'p'
+    ) then
+        alter table public.email_otps add constraint email_otps_id_pkey primary key (id);
+    end if;
+end $$;
+
+alter table public.email_otps add column if not exists student_name text;
+alter table public.email_otps add column if not exists capstone_title text;
+alter table public.email_otps add column if not exists instructor_role text;
+alter table public.email_otps add column if not exists members text[];
+alter table public.email_otps add column if not exists otp_code text;
+alter table public.email_otps add column if not exists status text not null default 'pending';
+alter table public.email_otps add column if not exists verified_at timestamptz;
+create index if not exists email_otps_email_purpose_idx on public.email_otps (email, purpose, created_at desc);
 
 -- Link every booking to the student account that made it
 alter table public.appointments add column if not exists student_id uuid
     references public.students (id) on delete set null;
 alter table public.appointments add column if not exists student_email text;
+alter table public.appointments add column if not exists capstone_title text;
+alter table public.appointments add column if not exists instructor_role text
+    check (instructor_role is null or instructor_role in ('adviser', 'panel'));
 create index if not exists appointments_student_idx on public.appointments (student_id);
 
 alter table public.students   enable row level security;

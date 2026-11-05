@@ -170,6 +170,8 @@
         if (!q) return true;
         if (b.name.toLowerCase().includes(q)) return true;
         if (b.teamName && b.teamName.toLowerCase().includes(q)) return true;
+        if (b.capstoneTitle && b.capstoneTitle.toLowerCase().includes(q)) return true;
+        if (b.instructorRole && b.instructorRole.toLowerCase().includes(q)) return true;
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
         if (b.reason.toLowerCase().includes(q)) return true;
         if (b.reference.toLowerCase().includes(q)) return true;
@@ -231,11 +233,17 @@
 
                 const body = el('div', 'booking-body');
                 const header = el('div', 'booking-name');
-                header.appendChild(el('span', 'booking-title', isGroup ? b.teamName : b.name));
+                const titleText = isGroup ? b.teamName : (b.capstoneTitle ? `${b.name} · ${b.capstoneTitle}` : b.name);
+                header.appendChild(el('span', 'booking-title', titleText));
                 if (b.consultationType === 'other') {
                     header.appendChild(el('span', 'badge sky', 'Other · 6m'));
                 } else {
                     header.appendChild(el('span', 'badge teal', 'System / App · 1h 20m'));
+                }
+                if (b.instructorRole === 'panel') {
+                    header.appendChild(el('span', 'badge sky', 'Role: Panel Member'));
+                } else if (b.instructorRole === 'adviser') {
+                    header.appendChild(el('span', 'badge teal', 'Role: Adviser'));
                 }
                 if (isGroup) {
                     header.appendChild(el('span', 'badge amber', `Group · ${b.members.length}`));

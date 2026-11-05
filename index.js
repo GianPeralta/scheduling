@@ -243,7 +243,14 @@ async function requireStudent(req, res, next) {
     next();
 }
 
-const publicStudent = (s) => ({ id: s.id, name: s.full_name, email: s.email });
+const publicStudent = (s) => ({
+    id: s.id,
+    name: s.full_name,
+    email: s.email,
+    capstoneTitle: s.capstone_title || null,
+    instructorRole: s.instructor_role || null,
+    members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
+});
 
 /* ---------- email (SMTP) ---------- */
 let transporter = null;
@@ -294,19 +301,21 @@ async function sendOtpEmail(to, code, purpose, name) {
     });
 }
 
-/* ---------- one-time codes (stored hashed in Supabase) ---------- */
+/* ---------- one-time codes (stored permanently in Supabase) ---------- */
 const otpHash = (email, purpose, code) =>
     crypto.createHmac('sha256', sessionSecret()).update(`${purpose}:${email}:${code}`).digest('hex');
 
 async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
     const { data: existing, error } = await db()
         .from(OTP_TABLE)
-        .select('created_at')
+        .select('id, created_at, status')
         .eq('email', email)
         .eq('purpose', purpose)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
     if (error) throw error;
-    if (existing) {
+    if (existing && existing.status !== 'send_failed') {
         const elapsed = Math.floor((Date.now() - new Date(existing.created_at).getTime()) / 1000);
         const wait = AUTH.otpResendSeconds - elapsed;
         if (wait > 0) {
@@ -314,47 +323,67 @@ async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
         }
     }
 
+    // Mark any older pending codes for this email+purpose as superseded so only the newest code works
+    await db()
+        .from(OTP_TABLE)
+        .update({ status: 'superseded' })
+        .eq('email', email)
+        .eq('purpose', purpose)
+        .eq('status', 'pending');
+
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     const now = Date.now();
-    const { error: upsertErr } = await db().from(OTP_TABLE).upsert({
-        email,
-        purpose,
-        code_hash: otpHash(email, purpose, code),
-        payload,
-        attempts: 0,
-        created_at: new Date(now).toISOString(),
-        expires_at: new Date(now + AUTH.otpMinutes * 60 * 1000).toISOString(),
-    }, { onConflict: 'email,purpose' });
-    if (upsertErr) throw upsertErr;
+    const { data: inserted, error: insertErr } = await db()
+        .from(OTP_TABLE)
+        .insert([{
+            email,
+            student_name: name || payload?.name || null,
+            capstone_title: payload?.capstoneTitle || null,
+            instructor_role: payload?.instructorRole || null,
+            members: Array.isArray(payload?.members) ? payload.members : null,
+            purpose,
+            otp_code: code,
+            code_hash: otpHash(email, purpose, code),
+            status: 'pending',
+            payload,
+            attempts: 0,
+            created_at: new Date(now).toISOString(),
+            expires_at: new Date(now + AUTH.otpMinutes * 60 * 1000).toISOString(),
+        }])
+        .select('id')
+        .single();
+    if (insertErr) throw insertErr;
 
     try {
         await sendOtpEmail(email, code, purpose, name);
     } catch (err) {
         console.error('SMTP error:', err);
-        await db().from(OTP_TABLE).delete().eq('email', email).eq('purpose', purpose);
+        await db().from(OTP_TABLE).update({ status: 'send_failed' }).eq('id', inserted.id);
         if (err.status) throw err;
         throw httpError(502, 'We could not send the verification email right now. Please try again later.');
     }
 }
 
-/** Checks a code; returns the stored row (with its payload) on success, otherwise throws. */
+/** Checks a code; marks the row verified and returns it (with its payload) on success, otherwise throws. */
 async function consumeOtp(email, purpose, code) {
-    const removeOtp = () => db().from(OTP_TABLE).delete().eq('email', email).eq('purpose', purpose);
-
     const { data: row, error } = await db()
         .from(OTP_TABLE)
         .select('*')
         .eq('email', email)
         .eq('purpose', purpose)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
     if (error) throw error;
-    if (!row) throw httpError(400, 'No active code for this email. Please request a new one.');
+    if (!row || row.status !== 'pending') {
+        throw httpError(400, 'No active code for this email. Please request a new one.');
+    }
     if (new Date(row.expires_at).getTime() < Date.now()) {
-        await removeOtp();
+        await db().from(OTP_TABLE).update({ status: 'expired' }).eq('id', row.id);
         throw httpError(400, 'That code has expired. Please request a new one.');
     }
     if (row.attempts >= AUTH.otpMaxAttempts) {
-        await removeOtp();
+        await db().from(OTP_TABLE).update({ status: 'failed' }).eq('id', row.id);
         throw httpError(429, 'Too many incorrect attempts. Please request a new code.');
     }
 
@@ -364,14 +393,17 @@ async function consumeOtp(email, purpose, code) {
         const attempts = row.attempts + 1;
         const left = AUTH.otpMaxAttempts - attempts;
         if (left <= 0) {
-            await removeOtp();
+            await db().from(OTP_TABLE).update({ attempts, status: 'failed' }).eq('id', row.id);
             throw httpError(429, 'Too many incorrect attempts. Please request a new code.');
         }
-        await db().from(OTP_TABLE).update({ attempts }).eq('email', email).eq('purpose', purpose);
+        await db().from(OTP_TABLE).update({ attempts }).eq('id', row.id);
         throw httpError(400, `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.`);
     }
 
-    await removeOtp();
+    await db()
+        .from(OTP_TABLE)
+        .update({ status: 'verified', verified_at: new Date().toISOString() })
+        .eq('id', row.id);
     return row;
 }
 
@@ -547,6 +579,13 @@ app.post('/api/auth/register/start', async (req, res) => {
     const body = req.body || {};
     const name = cleanName(body.name);
     const email = normalizeEmail(body.email);
+    const capstoneTitle = cleanName(body.capstoneTitle);
+    const instructorRole = body.instructorRole === 'panel'
+        ? 'panel'
+        : body.instructorRole === 'adviser'
+            ? 'adviser'
+            : null;
+    const rawMembers = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
     const password = body.password;
 
     if (name.length < 2 || name.length > 100) {
@@ -555,6 +594,25 @@ app.post('/api/auth/register/start', async (req, res) => {
     if (!isUniversityEmail(email)) {
         return res.status(400).json({ error: `Please use your university email (${domainHint()}).` });
     }
+    if (capstoneTitle.length < 3 || capstoneTitle.length > 200) {
+        return res.status(400).json({ error: 'Please enter your Capstone / Thesis title (3–200 characters).' });
+    }
+    if (!instructorRole) {
+        return res.status(400).json({ error: `Please select whether ${TEACHER_NAME} is your Adviser or Panel Member.` });
+    }
+
+    // Member 1 is always the representative registering; attach remaining group members
+    const members = [name, ...rawMembers.slice(1)];
+    if (members.length < 2) {
+        return res.status(400).json({ error: 'Please enter at least 2 group member names (yourself and your groupmates).' });
+    }
+    if (members.length > MAX_MEMBERS) {
+        return res.status(400).json({ error: `A group can have at most ${MAX_MEMBERS} members.` });
+    }
+    if (members.some((m) => m.length < 2 || m.length > 100)) {
+        return res.status(400).json({ error: 'Each group member needs a full name (2–100 characters).' });
+    }
+
     const pwError = validatePassword(password);
     if (pwError) return res.status(400).json({ error: pwError });
 
@@ -564,7 +622,8 @@ app.post('/api/auth/register/start', async (req, res) => {
 
     // The account is only created after the code is verified, so keep the details with the code.
     const passwordHash = await hashPassword(password);
-    await issueOtp(email, 'register', { payload: { name, passwordHash }, name });
+    const payload = { name, capstoneTitle, instructorRole, members, passwordHash };
+    await issueOtp(email, 'register', { payload, name });
     res.json({ ok: true, email, expiresInMinutes: AUTH.otpMinutes, resendSeconds: AUTH.otpResendSeconds });
 });
 
@@ -572,14 +631,22 @@ app.post('/api/auth/register/start', async (req, res) => {
 app.post('/api/auth/register/verify', async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const row = await consumeOtp(email, 'register', req.body?.code);
-    const { name, passwordHash } = row.payload || {};
+    const { name, capstoneTitle, instructorRole, members, passwordHash } = row.payload || {};
     if (!name || !passwordHash) {
         return res.status(400).json({ error: 'Registration details were lost. Please register again.' });
     }
 
     const { data: student, error } = await db()
         .from(STUDENTS_TABLE)
-        .insert([{ email, full_name: name, password_hash: passwordHash, last_login_at: new Date().toISOString() }])
+        .insert([{
+            email,
+            full_name: name,
+            capstone_title: capstoneTitle || null,
+            instructor_role: instructorRole || null,
+            members: Array.isArray(members) && members.length ? members : [name],
+            password_hash: passwordHash,
+            last_login_at: new Date().toISOString(),
+        }])
         .select('*')
         .single();
     if (error) {
@@ -602,6 +669,8 @@ app.post('/api/auth/resend', async (req, res) => {
         .select('payload')
         .eq('email', email)
         .eq('purpose', purpose)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
     if (error) throw error;
 
@@ -784,6 +853,8 @@ function toBooking(r) {
         durationLabel: durationMinutes === OTHER_DURATION ? '6 min' : '1 hr 20 min',
         name: r.student_name,
         studentEmail: r.student_email || null,
+        capstoneTitle: r.capstone_title || r.team_name || null,
+        instructorRole: r.instructor_role || null,
         teamName: r.team_name || null,
         members,
         reason: r.reason,
@@ -810,9 +881,9 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     let teamName = null;
 
     if (type === 'group') {
-        teamName = cleanName(body.teamName);
-        if (teamName.length < 2 || teamName.length > 100) {
-            return res.status(400).json({ error: 'Please enter your team name (2–100 characters).' });
+        teamName = cleanName(body.teamName || student.capstone_title);
+        if (teamName.length < 2 || teamName.length > 200) {
+            return res.status(400).json({ error: 'Please enter your Capstone / Thesis or team name (2–200 characters).' });
         }
         members = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
         // Member 1 is always the logged-in student (the person responsible for the booking)
@@ -893,6 +964,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             consultation_type: consultationType,
             student_id: student.id,
             student_email: student.email,
+            capstone_title: student.capstone_title || teamName || null,
+            instructor_role: student.instructor_role || null,
         }])
         .select('*')
         .single();

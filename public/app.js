@@ -306,13 +306,23 @@
     function resetMembers() {
         const list = $('#memberList');
         list.innerHTML = '';
-        addMemberRow();
-        addMemberRow();
+        const savedMembers = state.student?.members;
+        if (Array.isArray(savedMembers) && savedMembers.length >= MIN_GROUP_MEMBERS) {
+            savedMembers.slice(0, MAX_MEMBERS).forEach((m) => addMemberRow(m));
+        } else {
+            addMemberRow(state.student?.name || '');
+            addMemberRow();
+        }
+        if (state.student?.capstoneTitle && $('#teamInput') && !$('#teamInput').value.trim()) {
+            $('#teamInput').value = state.student.capstoneTitle;
+        }
     }
 
     function setBookingType(type) {
         state.bookingType = type === 'group' ? 'group' : 'individual';
         const isGroup = state.bookingType === 'group';
+        const radio = document.querySelector(`input[name="bookingType"][value="${state.bookingType}"]`);
+        if (radio) radio.checked = true;
         $('#individualFields').classList.toggle('hidden', isGroup);
         $('#groupFields').classList.toggle('hidden', !isGroup);
         updateReasonPlaceholder();
@@ -707,12 +717,26 @@
 
     function showConfirmation(b) {
         const isGroup = b.type === 'group' && b.teamName;
+        const capstone = b.capstoneTitle || b.teamName || state.student?.capstoneTitle || null;
+        const role = b.instructorRole || state.student?.instructorRole || null;
+
         $('#cPurpose').textContent = b.consultationType === 'other'
             ? `Other Consultation (${b.durationLabel || '6 min'})`
             : `System Consultation (${b.durationLabel || '1 hr 20 min'})`;
-        $('#cTeamRow').classList.toggle('hidden', !isGroup);
+
+        const roleRow = $('#cRoleRow');
+        if (roleRow) {
+            roleRow.classList.toggle('hidden', !role);
+            if (role) {
+                $('#cRole').textContent = role === 'panel' ? 'Panel Member' : 'Adviser';
+            }
+        }
+
+        $('#cTeamRow').classList.toggle('hidden', !capstone);
+        if (capstone) {
+            $('#cTeam').textContent = capstone;
+        }
         if (isGroup) {
-            $('#cTeam').textContent = b.teamName;
             $('#cNameLabel').textContent = `Members (${b.members.length})`;
             $('#cName').textContent = b.members.join(', ');
         } else {
@@ -731,7 +755,7 @@
         $('#bookingForm').reset();
         $('#reasonCount').textContent = '0';
         resetMembers();
-        setBookingType('individual');
+        setBookingType(state.student?.members?.length >= MIN_GROUP_MEMBERS ? 'group' : 'individual');
         setFormError('');
         state.consultationPurpose = null;
         state.selectedSlot = null;
@@ -774,6 +798,17 @@
             $('#accountAvatar').textContent = initials(state.student.name);
             $('#accountName').textContent = state.student.name;
             $('#accountEmail').textContent = state.student.email;
+            if (state.student.capstoneTitle && $('#teamInput')) {
+                $('#teamInput').value = state.student.capstoneTitle;
+            }
+            resetMembers();
+            if (Array.isArray(state.student.members) && state.student.members.length >= MIN_GROUP_MEMBERS) {
+                setBookingType('group');
+            }
+        } else {
+            if ($('#teamInput')) $('#teamInput').value = '';
+            resetMembers();
+            setBookingType('individual');
         }
         syncMemberControls();
         if (state.currentStep === 3) renderStep3();
@@ -786,6 +821,9 @@
         $('#bookingForm').classList.toggle('hidden', !signedIn);
         if (signedIn) {
             $('#nameInput').value = state.student.name;
+            if (state.student.capstoneTitle && !$('#teamInput').value.trim()) {
+                $('#teamInput').value = state.student.capstoneTitle;
+            }
             syncMemberControls();
         }
     }
@@ -896,24 +934,125 @@
         });
     }
 
+    /* ---------------- registration group members UI ---------------- */
+    function getRegMemberInputs() {
+        return Array.from(document.querySelectorAll('#regMemberList input'));
+    }
+
+    function syncRegMemberControls() {
+        const rows = Array.from(document.querySelectorAll('#regMemberList .member-row'));
+        const repName = $('#regName')?.value.trim() || '';
+        rows.forEach((row, idx) => {
+            const input = row.querySelector('input');
+            const removeBtn = row.querySelector('.remove-member');
+            if (idx === 0) {
+                input.readOnly = true;
+                input.value = repName;
+                input.placeholder = 'Member 1 (You) — Group representative';
+                removeBtn.disabled = true;
+                removeBtn.title = 'Group representative is always Member 1';
+            } else {
+                input.readOnly = false;
+                input.placeholder = `Member ${idx + 1} — full name`;
+                removeBtn.disabled = rows.length <= MIN_GROUP_MEMBERS;
+                removeBtn.title = rows.length <= MIN_GROUP_MEMBERS
+                    ? 'At least 2 group members are required'
+                    : 'Remove member';
+            }
+        });
+        setText('#regMemberCount', `(${rows.length}/${MAX_MEMBERS})`);
+        $('#regAddMemberBtn')?.classList.toggle('hidden', rows.length >= MAX_MEMBERS);
+    }
+
+    function addRegMemberRow(initialValue = '', shouldFocus = false) {
+        const list = $('#regMemberList');
+        if (!list || list.children.length >= MAX_MEMBERS) return;
+
+        const row = document.createElement('div');
+        row.className = 'member-row';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 100;
+        input.value = initialValue;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-member';
+        removeBtn.setAttribute('aria-label', 'Remove member');
+        removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        removeBtn.addEventListener('click', () => {
+            if (list.children.length <= MIN_GROUP_MEMBERS) return;
+            row.remove();
+            syncRegMemberControls();
+        });
+
+        row.append(input, removeBtn);
+        list.appendChild(row);
+        syncRegMemberControls();
+        if (shouldFocus) input.focus();
+    }
+
+    function resetRegMembers() {
+        const list = $('#regMemberList');
+        if (!list) return;
+        list.innerHTML = '';
+        addRegMemberRow($('#regName')?.value.trim() || '');
+        addRegMemberRow();
+    }
+
     function handleRegister(e) {
         e.preventDefault();
         const name = $('#regName').value.trim();
         const email = $('#regEmail').value.trim().toLowerCase();
+        const capstoneTitle = $('#regCapstone').value.trim();
+        const instructorRole = document.querySelector('input[name="regRole"]:checked')?.value || 'adviser';
+        const regInputs = getRegMemberInputs();
         const password = $('#regPassword').value;
         const domains = state.config?.allowedEmailDomains || [];
 
-        if (name.length < 2) return setAuthError('Please enter your full name.');
+        if (name.length < 2) {
+            $('#regName').focus();
+            return setAuthError('Please enter your full name.');
+        }
         if (domains.length && !domains.some((d) => email.endsWith(`@${d}`) || email.endsWith(`.${d}`))) {
+            $('#regEmail').focus();
             return setAuthError(`Please use your university email (${domains.map((d) => '@' + d).join(' or ')}).`);
         }
-        if (password.length < 8) return setAuthError('Password must be at least 8 characters.');
-        if (password !== $('#regPassword2').value) return setAuthError('Passwords do not match.');
+        if (capstoneTitle.length < 3) {
+            $('#regCapstone').focus();
+            return setAuthError('Please enter your Capstone / Thesis title (at least 3 characters).');
+        }
+
+        const otherMembers = regInputs.slice(1).map((el) => el.value.trim()).filter(Boolean);
+        const members = [name, ...otherMembers];
+        if (members.length < MIN_GROUP_MEMBERS) {
+            const emptyInput = regInputs.slice(1).find((el) => el.value.trim().length < 2) || regInputs[1];
+            if (emptyInput) emptyInput.focus();
+            return setAuthError('Please enter at least 2 group member names (yourself and your groupmates).');
+        }
+        const invalidMember = regInputs.slice(1).find((el) => {
+            const v = el.value.trim();
+            return v.length > 0 && v.length < 2;
+        });
+        if (invalidMember) {
+            invalidMember.focus();
+            return setAuthError('Each group member needs a full name (at least 2 characters).');
+        }
+
+        if (password.length < 8) {
+            $('#regPassword').focus();
+            return setAuthError('Password must be at least 8 characters.');
+        }
+        if (password !== $('#regPassword2').value) {
+            $('#regPassword2').focus();
+            return setAuthError('Passwords do not match.');
+        }
 
         runAuth($('#registerBtn'), 'Sending code…', async () => {
             const data = await api('/api/auth/register/start', {
                 method: 'POST',
-                body: JSON.stringify({ name, email, password }),
+                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, members, password }),
             });
             showOtpStep('register', data.email, data.resendSeconds);
             toast('Verification code sent. Check your email.', 'success');
@@ -1000,6 +1139,9 @@
         });
         $('#loginForm').addEventListener('submit', handleLogin);
         $('#registerForm').addEventListener('submit', handleRegister);
+        $('#regName')?.addEventListener('input', syncRegMemberControls);
+        $('#regAddMemberBtn')?.addEventListener('click', () => addRegMemberRow('', true));
+        resetRegMembers();
         $('#forgotForm').addEventListener('submit', handleForgot);
         $('#otpForm').addEventListener('submit', handleOtp);
         $('#resendBtn').addEventListener('click', handleResend);
