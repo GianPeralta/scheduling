@@ -1078,6 +1078,18 @@
             roleBadge.className = `badge ${isPanel ? 'sky' : 'teal'}`;
             roleBadge.classList.toggle('hidden', !s.instructorRole);
         }
+
+        const chipsWrap = $('#profileMemberChips');
+        if (chipsWrap) {
+            chipsWrap.innerHTML = '';
+            const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
+            members.forEach((m, idx) => {
+                const chip = document.createElement('span');
+                chip.className = 'member-chip';
+                chip.textContent = idx === 0 ? `${m} (Rep)` : m;
+                chipsWrap.appendChild(chip);
+            });
+        }
     }
 
     async function loadMyBookings() {
@@ -1172,6 +1184,18 @@
 
             item.append(top, dateStrong);
 
+            if (Array.isArray(b.members) && b.members.length) {
+                const membersWrap = document.createElement('div');
+                membersWrap.className = 'booking-members';
+                b.members.forEach((m) => {
+                    const chip = document.createElement('span');
+                    chip.className = 'member-chip';
+                    chip.textContent = m;
+                    membersWrap.appendChild(chip);
+                });
+                item.appendChild(membersWrap);
+            }
+
             if (cat === 'cancelled') {
                 const reasonBox = document.createElement('div');
                 reasonBox.className = 'cancel-reason-box';
@@ -1218,6 +1242,9 @@
         const projBox = $('#studentProjectBox');
         if (projBox) {
             if (state.student) {
+                const count = Array.isArray(state.student.members) && state.student.members.length
+                    ? state.student.members.length
+                    : 1;
                 const roleBadge = $('#projectRoleBadge');
                 if (roleBadge) {
                     const isPanel = state.student.instructorRole === 'panel';
@@ -1226,6 +1253,10 @@
                     roleBadge.classList.toggle('hidden', !state.student.instructorRole);
                 }
                 setText('#projectTitleText', state.student.capstoneTitle || state.student.name);
+                setText(
+                    '#projectMembersText',
+                    `${count} ${count === 1 ? 'member' : 'members'} · ${state.student.members?.join(', ') || state.student.name}`
+                );
                 projBox.classList.remove('hidden');
             } else {
                 projBox.classList.add('hidden');
@@ -1240,6 +1271,13 @@
         updateRoleVisibility();
 
         if (state.student) {
+            const myBookingsBtn = $('#myBookingsBtn');
+            if (myBookingsBtn) {
+                const membersStr = Array.isArray(state.student.members) && state.student.members.length
+                    ? state.student.members.join(', ')
+                    : state.student.name;
+                myBookingsBtn.title = `Profile · Members: ${membersStr}`;
+            }
             if (state.student.capstoneTitle && $('#teamInput')) {
                 $('#teamInput').value = state.student.capstoneTitle;
             }
