@@ -18,15 +18,15 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
   - **Wednesday**: 12:50 PM – 2:10 PM
   - **Thursday**: 2:10 PM – 3:30 PM
 - Automatic overlap prevention across 15-minute and 5-minute timed slots (while 0-minute Drop-offs never block timed slots)
-- Confirmation ticket with a unique booking reference + **"My bookings"** modal for signed-in students
+- Confirmation ticket with a unique booking reference + **Student Profile** modal (`My Profile`) showing registered Capstone/Thesis details, upcoming & past consultations, and any **cancelled schedules with the instructor's cancellation reason**
 
 **Arnemie's Dashboard (`/admin.html`)**
 - Password‑protected (`ADMIN_PASSWORD`)
 - Summary stats: today, next 7 days, all upcoming
-- Upcoming / Past tabs grouped by date, showing consultation badges (`System · 15m`, `Drop-off · 0m`, `Retrieval · 5m`, `Comm. Letter · 5m`), `Adviser` / `Panel Member` role badges, Capstone/Thesis titles, and member chips
+- Upcoming / Past / Cancelled tabs grouped by date, showing consultation badges (`System · 15m`, `Drop-off · 0m`, `Retrieval · 5m`, `Comm. Letter · 5m`), `Adviser` / `Panel Member` role badges, Capstone/Thesis titles, and member chips
 - One‑click **"Notify Checked"** button on Drop-off Manuscript cards to automatically email the group's registered university address when their manuscript is ready for retrieval
-- Instant search across student names, emails, Capstone/Thesis titles, group members, reasons, and reference codes
-- One‑click cancel to free up a time slot again
+- Instant search across student names, emails, Capstone/Thesis titles, group members, reasons, cancellation reasons, and reference codes
+- **Cancel with reason**: cancelling an appointment frees up the time slot immediately and saves the instructor's cancellation reason directly to the student's profile
 
 ## Setup
 

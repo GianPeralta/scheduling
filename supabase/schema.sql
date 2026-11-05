@@ -9,10 +9,14 @@ create table if not exists public.appointments (
     start_hour        smallint    not null,
     start_minute      smallint    not null check (start_minute between 0 and 1439),
     duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 15, 80)),
-    consultation_type text        not null default 'system'
-                                  check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other')),
-    notified_at       timestamptz,
-    created_at        timestamptz not null default now()
+    consultation_type   text        not null default 'system'
+                                    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other')),
+    status              text        not null default 'scheduled'
+                                    check (status in ('scheduled', 'cancelled')),
+    cancellation_reason text        check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500),
+    cancelled_at        timestamptz,
+    notified_at         timestamptz,
+    created_at          timestamptz not null default now()
 );
 
 -- Group bookings:
@@ -40,6 +44,15 @@ update public.appointments
  where start_minute is null;
 
 alter table public.appointments alter column start_minute set not null;
+alter table public.appointments add column if not exists status text not null default 'scheduled';
+alter table public.appointments drop constraint if exists appointments_status_check;
+alter table public.appointments add constraint appointments_status_check
+    check (status in ('scheduled', 'cancelled'));
+alter table public.appointments add column if not exists cancellation_reason text;
+alter table public.appointments drop constraint if exists appointments_cancellation_reason_check;
+alter table public.appointments add constraint appointments_cancellation_reason_check
+    check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500);
+alter table public.appointments add column if not exists cancelled_at timestamptz;
 alter table public.appointments add column if not exists notified_at timestamptz;
 alter table public.appointments drop constraint if exists appointments_slot_unique;
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
@@ -50,12 +63,13 @@ alter table public.appointments drop constraint if exists appointments_consultat
 alter table public.appointments add constraint appointments_consultation_type_check
     check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'other'));
 
--- Drop-off manuscripts have duration_minutes = 0 and take no time off the schedule,
--- so only timed consultations (duration_minutes > 0) lock a specific start_minute.
+-- Drop-off manuscripts (duration_minutes = 0) and cancelled appointments (status = 'cancelled')
+-- do not lock time slots on the schedule.
 alter table public.appointments drop constraint if exists appointments_date_start_minute_unique;
-create unique index if not exists appointments_timed_slot_unique
+drop index if exists public.appointments_timed_slot_unique;
+create unique index appointments_timed_slot_unique
     on public.appointments (appointment_date, start_minute)
-    where duration_minutes > 0;
+    where duration_minutes > 0 and status <> 'cancelled';
 
 create index if not exists appointments_date_idx on public.appointments (appointment_date);
 

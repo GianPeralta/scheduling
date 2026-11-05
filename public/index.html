@@ -24,16 +24,19 @@
         </a>
         <div class="topbar-actions">
             <button type="button" class="topbar-link hidden" id="myBookingsBtn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                <span>My bookings</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span>My Profile</span>
                 <span class="nav-count hidden" id="myBookingsCount">0</span>
+                <span class="nav-alert-dot hidden" id="profileCancelDot" title="Schedule update"></span>
             </button>
             <div class="account-box hidden" id="accountBox">
-                <span class="account-avatar" id="accountAvatar"></span>
-                <span class="account-text">
-                    <strong id="accountName"></strong>
-                    <small id="accountEmail"></small>
-                </span>
+                <button type="button" class="account-profile-trigger" id="accountProfileBtn" title="View Student Profile &amp; Schedule">
+                    <span class="account-avatar" id="accountAvatar"></span>
+                    <span class="account-text">
+                        <strong id="accountName"></strong>
+                        <small id="accountEmail"></small>
+                    </span>
+                </button>
                 <button type="button" class="account-logout" id="logoutBtn">Log out</button>
             </div>
             <a class="topbar-link" href="/admin.html">
@@ -77,6 +80,7 @@
                     </div>
                     <p class="project-box-title" id="projectTitleText"></p>
                     <p class="muted small" id="projectMembersText"></p>
+                    <button type="button" class="link-btn project-profile-link" id="sidebarProfileBtn">View profile &amp; schedule →</button>
                 </div>
 
                 <div class="selection hidden" id="selectionBox">
@@ -253,6 +257,8 @@
             <!-- Step 1: Choose consultation type (shown once signed in) -->
             <div class="panel step-panel hidden" id="step1">
                 <div class="type-step">
+                    <div class="cancelled-alert hidden" id="cancelledAlertBanner" role="alert"></div>
+
                     <div class="type-step-header">
                         <span class="pill"><span class="pulse-dot"></span> Step 1 of 3 · Choose consultation purpose</span>
                         <h3>What would you like to schedule?</h3>
@@ -554,15 +560,42 @@
         </div>
     </div>
 
-    <!-- Logged-in Student's Upcoming Bookings Modal -->
+    <!-- Student Profile & Schedule Modal (shows upcoming, past, and cancelled schedules with instructor's reason) -->
     <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
-        <div class="modal-card modal-wide">
+        <div class="modal-card modal-profile">
             <div class="modal-head">
-                <h3 id="myBookingsTitle">Your Upcoming Schedule</h3>
+                <h3 id="myBookingsTitle">Student Profile</h3>
                 <button type="button" class="icon-btn" id="closeMyBookingsBtn" aria-label="Close">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
             </div>
+
+            <div class="profile-summary-card" id="profileSummaryCard">
+                <div class="profile-summary-top">
+                    <div>
+                        <span class="selection-label">Capstone / Thesis</span>
+                        <h4 id="profileCapstoneTitle">—</h4>
+                    </div>
+                    <span class="badge teal" id="profileRoleBadge">Adviser</span>
+                </div>
+                <div class="profile-meta-row">
+                    <span id="profileRepName"></span>
+                    <span class="muted">·</span>
+                    <span class="muted" id="profileRepEmail"></span>
+                </div>
+                <div class="booking-members" id="profileMemberChips"></div>
+            </div>
+
+            <div class="profile-schedule-head">
+                <h4>Consultation Schedule &amp; History</h4>
+                <div class="profile-filter-pills" role="tablist" aria-label="Filter consultations">
+                    <button type="button" class="profile-pill active" data-pfilter="all">All <span id="pCountAll">0</span></button>
+                    <button type="button" class="profile-pill" data-pfilter="upcoming">Upcoming <span id="pCountUpcoming">0</span></button>
+                    <button type="button" class="profile-pill" data-pfilter="cancelled">Cancelled <span id="pCountCancelled">0</span></button>
+                    <button type="button" class="profile-pill" data-pfilter="past">Past <span id="pCountPast">0</span></button>
+                </div>
+            </div>
+
             <div class="my-bookings-list" id="myBookingsList"></div>
         </div>
     </div>

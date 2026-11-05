@@ -536,6 +536,11 @@ function generateDaySlots(dateStr, purpose = 'system') {
     return slots;
 }
 
+/** Is this booking active (not cancelled by the instructor)? */
+function isActiveRow(r) {
+    return r.status !== 'cancelled';
+}
+
 /** Does this DB row occupy timed minutes on the teacher's schedule? (Drop-offs do not.) */
 function isTimedRow(r) {
     return r.consultation_type !== 'dropoff' && Number(r.duration_minutes) !== 0;
@@ -824,7 +829,7 @@ app.get('/api/month', async (req, res) => {
 
     const intervalsByDate = new Map();
     for (const r of data) {
-        if (!isTimedRow(r)) continue; // Drop-offs take 0 minutes off the schedule
+        if (!isActiveRow(r) || !isTimedRow(r)) continue; // Cancelled & Drop-offs take 0 minutes off schedule
         const d = r.appointment_date;
         if (!intervalsByDate.has(d)) intervalsByDate.set(d, []);
         intervalsByDate.get(d).push(rowInterval(r));
@@ -862,7 +867,7 @@ app.get('/api/slots', async (req, res) => {
     const { data, error } = await db().from(TABLE).select('*').eq('appointment_date', date);
     if (error) return res.status(500).json({ error: error.message });
 
-    const bookedIntervals = data.filter(isTimedRow).map(rowInterval);
+    const bookedIntervals = data.filter((r) => isActiveRow(r) && isTimedRow(r)).map(rowInterval);
     const slots = generateDaySlots(date, purpose).map((s) => ({
         startMinute: s.startMinute,
         endMinute: s.endMinute,
@@ -921,31 +926,30 @@ function toBooking(r) {
         startMinute,
         endMinute,
         label: timed ? timeRange : `${timeRange} (Drop-off)`,
+        status: r.status === 'cancelled' ? 'cancelled' : 'scheduled',
+        cancellationReason: r.cancellation_reason || null,
+        cancelledAt: r.cancelled_at || null,
         notifiedAt: r.notified_at || null,
         createdAt: r.created_at,
     };
 }
 
-// Logged-in student's own upcoming bookings
+// Logged-in student's bookings (upcoming, cancelled with instructor reason, and past)
 app.get('/api/my-bookings', requireStudent, async (req, res) => {
     const now = nowInTz();
     const { data, error } = await db()
         .from(TABLE)
         .select('*')
         .eq('student_id', req.student.id)
-        .gte('appointment_date', now.date)
-        .order('appointment_date', { ascending: true })
-        .order('start_minute', { ascending: true });
+        .order('appointment_date', { ascending: false })
+        .order('start_minute', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
 
-    const bookings = data
-        .filter((r) => {
-            const [, end] = rowInterval(r);
-            return r.appointment_date > now.date || end > now.minuteOfDay;
-        })
-        .map(toBooking);
-
-    res.json({ bookings });
+    res.json({
+        today: now.date,
+        currentMinute: now.minuteOfDay,
+        bookings: data.map(toBooking),
+    });
 });
 
 app.post('/api/bookings', requireStudent, async (req, res) => {
@@ -1047,6 +1051,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     if (mineErr) return res.status(500).json({ error: mineErr.message });
 
     const upcomingMine = mine.filter((r) => {
+        if (!isActiveRow(r)) return false;
         const [, end] = rowInterval(r);
         return r.appointment_date > now.date || end > now.minuteOfDay;
     });
@@ -1084,7 +1089,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             .eq('appointment_date', date);
         if (existingErr) return res.status(500).json({ error: existingErr.message });
 
-        const bookedIntervals = existingRows.filter(isTimedRow).map(rowInterval);
+        const bookedIntervals = existingRows.filter((r) => isActiveRow(r) && isTimedRow(r)).map(rowInterval);
         if (hasOverlap(validSlot.startMinute, validSlot.endMinute, bookedIntervals)) {
             return res.status(409).json({ error: 'Sorry, someone just booked a slot that overlaps with that time. Please pick another time.' });
         }
@@ -1228,6 +1233,43 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     const notifiedAt = new Date().toISOString();
     await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
     res.json({ ok: true, notifiedAt });
+});
+
+// Cancel an appointment with an instructor reason visible in the student's profile
+app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
+
+    const reason = String(req.body?.reason ?? '').trim();
+    if (reason.length < 3 || reason.length > 500) {
+        return res.status(400).json({
+            field: 'cancelReason',
+            error: 'Please enter a reason for cancellation (3–500 characters) so the student can see it in their profile.',
+        });
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const { data, error } = await db()
+        .from(TABLE)
+        .update({
+            status: 'cancelled',
+            cancellation_reason: reason,
+            cancelled_at: cancelledAt,
+        })
+        .eq('id', req.params.id)
+        .select('*')
+        .maybeSingle();
+
+    if (error) {
+        if (['23514', '42703', 'PGRST204'].includes(error.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+    if (!data) return res.status(404).json({ error: 'Booking not found.' });
+
+    res.json({ ok: true, booking: toBooking(data) });
 });
 
 app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {

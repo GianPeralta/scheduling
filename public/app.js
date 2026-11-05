@@ -86,6 +86,9 @@
         submitting: false,
         student: null, // { id, name, email, capstoneTitle, instructorRole, members }
         myBookings: [],
+        profileFilter: 'all', // 'all' | 'upcoming' | 'cancelled' | 'past'
+        serverToday: '',
+        serverCurrentMinute: 0,
         authMode: 'login', // 'login' | 'register' | 'forgot' | 'otp'
         otpPurpose: 'register', // 'register' | 'reset'
         otpEmail: '',
@@ -1020,57 +1023,288 @@
             </div>`;
     }
 
-    /* ---------------- student's own bookings modal ---------------- */
+    /* ---------------- student profile & bookings modal ---------------- */
+    const DISMISSED_CANCEL_KEY = 'ag_dismissed_cancelled_v1';
+
+    function getDismissedCancelled() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(DISMISSED_CANCEL_KEY) || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function dismissCancelledNotice(id) {
+        const current = new Set(getDismissedCancelled());
+        current.add(id);
+        try {
+            localStorage.setItem(DISMISSED_CANCEL_KEY, JSON.stringify([...current].slice(-30)));
+        } catch { /* ignore storage quota */ }
+        renderCancelledAlertBanner();
+    }
+
+    function bookingCategory(b) {
+        if (b.status === 'cancelled') return 'cancelled';
+        const today = state.serverToday || state.config?.today || '';
+        const curMin = state.serverCurrentMinute || 0;
+        const endMin = b.endMinute ?? 1440;
+        if (!today || b.date > today || (b.date === today && endMin > curMin)) {
+            return 'upcoming';
+        }
+        return 'past';
+    }
+
+    function renderCancelledAlertBanner() {
+        const banner = $('#cancelledAlertBanner');
+        const dot = $('#profileCancelDot');
+        if (!state.student) {
+            banner?.classList.add('hidden');
+            dot?.classList.add('hidden');
+            return;
+        }
+
+        const today = state.serverToday || state.config?.today || '';
+        const dismissed = new Set(getDismissedCancelled());
+        const recentCancelled = state.myBookings
+            .filter((b) => b.status === 'cancelled' && (!today || b.date >= today) && !dismissed.has(b.id))
+            .sort((a, b) => (b.cancelledAt || b.date).localeCompare(a.cancelledAt || a.date));
+
+        dot?.classList.toggle('hidden', recentCancelled.length === 0);
+
+        if (!banner) return;
+        if (!recentCancelled.length) {
+            banner.classList.add('hidden');
+            banner.innerHTML = '';
+            return;
+        }
+
+        const latest = recentCancelled[0];
+        banner.innerHTML = '';
+
+        const body = document.createElement('div');
+        body.className = 'cancelled-alert-body';
+
+        const title = document.createElement('strong');
+        title.textContent = `Schedule cancelled: ${latest.consultationTitle} on ${formatLongDate(latest.date)} (${latest.label})`;
+
+        const reasonLine = document.createElement('p');
+        reasonLine.textContent = `Reason from ${state.config?.teacherName || 'Arnemie Gayyed'}: “${latest.cancellationReason || 'Please reschedule for another available slot.'}”`;
+
+        body.append(title, reasonLine);
+
+        const actions = document.createElement('div');
+        actions.className = 'cancelled-alert-actions';
+
+        const viewBtn = document.createElement('button');
+        viewBtn.type = 'button';
+        viewBtn.className = 'btn btn-ghost btn-sm';
+        viewBtn.textContent = 'View in Profile';
+        viewBtn.addEventListener('click', () => openMyBookingsModal('cancelled'));
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'link-btn';
+        dismissBtn.textContent = 'Dismiss';
+        dismissBtn.addEventListener('click', () => dismissCancelledNotice(latest.id));
+
+        actions.append(viewBtn, dismissBtn);
+        banner.append(body, actions);
+        banner.classList.remove('hidden');
+    }
+
+    function renderProfileSummary() {
+        if (!state.student) return;
+        const s = state.student;
+        setText('#profileCapstoneTitle', s.capstoneTitle || s.name);
+        setText('#profileRepName', s.name);
+        setText('#profileRepEmail', s.email);
+
+        const roleBadge = $('#profileRoleBadge');
+        if (roleBadge) {
+            const isPanel = s.instructorRole === 'panel';
+            roleBadge.textContent = isPanel ? 'Panel Member' : 'Adviser';
+            roleBadge.className = `badge ${isPanel ? 'sky' : 'teal'}`;
+            roleBadge.classList.toggle('hidden', !s.instructorRole);
+        }
+
+        const chipsWrap = $('#profileMemberChips');
+        if (chipsWrap) {
+            chipsWrap.innerHTML = '';
+            const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
+            members.forEach((m, idx) => {
+                const chip = document.createElement('span');
+                chip.className = 'member-chip';
+                chip.textContent = idx === 0 ? `${m} (Rep)` : m;
+                chipsWrap.appendChild(chip);
+            });
+        }
+    }
+
     async function loadMyBookings() {
         if (!state.student) {
             state.myBookings = [];
             $('#myBookingsBtn')?.classList.add('hidden');
+            $('#profileCancelDot')?.classList.add('hidden');
+            $('#cancelledAlertBanner')?.classList.add('hidden');
             return;
         }
         $('#myBookingsBtn')?.classList.remove('hidden');
         try {
-            const { bookings } = await api('/api/my-bookings');
-            state.myBookings = bookings || [];
+            const data = await api('/api/my-bookings');
+            state.myBookings = data.bookings || [];
+            if (data.today) state.serverToday = data.today;
+            if (typeof data.currentMinute === 'number') state.serverCurrentMinute = data.currentMinute;
+
+            const upcomingCount = state.myBookings.filter((b) => bookingCategory(b) === 'upcoming').length;
             const countEl = $('#myBookingsCount');
             if (countEl) {
-                countEl.textContent = state.myBookings.length;
-                countEl.classList.toggle('hidden', state.myBookings.length === 0);
+                countEl.textContent = upcomingCount;
+                countEl.classList.toggle('hidden', upcomingCount === 0);
             }
+            renderCancelledAlertBanner();
         } catch {
             /* ignore background fetch error */
         }
     }
 
     function renderMyBookingsModal() {
+        renderProfileSummary();
         const list = $('#myBookingsList');
         if (!list) return;
         list.innerHTML = '';
 
-        if (!state.myBookings.length) {
-            list.innerHTML = `
-                <div class="empty-state">
-                    <p>You have no upcoming scheduled consultations yet.</p>
-                </div>`;
+        const upcoming = state.myBookings
+            .filter((b) => bookingCategory(b) === 'upcoming')
+            .sort((a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute);
+        const cancelled = state.myBookings
+            .filter((b) => bookingCategory(b) === 'cancelled')
+            .sort((a, b) => (b.cancelledAt || b.date).localeCompare(a.cancelledAt || a.date));
+        const past = state.myBookings
+            .filter((b) => bookingCategory(b) === 'past')
+            .sort((a, b) => b.date.localeCompare(a.date) || b.startMinute - a.startMinute);
+
+        const allOrdered = [...upcoming, ...cancelled, ...past];
+
+        setText('#pCountAll', allOrdered.length);
+        setText('#pCountUpcoming', upcoming.length);
+        setText('#pCountCancelled', cancelled.length);
+        setText('#pCountPast', past.length);
+
+        document.querySelectorAll('.profile-pill').forEach((pill) => {
+            pill.classList.toggle('active', pill.dataset.pfilter === state.profileFilter);
+        });
+
+        const items = state.profileFilter === 'upcoming'
+            ? upcoming
+            : state.profileFilter === 'cancelled'
+                ? cancelled
+                : state.profileFilter === 'past'
+                    ? past
+                    : allOrdered;
+
+        if (!items.length) {
+            const emptyMsg = state.profileFilter === 'upcoming'
+                ? 'You have no upcoming scheduled consultations.'
+                : state.profileFilter === 'cancelled'
+                    ? 'You have no cancelled consultations.'
+                    : state.profileFilter === 'past'
+                        ? 'No past consultations yet.'
+                        : 'You have not scheduled any consultations yet.';
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            const p = document.createElement('p');
+            p.textContent = emptyMsg;
+            empty.appendChild(p);
+            list.appendChild(empty);
             return;
         }
 
-        state.myBookings.forEach((b) => {
+        const teacherName = state.config?.teacherName || 'Arnemie Gayyed';
+        const location = state.config?.location || 'Faculty Office';
+
+        items.forEach((b) => {
+            const cat = bookingCategory(b);
             const meta = getMeta(b.consultationType);
             const item = document.createElement('div');
-            item.className = 'my-booking-item';
-            item.innerHTML = `
-                <div class="my-booking-top">
-                    <span class="badge ${meta.color}">${b.consultationTitle} · ${b.durationLabel}</span>
-                    <code>Ref: ${b.reference}</code>
-                </div>
-                <strong>${formatLongDate(b.date)}</strong>
-                <span class="muted small">${b.label} · ${state.config?.location || 'Faculty Office'}</span>
-            `;
+            item.className = 'my-booking-item' + (cat === 'cancelled' ? ' is-cancelled' : '');
+
+            const top = document.createElement('div');
+            top.className = 'my-booking-top';
+
+            const badges = document.createElement('div');
+            badges.className = 'my-booking-badges';
+
+            const typeBadge = document.createElement('span');
+            typeBadge.className = `badge ${meta.color}`;
+            typeBadge.textContent = `${b.consultationTitle} · ${b.durationLabel}`;
+            badges.appendChild(typeBadge);
+
+            const statusBadge = document.createElement('span');
+            if (cat === 'cancelled') {
+                statusBadge.className = 'badge danger';
+                statusBadge.textContent = 'Cancelled by Instructor';
+            } else if (cat === 'upcoming') {
+                statusBadge.className = 'badge teal';
+                statusBadge.textContent = 'Scheduled';
+            } else {
+                statusBadge.className = 'badge muted-badge';
+                statusBadge.textContent = 'Completed';
+            }
+            badges.appendChild(statusBadge);
+
+            const ref = document.createElement('code');
+            ref.textContent = `Ref: ${b.reference}`;
+
+            top.append(badges, ref);
+
+            const dateStrong = document.createElement('strong');
+            dateStrong.textContent = formatLongDate(b.date);
+
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'muted small';
+            timeSpan.textContent = `${b.label} · ${location}`;
+
+            item.append(top, dateStrong, timeSpan);
+
+            if (b.reason) {
+                const agenda = document.createElement('p');
+                agenda.className = 'my-booking-agenda muted small';
+                agenda.textContent = b.reason;
+                item.appendChild(agenda);
+            }
+
+            if (cat === 'cancelled') {
+                const reasonBox = document.createElement('div');
+                reasonBox.className = 'cancel-reason-box';
+
+                const reasonHeading = document.createElement('strong');
+                reasonHeading.textContent = `Reason from ${teacherName}:`;
+
+                const reasonText = document.createElement('p');
+                reasonText.textContent = b.cancellationReason || 'No reason provided.';
+
+                reasonBox.append(reasonHeading, reasonText);
+
+                if (b.cancelledAt) {
+                    const stamp = document.createElement('small');
+                    stamp.className = 'muted';
+                    stamp.textContent = `Cancelled ${new Date(b.cancelledAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`;
+                    reasonBox.appendChild(stamp);
+                }
+
+                item.appendChild(reasonBox);
+            }
+
             list.appendChild(item);
         });
     }
 
-    async function openMyBookingsModal() {
+    async function openMyBookingsModal(initialFilter = null) {
+        if (typeof initialFilter === 'string') {
+            state.profileFilter = initialFilter;
+        }
+        renderProfileSummary();
         $('#myBookingsModal').classList.remove('hidden');
         $('#myBookingsList').innerHTML = '<div class="slot skeleton"></div>';
         await loadMyBookings();
@@ -1594,8 +1828,16 @@
             if (e.target.id === 'beninsigModal') closeBeninsigModal();
         });
 
-        // My bookings modal events
-        $('#myBookingsBtn')?.addEventListener('click', openMyBookingsModal);
+        // Student profile & bookings modal events
+        $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
+        $('#accountProfileBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
+        $('#sidebarProfileBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
+        document.querySelectorAll('.profile-pill').forEach((pill) => {
+            pill.addEventListener('click', () => {
+                state.profileFilter = pill.dataset.pfilter || 'all';
+                renderMyBookingsModal();
+            });
+        });
         $('#closeMyBookingsBtn')?.addEventListener('click', closeMyBookingsModal);
         $('#myBookingsModal')?.addEventListener('click', (e) => {
             if (e.target.id === 'myBookingsModal') closeMyBookingsModal();

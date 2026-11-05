@@ -94,6 +94,7 @@
                     <div class="tabs" role="tablist">
                         <button class="tab active" data-tab="upcoming">Upcoming <span class="count" id="countUpcoming">0</span></button>
                         <button class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
+                        <button class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -104,6 +105,45 @@
             </div>
         </section>
     </main>
+
+    <!-- Cancel Appointment Modal (with required reason visible in student's profile) -->
+    <div class="modal-backdrop hidden" id="cancelModal" role="dialog" aria-modal="true" aria-labelledby="cancelModalTitle">
+        <div class="modal-card modal-wide">
+            <div class="modal-head">
+                <h3 id="cancelModalTitle">Cancel Consultation</h3>
+                <button type="button" class="icon-btn" id="closeCancelModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="cancelBookingForm" novalidate>
+                <div class="cancel-target-summary" id="cancelTargetSummary"></div>
+
+                <div class="quick-reasons" aria-label="Quick cancellation reasons">
+                    <span class="muted small">Quick reasons:</span>
+                    <div class="quick-reason-chips">
+                        <button type="button" class="reason-chip" data-reason="Faculty meeting / schedule conflict — please reschedule for another available day.">Faculty meeting / conflict</button>
+                        <button type="button" class="reason-chip" data-reason="Instructor unavailable on this date — please book another consultation slot.">Unavailable on this date</button>
+                        <button type="button" class="reason-chip" data-reason="Please complete required prerequisites first before scheduling.">Prerequisites incomplete</button>
+                    </div>
+                </div>
+
+                <label class="field" id="cancelReasonField">
+                    <span>Reason for cancellation <small class="muted">(shown in student’s profile)</small></span>
+                    <textarea id="cancelReasonInput" rows="3" maxlength="500" placeholder="Explain why this schedule is cancelled so the student knows what to do next…"></textarea>
+                    <small class="counter"><span id="cancelReasonCount">0</span>/500</small>
+                    <small class="field-error hidden" id="cancelReasonError" role="alert"></small>
+                </label>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="keepAppointmentBtn">Keep appointment</button>
+                    <button type="submit" class="btn btn-danger" id="confirmCancelBtn">
+                        <span class="btn-label">Cancel consultation</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <footer class="footer">
         <p>© <span id="year"></span>Consultation dashboard</p>

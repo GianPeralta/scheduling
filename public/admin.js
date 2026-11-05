@@ -22,6 +22,8 @@
         search: '',
         loggingIn: false,
         loadReqId: 0,
+        cancelTarget: null,
+        cancelling: false,
     };
 
     /* ---------------- helpers ---------------- */
@@ -157,32 +159,93 @@
         }
     }
 
+    const isCancelled = (b) => b.status === 'cancelled';
     const isPast = (b) => {
         const endMin = b.endMinute ?? (b.hour + 1) * 60;
         return b.date < state.today || (b.date === state.today && endMin <= state.currentMinute);
     };
     const isNow = (b) => {
+        if (isCancelled(b)) return false;
         const startMin = b.startMinute ?? b.hour * 60;
         const endMin = b.endMinute ?? (b.hour + 1) * 60;
         return b.date === state.today && state.currentMinute >= startMin && state.currentMinute < endMin;
     };
 
-    async function cancelBooking(b, btn) {
-        const title = b.capstoneTitle || b.teamName;
-        const count = Array.isArray(b.members) ? b.members.length : 1;
-        const who = title
-            ? `${title} (${count} ${count === 1 ? 'member' : 'members'})`
-            : b.name;
-        if (!confirm(`Cancel the appointment with ${who} on ${longDate(b.date)} at ${b.label}?`)) return;
-        btn.disabled = true;
+    /* ---------------- cancel modal ---------------- */
+    function setCancelError(msg) {
+        const input = $('#cancelReasonInput');
+        const errEl = $('#cancelReasonError');
+        if (input) input.classList.toggle('input-invalid', Boolean(msg));
+        if (errEl) {
+            errEl.textContent = msg || '';
+            errEl.classList.toggle('hidden', !msg);
+        }
+    }
+
+    function openCancelModal(b) {
+        state.cancelTarget = b;
+        const title = b.capstoneTitle || b.teamName || b.name;
+        const summary = $('#cancelTargetSummary');
+        if (summary) {
+            summary.innerHTML = '';
+            summary.appendChild(el('strong', '', title));
+            summary.appendChild(el('span', 'muted small', `${b.consultationTitle || 'Consultation'} · ${longDate(b.date)} · ${b.label}`));
+        }
+        const input = $('#cancelReasonInput');
+        if (input) {
+            input.value = '';
+            $('#cancelReasonCount').textContent = '0';
+        }
+        setCancelError('');
+        $('#cancelModal')?.classList.remove('hidden');
+        setTimeout(() => input?.focus(), 40);
+    }
+
+    function closeCancelModal() {
+        if (state.cancelling) return;
+        state.cancelTarget = null;
+        $('#cancelModal')?.classList.add('hidden');
+        setCancelError('');
+    }
+
+    async function submitCancelBooking(e) {
+        e.preventDefault();
+        if (state.cancelling || !state.cancelTarget) return;
+
+        const b = state.cancelTarget;
+        const reason = ($('#cancelReasonInput')?.value || '').trim();
+        if (reason.length < 3) {
+            setCancelError('Please enter a reason (at least 3 characters) so the student can see why it was cancelled.');
+            $('#cancelReasonInput')?.focus();
+            return;
+        }
+
+        state.cancelling = true;
+        const confirmBtn = $('#confirmCancelBtn');
+        const keepBtn = $('#keepAppointmentBtn');
+        confirmBtn.disabled = true;
+        if (keepBtn) keepBtn.disabled = true;
+        confirmBtn.querySelector('.spinner')?.classList.remove('hidden');
+        confirmBtn.querySelector('.btn-label').textContent = 'Cancelling…';
+
         try {
-            await api(`/api/admin/bookings/${b.id}`, { method: 'DELETE' });
-            state.bookings = state.bookings.filter((x) => x.id !== b.id);
+            const { booking } = await api(`/api/admin/bookings/${b.id}/cancel`, {
+                method: 'POST',
+                body: JSON.stringify({ reason }),
+            });
+            Object.assign(b, booking);
+            state.cancelling = false;
+            closeCancelModal();
             render();
-            toast('Appointment cancelled.', 'success');
+            toast('Consultation cancelled. Reason is now visible in the student’s profile.', 'success');
         } catch (err) {
-            btn.disabled = false;
-            toast(err.message, 'error');
+            setCancelError(err.message);
+        } finally {
+            state.cancelling = false;
+            confirmBtn.disabled = false;
+            if (keepBtn) keepBtn.disabled = false;
+            confirmBtn.querySelector('.spinner')?.classList.add('hidden');
+            confirmBtn.querySelector('.btn-label').textContent = 'Cancel consultation';
         }
     }
 
@@ -215,6 +278,7 @@
         if (b.instructorRole && b.instructorRole.toLowerCase().includes(q)) return true;
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
         if (b.reason.toLowerCase().includes(q)) return true;
+        if (b.cancellationReason && b.cancellationReason.toLowerCase().includes(q)) return true;
         if (b.reference.toLowerCase().includes(q)) return true;
         if (b.studentEmail && b.studentEmail.toLowerCase().includes(q)) return true;
         return false;
@@ -222,8 +286,13 @@
 
     /* ---------------- render ---------------- */
     function render() {
-        const upcoming = state.bookings.filter((b) => !isPast(b));
-        const past = state.bookings.filter(isPast).reverse();
+        const active = state.bookings.filter((b) => !isCancelled(b));
+        const upcoming = active.filter((b) => !isPast(b));
+        const past = active.filter(isPast).reverse();
+        const cancelled = state.bookings
+            .filter(isCancelled)
+            .slice()
+            .sort((a, b) => (b.cancelledAt || b.date).localeCompare(a.cancelledAt || a.date));
         const weekEnd = addDays(state.today, 7);
 
         $('#statToday').textContent = upcoming.filter((b) => b.date === state.today).length;
@@ -231,9 +300,11 @@
         $('#statUpcoming').textContent = upcoming.length;
         $('#countUpcoming').textContent = upcoming.length;
         $('#countPast').textContent = past.length;
+        if ($('#countCancelled')) $('#countCancelled').textContent = cancelled.length;
 
         const q = state.search.toLowerCase();
-        const list = (state.tab === 'upcoming' ? upcoming : past).filter((b) => matchesSearch(b, q));
+        const source = state.tab === 'upcoming' ? upcoming : state.tab === 'cancelled' ? cancelled : past;
+        const list = source.filter((b) => matchesSearch(b, q));
 
         const container = $('#bookingList');
         container.innerHTML = '';
@@ -242,7 +313,14 @@
             const empty = el('div', 'empty-state');
             empty.style.marginTop = '12px';
             empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>';
-            empty.appendChild(el('p', '', q ? 'No appointments match your search.' : state.tab === 'upcoming' ? 'No upcoming appointments yet.' : 'No past appointments.'));
+            const emptyMsg = q
+                ? 'No appointments match your search.'
+                : state.tab === 'upcoming'
+                    ? 'No upcoming appointments yet.'
+                    : state.tab === 'cancelled'
+                        ? 'No cancelled appointments.'
+                        : 'No past appointments.';
+            empty.appendChild(el('p', '', emptyMsg));
             container.appendChild(empty);
             return;
         }
@@ -264,7 +342,7 @@
 
             items.forEach((b) => {
                 const isGroup = b.type === 'group' && Array.isArray(b.members) && b.members.length >= 2;
-                const card = el('div', 'booking' + (isNow(b) ? ' now' : ''));
+                const card = el('div', 'booking' + (isNow(b) ? ' now' : '') + (isCancelled(b) ? ' booking-cancelled' : ''));
                 card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
 
                 const time = el('div', 'booking-time');
@@ -283,6 +361,10 @@
                 const groupHeading = b.capstoneTitle || b.teamName;
                 const titleText = groupHeading ? `${groupHeading}` : b.name;
                 header.appendChild(el('span', 'booking-title', titleText));
+
+                if (isCancelled(b)) {
+                    header.appendChild(el('span', 'badge danger', 'Cancelled'));
+                }
 
                 const typeBadge = TYPE_BADGES[b.consultationType] || {
                     label: `${b.consultationTitle || 'Consultation'} · ${b.durationLabel || ''}`,
@@ -316,11 +398,24 @@
                 }
 
                 body.appendChild(el('p', 'booking-reason', b.reason));
+
+                if (isCancelled(b) && b.cancellationReason) {
+                    const reasonBox = el('div', 'cancel-reason-box');
+                    reasonBox.appendChild(el('strong', '', 'Cancellation reason shown to student:'));
+                    reasonBox.appendChild(el('p', '', b.cancellationReason));
+                    if (b.cancelledAt) {
+                        reasonBox.appendChild(
+                            el('small', 'muted', `Cancelled ${new Date(b.cancelledAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`)
+                        );
+                    }
+                    body.appendChild(reasonBox);
+                }
+
                 const bookedBy = b.studentEmail ? ` by ${b.studentEmail}` : '';
                 body.appendChild(el('p', 'booking-meta', `Booked${bookedBy} · ${new Date(b.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`));
 
                 const actions = el('div', 'booking-actions');
-                if (b.consultationType === 'dropoff' && b.studentEmail) {
+                if (!isCancelled(b) && b.consultationType === 'dropoff' && b.studentEmail) {
                     const notifyBtn = el(
                         'button',
                         'btn btn-ghost btn-sm',
@@ -330,10 +425,10 @@
                     notifyBtn.addEventListener('click', () => notifyManuscriptChecked(b, notifyBtn));
                     actions.appendChild(notifyBtn);
                 }
-                if (state.tab === 'upcoming') {
+                if (state.tab === 'upcoming' && !isCancelled(b)) {
                     const btn = el('button', 'btn btn-danger-soft', 'Cancel');
                     btn.type = 'button';
-                    btn.addEventListener('click', () => cancelBooking(b, btn));
+                    btn.addEventListener('click', () => openCancelModal(b));
                     actions.appendChild(btn);
                 }
 
@@ -366,6 +461,31 @@
             state.tab = tab.dataset.tab;
             render();
         });
+    });
+
+    // Cancel modal bindings
+    $('#cancelBookingForm')?.addEventListener('submit', submitCancelBooking);
+    $('#closeCancelModalBtn')?.addEventListener('click', closeCancelModal);
+    $('#keepAppointmentBtn')?.addEventListener('click', closeCancelModal);
+    $('#cancelModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'cancelModal') closeCancelModal();
+    });
+    $('#cancelReasonInput')?.addEventListener('input', (e) => {
+        $('#cancelReasonCount').textContent = e.target.value.length;
+        setCancelError('');
+    });
+    document.querySelectorAll('.reason-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            const input = $('#cancelReasonInput');
+            if (!input) return;
+            input.value = chip.dataset.reason || '';
+            $('#cancelReasonCount').textContent = input.value.length;
+            setCancelError('');
+            input.focus();
+        });
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeCancelModal();
     });
 
     if (state.password) {
