@@ -25,6 +25,7 @@ const LETTER_DURATION = 5;    // 5 minutes for Communication Letter Signature
 
 const MIN_MEMBERS = 1;        // Solo (1), pair (2), or 3-member Capstone / Thesis groups allowed
 const MAX_MEMBERS = 3;
+const CANCEL_CUTOFF_MINUTES = 120; // Students can only cancel at least 2 hours (120 minutes) before schedule
 
 const CONSULTATION_TYPES = {
     system: {
@@ -589,6 +590,15 @@ function isFutureSlot(dateStr, startMinute, now = nowInTz()) {
     return dateStr >= getFirstBookableDate(now);
 }
 
+/** How many minutes remain until [dateStr, startMinute] in the configured timezone. */
+function minutesUntilBooking(dateStr, startMinute, now = nowInTz()) {
+    const targetDt = parseDate(dateStr);
+    const todayDt = parseDate(now.date);
+    if (!targetDt || !todayDt) return -Infinity;
+    const diffDays = Math.round((targetDt.getTime() - todayDt.getTime()) / 86400000);
+    return diffDays * 1440 + (startMinute - now.minuteOfDay);
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -607,6 +617,7 @@ app.get('/api/config', (req, res) => {
         maxActiveBookings: AUTH.maxActiveBookings,
         minGroupMembers: MIN_MEMBERS,
         maxGroupMembers: MAX_MEMBERS,
+        cancelCutoffMinutes: CANCEL_CUTOFF_MINUTES,
     });
 });
 
@@ -898,13 +909,17 @@ function formatConsultationTitle(consultationType) {
 }
 
 /** Shape a database row for the frontend. */
-function toBooking(r) {
+function toBooking(r, now) {
+    const current = (now && typeof now === 'object' && now.date) ? now : nowInTz();
     const members = Array.isArray(r.members) && r.members.length ? r.members : [r.student_name];
     const timed = isTimedRow(r);
     const [startMinute, endMinute] = rowInterval(r);
     const durationMinutes = timed ? (endMinute - startMinute) : 0;
     const consultationType = r.consultation_type || 'system';
     const timeRange = `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`;
+    const status = r.status === 'cancelled' ? 'cancelled' : 'scheduled';
+    const minutesUntilStart = minutesUntilBooking(r.appointment_date, startMinute, current);
+    const canCancel = status === 'scheduled' && minutesUntilStart >= CANCEL_CUTOFF_MINUTES;
     return {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
@@ -926,7 +941,8 @@ function toBooking(r) {
         startMinute,
         endMinute,
         label: timed ? timeRange : `${timeRange} (Drop-off)`,
-        status: r.status === 'cancelled' ? 'cancelled' : 'scheduled',
+        status,
+        canCancel,
         cancellationReason: r.cancellation_reason || null,
         cancelledAt: r.cancelled_at || null,
         notifiedAt: r.notified_at || null,
@@ -948,8 +964,64 @@ app.get('/api/my-bookings', requireStudent, async (req, res) => {
     res.json({
         today: now.date,
         currentMinute: now.minuteOfDay,
-        bookings: data.map(toBooking),
+        bookings: data.map((r) => toBooking(r, now)),
     });
+});
+
+// Allow a logged-in student to cancel their own appointment (only at least 2 hours before the schedule)
+app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) {
+        return res.status(400).json({ error: 'Invalid appointment ID.' });
+    }
+
+    const { data: row, error: fetchErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('id', req.params.id)
+        .eq('student_id', req.student.id)
+        .maybeSingle();
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!row) return res.status(404).json({ error: 'Appointment not found.' });
+
+    if (row.status === 'cancelled') {
+        return res.status(400).json({ error: 'This appointment has already been cancelled.' });
+    }
+
+    const now = nowInTz();
+    const [startMinute] = rowInterval(row);
+    const minsLeft = minutesUntilBooking(row.appointment_date, startMinute, now);
+
+    if (minsLeft < CANCEL_CUTOFF_MINUTES) {
+        return res.status(400).json({
+            code: 'CANCEL_WINDOW_PASSED',
+            error: 'Appointments can only be cancelled at least 2 hours before the scheduled time.',
+        });
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const { data, error } = await db()
+        .from(TABLE)
+        .update({
+            status: 'cancelled',
+            cancellation_reason: 'Cancelled by student.',
+            cancelled_at: cancelledAt,
+        })
+        .eq('id', row.id)
+        .eq('student_id', req.student.id)
+        .select('*')
+        .maybeSingle();
+
+    if (error) {
+        if (['23514', '42703', 'PGRST204'].includes(error.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+    if (!data) return res.status(404).json({ error: 'Appointment not found.' });
+
+    res.json({ ok: true, booking: toBooking(data, now) });
 });
 
 app.post('/api/bookings', requireStudent, async (req, res) => {
@@ -1075,8 +1147,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
                 error: AUTH.maxActiveBookings === 1
-                    ? 'You already have an upcoming timed consultation. You can book again after it is done (or ask your instructor to cancel it).'
-                    : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done.`,
+                    ? 'You already have an upcoming timed consultation. You can book again after it is done (or cancel it in your Profile at least 2 hours before the schedule).'
+                    : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done or cancelled.`,
             });
         }
     }
@@ -1160,7 +1232,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const now = nowInTz();
-    const bookings = data.map(toBooking).sort(
+    const bookings = data.map((r) => toBooking(r, now)).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
     );
     res.json({

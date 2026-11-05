@@ -8,6 +8,7 @@
     };
     const MIN_MEMBERS = 1;
     const MAX_MEMBERS = 3;
+    const CANCEL_CUTOFF_MINUTES = 120; // 2 hours before scheduled time
 
     const PURPOSE_META = {
         system: {
@@ -1006,6 +1007,59 @@
         return 'past';
     }
 
+    function minutesUntilBooking(b) {
+        const today = state.serverToday || state.config?.today || '';
+        const curMin = state.serverCurrentMinute || 0;
+        if (!today || !b.date) return Infinity;
+        const targetDt = utcDate(b.date);
+        const todayDt = utcDate(today);
+        const diffDays = Math.round((targetDt.getTime() - todayDt.getTime()) / 86400000);
+        const startMin = typeof b.startMinute === 'number' ? b.startMinute : (b.hour || 0) * 60;
+        return diffDays * 1440 + (startMin - curMin);
+    }
+
+    function canStudentCancelBooking(b) {
+        if (b.status === 'cancelled') return false;
+        const cutoff = state.config?.cancelCutoffMinutes || CANCEL_CUTOFF_MINUTES;
+        if (minutesUntilBooking(b) < cutoff) return false;
+        if (typeof b.canCancel === 'boolean') return b.canCancel;
+        return true;
+    }
+
+    async function cancelMyBooking(b, btn) {
+        if (!canStudentCancelBooking(b)) {
+            toast('Appointments can only be cancelled at least 2 hours before the scheduled time.', 'error');
+            return;
+        }
+        if (!confirm(`Cancel your ${b.consultationTitle} appointment on ${formatLongDate(b.date)} (${b.label})?`)) {
+            return;
+        }
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = 'Cancelling…';
+        try {
+            await api(`/api/bookings/${b.id}/cancel`, { method: 'POST' });
+            dismissCancelledNotice(b.id);
+            toast('Appointment cancelled.', 'success');
+            await loadMyBookings();
+            renderMyBookingsModal();
+            if (state.currentStep === 2 && state.consultationPurpose) {
+                const date = state.selectedDate;
+                state.loadedMonthKey = null;
+                state.loadedSlotsKey = null;
+                loadMonth().then((ok) => {
+                    if (ok && date) selectDate(date, false, true);
+                });
+            }
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = prevText;
+            toast(err.message, 'error');
+            await loadMyBookings();
+            renderMyBookingsModal();
+        }
+    }
+
     function renderCancelledAlertBanner() {
         const banner = $('#cancelledAlertBanner');
         const dot = $('#profileCancelDot');
@@ -1018,7 +1072,12 @@
         const today = state.serverToday || state.config?.today || '';
         const dismissed = new Set(getDismissedCancelled());
         const recentCancelled = state.myBookings
-            .filter((b) => b.status === 'cancelled' && (!today || b.date >= today) && !dismissed.has(b.id))
+            .filter(
+                (b) => b.status === 'cancelled'
+                    && b.cancellationReason !== 'Cancelled by student.'
+                    && (!today || b.date >= today)
+                    && !dismissed.has(b.id)
+            )
             .sort((a, b) => (b.cancelledAt || b.date).localeCompare(a.cancelledAt || a.date));
 
         dot?.classList.toggle('hidden', recentCancelled.length === 0);
@@ -1194,6 +1253,30 @@
                     membersWrap.appendChild(chip);
                 });
                 item.appendChild(membersWrap);
+            }
+
+            if (cat === 'upcoming') {
+                const actionRow = document.createElement('div');
+                actionRow.className = 'my-booking-actions';
+
+                const cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'btn btn-danger-soft btn-sm';
+                cancelBtn.textContent = 'Cancel appointment';
+
+                if (canStudentCancelBooking(b)) {
+                    cancelBtn.addEventListener('click', () => cancelMyBooking(b, cancelBtn));
+                    actionRow.appendChild(cancelBtn);
+                } else {
+                    cancelBtn.disabled = true;
+                    cancelBtn.title = 'Appointments can only be cancelled at least 2 hours before the scheduled time.';
+                    const cutoffNote = document.createElement('small');
+                    cutoffNote.className = 'muted cancel-cutoff-note';
+                    cutoffNote.textContent = 'Can no longer cancel (less than 2 hours before schedule)';
+                    actionRow.append(cutoffNote, cancelBtn);
+                }
+
+                item.appendChild(actionRow);
             }
 
             if (cat === 'cancelled') {

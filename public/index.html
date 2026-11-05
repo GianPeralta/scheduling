@@ -233,7 +233,7 @@
 
                     <div class="type-step-header">
                         <h3>Select a consultation</h3>
-                        <p class="muted">Schedule at least <strong>1 day before</strong> the consultation day.</p>
+                        <p class="muted">Schedule at least <strong>1 day before</strong> the consultation day. Note: You can only cancel an appointment at least <strong>2 hours before</strong> the schedule.</p>
                     </div>
 
                     <div class="type-choice-grid" id="typeChoiceGrid">
@@ -424,6 +424,10 @@
                         <div class="ticket-ref">Reference <code id="cRef"></code></div>
                     </div>
 
+                    <p class="muted small cancel-policy-note">
+                        Note: You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time in your Profile.
+                    </p>
+
                     <button class="btn btn-ghost" id="bookAnother">Book another</button>
                 </div>
             </div>
@@ -489,6 +493,10 @@
                     <span class="selection-label">Group members</span>
                     <div class="booking-members" id="profileMemberChips"></div>
                 </div>
+            </div>
+
+            <div class="cancel-policy-banner">
+                <strong>Note:</strong> You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time.
             </div>
 
             <div class="my-bookings-list" id="myBookingsList"></div>

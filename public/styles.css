@@ -2223,6 +2223,37 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     background-color: #fffafa;
 }
 
+.cancel-policy-banner {
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    background-color: var(--amber-soft);
+    border: 1px solid var(--amber-border);
+    color: var(--amber-text);
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.cancel-policy-note {
+    max-width: 440px;
+    line-height: 1.45;
+}
+
+.my-booking-actions {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+}
+
+.cancel-cutoff-note {
+    font-size: 0.78rem;
+    flex: 1 1 180px;
+}
+
 .badge.danger {
     background-color: var(--danger-soft);
     color: var(--danger);
