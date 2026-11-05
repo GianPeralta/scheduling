@@ -1702,7 +1702,7 @@
     function applyEmailHints(config) {
         const domains = config.allowedEmailDomains || [];
         if (!domains.length) return;
-        const example = `yourname@${domains[0]}`;
+        const example = `youremail@${domains[0]}`;
         $('#loginEmail').placeholder = example;
         $('#regEmail').placeholder = example;
         $('#forgotEmail').placeholder = example;
