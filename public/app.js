@@ -1332,7 +1332,7 @@
             login: 'Sign in to schedule',
             register: 'Create account',
             forgot: 'Reset password',
-            otp: state.otpPurpose === 'reset' ? 'Enter reset code' : 'Verify email',
+            otp: state.otpPurpose === 'reset' ? 'Enter reset code' : 'Check email (and spam folder)',
         };
         setText('#authTitle', titles[mode]);
         $('#resetPasswordFields').classList.toggle('hidden', !(mode === 'otp' && state.otpPurpose === 'reset'));
@@ -1558,7 +1558,7 @@
                 body: JSON.stringify({ name, email, capstoneTitle, instructorRole, members, password }),
             });
             showOtpStep('register', data.email, data.resendSeconds);
-            toast('Verification code sent. Check your university email.', 'success');
+            toast('Verification code sent. Check your inbox or spam folder.', 'success');
         });
     }
 
@@ -1625,7 +1625,7 @@
                 method: 'POST',
                 body: JSON.stringify({ email: state.otpEmail, purpose: state.otpPurpose }),
             });
-            toast('A new verification code has been sent.', 'success');
+            toast('A new verification code has been sent. Check your inbox or spam folder.', 'success');
             startResendCountdown(data.resendSeconds || 60);
         } catch (err) {
             setAuthError(err.message);
