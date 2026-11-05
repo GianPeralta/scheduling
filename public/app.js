@@ -829,86 +829,23 @@
         const duration = data.durationMinutes || levelInfo.durationMinutes;
         const windows = data.windows || [];
         const fittingGaps = [];
+        const busyLabels = [];
         windows.forEach((w) => {
+            (w.busy || []).forEach((b) => busyLabels.push(b.label));
             (w.free || []).forEach((f) => {
                 if (f.fits) fittingGaps.push({ ...f, windowLabel: w.label });
             });
         });
 
         $('#slotsSubtitle').textContent = fittingGaps.length
-            ? `${levelInfo.label} (${levelInfo.durationLabel}) · Type a start time or pick a suggestion below`
-            : `No open ${levelInfo.durationLabel} gap left on this day for ${levelInfo.label}.`;
-
-        const wrap = document.createElement('div');
-        wrap.className = 'defense-picker';
-
-        // 1. Level bar (shows the student's registered course and defense duration)
-        const levelBar = document.createElement('div');
-        levelBar.className = 'defense-level-bar';
-        const levelText = document.createElement('span');
-        levelText.innerHTML = `Course: <strong>${levelInfo.label}</strong> (${levelInfo.durationLabel} defense)`;
-        levelBar.appendChild(levelText);
-        wrap.appendChild(levelBar);
-
-        // 2. Windows & free/booked breakdown for this date
-        const winBox = document.createElement('div');
-        winBox.className = 'defense-windows-box';
-        const winHeading = document.createElement('div');
-        winHeading.className = 'defense-windows-heading';
-        winHeading.textContent = 'Available defense windows on this day';
-        winBox.appendChild(winHeading);
-
-        windows.forEach((w) => {
-            const row = document.createElement('div');
-            row.className = 'defense-window-item';
-
-            const top = document.createElement('div');
-            top.className = 'defense-window-top';
-            const title = document.createElement('strong');
-            title.textContent = w.label;
-            top.appendChild(title);
-
-            const fitsAny = (w.free || []).some((f) => f.fits);
-            const pill = document.createElement('span');
-            pill.className = `badge ${fitsAny ? 'teal' : 'muted-badge'}`;
-            if (fitsAny) {
-                pill.textContent = 'Available';
-            } else if (w.endMinute - w.startMinute < duration) {
-                pill.textContent = `Window shorter than ${levelInfo.durationLabel}`;
-            } else {
-                pill.textContent = 'No room left';
-            }
-            top.appendChild(pill);
-            row.appendChild(top);
-
-            if (w.busy && w.busy.length) {
-                const busyEl = document.createElement('div');
-                busyEl.className = 'defense-window-busy';
-                busyEl.textContent = `Already booked: ${w.busy.map((b) => b.label).join(', ')}`;
-                row.appendChild(busyEl);
-            }
-
-            (w.free || []).filter((f) => f.fits).forEach((f) => {
-                const hint = document.createElement('div');
-                hint.className = 'defense-window-valid';
-                if (f.earliestStartMinute === f.latestStartMinute) {
-                    hint.textContent = `Open: ${f.label} — start at ${formatMinute(f.earliestStartMinute)}`;
-                } else {
-                    hint.textContent = `Open: ${f.label} — start any time from ${formatMinute(f.earliestStartMinute)} to ${formatMinute(f.latestStartMinute)}`;
-                }
-                row.appendChild(hint);
-            });
-
-            winBox.appendChild(row);
-        });
-        wrap.appendChild(winBox);
+            ? `Open: ${fittingGaps.map((f) => f.label).join(' · ')}`
+            : `No open ${levelInfo.durationLabel} slot left on this day.`;
 
         if (!fittingGaps.length) {
-            list.appendChild(wrap);
+            list.innerHTML = '<div class="empty-state"><p>No available time on this day.</p></div>';
             return;
         }
 
-        // 3. Quick-pick suggested start times + custom typed start time
         const suggestions = [];
         const seenStarts = new Set();
         fittingGaps.forEach((f) => {
@@ -927,13 +864,17 @@
         const inputCard = document.createElement('div');
         inputCard.className = 'defense-input-card';
 
+        if (busyLabels.length) {
+            const busyEl = document.createElement('div');
+            busyEl.className = 'defense-window-busy';
+            busyEl.textContent = `Booked: ${busyLabels.join(', ')}`;
+            inputCard.appendChild(busyEl);
+        }
+
         const label = document.createElement('label');
         label.className = 'field';
         const labelSpan = document.createElement('span');
-        labelSpan.textContent = `Type your start time (${levelInfo.durationLabel} will be reserved automatically)`;
-
-        const inputRow = document.createElement('div');
-        inputRow.className = 'defense-time-input-row';
+        labelSpan.textContent = `Start time (${levelInfo.durationLabel})`;
 
         const timeInput = document.createElement('input');
         timeInput.type = 'text';
@@ -941,18 +882,10 @@
         timeInput.placeholder = `e.g. ${formatMinute(fittingGaps[0].earliestStartMinute)} or 2:30`;
         timeInput.autocomplete = 'off';
 
-        inputRow.appendChild(timeInput);
-        label.append(labelSpan, inputRow);
+        label.append(labelSpan, timeInput);
         inputCard.appendChild(label);
 
         if (suggestions.length) {
-            const quickWrap = document.createElement('div');
-            quickWrap.className = 'defense-quick-picks';
-            const quickLabel = document.createElement('small');
-            quickLabel.className = 'muted';
-            quickLabel.textContent = 'Or tap a start time:';
-            quickWrap.appendChild(quickLabel);
-
             const chipsRow = document.createElement('div');
             chipsRow.className = 'defense-chip-list';
             suggestions.forEach((m) => {
@@ -967,8 +900,7 @@
                 });
                 chipsRow.appendChild(chip);
             });
-            quickWrap.appendChild(chipsRow);
-            inputCard.appendChild(quickWrap);
+            inputCard.appendChild(chipsRow);
         }
 
         const feedback = document.createElement('div');
@@ -1038,8 +970,8 @@
             updateSelectionBox();
 
             feedback.className = 'defense-time-feedback is-valid';
-            feedback.innerHTML = `<strong>${formatMinute(check.startMinute)} – ${formatMinute(check.endMinute)}</strong> (${levelInfo.durationLabel} · ${levelInfo.label} Defense) is available.`;
-            continueBtn.textContent = `Continue with ${formatMinute(check.startMinute)} – ${formatMinute(check.endMinute)} →`;
+            feedback.innerHTML = `<strong>${formatMinute(check.startMinute)} – ${formatMinute(check.endMinute)}</strong> (${levelInfo.durationLabel})`;
+            continueBtn.textContent = 'Continue →';
             continueBtn.classList.remove('hidden');
         }
 
@@ -1052,8 +984,7 @@
             }
         });
 
-        wrap.appendChild(inputCard);
-        list.appendChild(wrap);
+        list.appendChild(inputCard);
 
         if (state.selectedSlot) {
             timeInput.value = state.selectedSlot.label;
