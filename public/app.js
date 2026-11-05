@@ -6,8 +6,8 @@
         const el = $(sel);
         if (el) el.textContent = val;
     };
-    const MAX_MEMBERS = 10;
-    const MIN_GROUP_MEMBERS = 2;
+    const MIN_MEMBERS = 1;
+    const MAX_MEMBERS = 3;
 
     const PURPOSE_META = {
         system: {
@@ -15,12 +15,12 @@
             badge: '15 minutes',
             summary: 'System Consultation · 15 min',
             color: 'teal',
-            requiresGroup: true,
+            requiresAllMembers: true,
             reasonOptional: false,
-            bannerNote: 'All group members must be present during System Consultations.',
-            policyHtml: '<strong>Attendance Requirement:</strong> All group members must be present during your 15-minute System Consultation.',
-            confirmHtml: '<strong>Reminder:</strong> All group members must be present during your System Consultation.',
-            reasonLabel: 'What will your group present or consult about?',
+            bannerNote: 'All members must be present during System Consultations.',
+            policyHtml: '<strong>Attendance Requirement:</strong> All members must be present during your 15-minute System Consultation.',
+            confirmHtml: '<strong>Reminder:</strong> All members must be present during your System Consultation.',
+            reasonLabel: 'What will you present or consult about?',
             reasonPlaceholder: 'e.g. Present our completed modules, database workflow, and ask for feedback.',
         },
         dropoff: {
@@ -28,7 +28,7 @@
             badge: 'Drop-off only · 0 min',
             summary: 'Drop-off Manuscript · 0 min',
             color: 'amber',
-            requiresGroup: false,
+            requiresAllMembers: false,
             reasonOptional: true,
             bannerNote: 'Drop-off only (takes 0 minutes off schedule). You will be notified via school email once checked.',
             policyHtml: '<strong>Drop-off Only (0 min):</strong> No minutes are taken off the consultation schedule. Once your manuscript is checked, you will be notified through your registered school email (<strong data-student-email></strong>).',
@@ -41,11 +41,11 @@
             badge: '5 minutes',
             summary: 'Retrieval of Manuscript · 5 min',
             color: 'sky',
-            requiresGroup: true,
+            requiresAllMembers: true,
             reasonOptional: true,
-            bannerNote: 'Schedule once notified by email. At least 2 group members must be present.',
-            policyHtml: '<strong>Attendance Requirement:</strong> Schedule this once you have received the email saying your manuscript is checked. <strong>At least 2 group members must be present</strong>, otherwise you will not be accommodated.',
-            confirmHtml: '<strong>Important:</strong> At least 2 group members must be present during Manuscript Retrieval, otherwise your group will not be accommodated.',
+            bannerNote: 'Schedule once notified by email. All members must be present.',
+            policyHtml: '<strong>Attendance Requirement:</strong> Schedule this once you have received the email saying your manuscript is checked. <strong>All members must be present</strong>, otherwise you will not be accommodated.',
+            confirmHtml: '<strong>Important:</strong> All members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
             reasonLabel: 'Notes for retrieval',
             reasonPlaceholder: 'e.g. Retrieving checked manuscript to discuss needed changes (optional)',
         },
@@ -54,7 +54,8 @@
             badge: '5 minutes',
             summary: 'Comm. Letter Signature · 5 min',
             color: 'violet',
-            requiresGroup: false,
+            requiresAllMembers: false,
+            adviserOnly: true,
             reasonOptional: false,
             bannerNote: 'Letter must already bear the initial of Ma’am Melinda Beninsig.',
             policyHtml: '<strong>Prerequisite Confirmed:</strong> Please bring your printed communication letter that already has the <strong>initial of Ma’am Melinda Beninsig</strong> before requesting your adviser’s signature.',
@@ -219,11 +220,27 @@
         showBannerError('#authError', msg);
     }
 
-    /* ---------------- steps ---------------- */
+    /* ---------------- steps & auth gate ---------------- */
+    function showAuthGate() {
+        $('#bootPanel')?.classList.add('hidden');
+        ['#step1', '#step2', '#step3', '#step4'].forEach((id) => $(id)?.classList.add('hidden'));
+        $('#bookingSteps')?.classList.add('hidden');
+        $('#selectionBox')?.classList.add('hidden');
+        $('#studentProjectBox')?.classList.add('hidden');
+        $('#authPanel')?.classList.remove('hidden');
+    }
+
     function goToStep(n) {
+        if (!state.student) {
+            showAuthGate();
+            return;
+        }
         state.currentStep = n;
+        $('#bootPanel')?.classList.add('hidden');
+        $('#authPanel')?.classList.add('hidden');
+        $('#bookingSteps')?.classList.remove('hidden');
         ['#step1', '#step2', '#step3', '#step4'].forEach((id, i) => {
-            $(id).classList.toggle('hidden', i + 1 !== n);
+            $(id)?.classList.toggle('hidden', i + 1 !== n);
         });
         document.querySelectorAll('.step').forEach((el) => {
             const s = Number(el.dataset.step);
@@ -233,21 +250,12 @@
         if (n === 3) {
             renderStep3();
             setTimeout(() => {
-                let target;
-                if (!state.student) {
-                    target = state.authMode === 'otp' ? $('#otpCode')
-                        : state.authMode === 'register' ? $('#regName')
-                        : state.authMode === 'forgot' ? $('#forgotEmail')
-                        : $('#loginEmail');
-                } else {
-                    target = $('#reasonInput');
-                }
-                if (target) target.focus({ preventScroll: true });
+                $('#reasonInput')?.focus({ preventScroll: true });
             }, 60);
         }
         if (window.innerWidth <= 960) {
             const activePanel = $(['#step1', '#step2', '#step3', '#step4'][n - 1]);
-            (activePanel || $('#scheduler')).scrollIntoView({ behavior: 'smooth', block: 'start' });
+            (activePanel || $('#scheduler'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     }
 
@@ -297,17 +305,23 @@
         }
 
         // Attendance mode rules:
-        // System (all members required) & Retrieval (at least 2 members required) enforce group mode.
+        // System & Retrieval require all members to be present (1, 2, or 3 members).
+        // Solo (1-member) projects also skip the Representative vs All Members toggle.
         const toggleField = $('#attendanceToggleField');
-        if (meta.requiresGroup) {
+        const registeredCount = Array.isArray(state.student?.members) ? state.student.members.length : 1;
+        if (meta.requiresAllMembers) {
             toggleField.classList.add('hidden');
             setBookingType('group');
             setText(
                 '#membersFieldLabel',
-                state.consultationPurpose === 'system'
-                    ? 'Group members (all members must attend)'
-                    : 'Attending group members (at least 2 required)'
+                registeredCount <= 1
+                    ? 'Capstone / Thesis member (must be present)'
+                    : 'Capstone / Thesis members (all members must be present)'
             );
+        } else if (registeredCount <= 1) {
+            toggleField.classList.add('hidden');
+            setBookingType('group');
+            setText('#membersFieldLabel', 'Capstone / Thesis member');
         } else {
             toggleField.classList.remove('hidden');
             setText('#membersFieldLabel', 'Attending group members');
@@ -353,9 +367,15 @@
     }
 
     function onClickConsultationCard(purpose) {
-        if (purpose === 'letter' && !state.beninsigConfirmed) {
-            openBeninsigModal();
-            return;
+        if (purpose === 'letter') {
+            if (state.student?.instructorRole !== 'adviser') {
+                toast('Communication Letter Signature is only available when Arnemie Gayyed is your Adviser.', 'error');
+                return;
+            }
+            if (!state.beninsigConfirmed) {
+                openBeninsigModal();
+                return;
+            }
         }
         proceedWithConsultationPurpose(purpose);
     }
@@ -421,18 +441,16 @@
         rows.forEach((row, idx) => {
             const input = row.querySelector('input');
             input.placeholder = idx === 0
-                ? 'Member 1 (You) — Group representative'
+                ? 'Member 1 (You)'
                 : `Member ${idx + 1} — full name`;
             const removeBtn = row.querySelector('.remove-member');
             const isSelf = idx === 0 && Boolean(state.student);
             input.readOnly = isSelf;
             if (isSelf) input.value = state.student.name;
-            removeBtn.disabled = isSelf || rows.length <= MIN_GROUP_MEMBERS;
+            removeBtn.disabled = isSelf || rows.length <= MIN_MEMBERS;
             removeBtn.title = isSelf
                 ? 'You are always Member 1 on your booking'
-                : rows.length <= MIN_GROUP_MEMBERS
-                    ? 'At least 2 members are required'
-                    : 'Remove member';
+                : 'Remove member';
         });
         setText('#memberCount', `(${rows.length}/${MAX_MEMBERS})`);
         $('#addMemberBtn')?.classList.toggle('hidden', rows.length >= MAX_MEMBERS);
@@ -457,7 +475,7 @@
         removeBtn.setAttribute('aria-label', 'Remove member');
         removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
         removeBtn.addEventListener('click', () => {
-            if (list.children.length <= MIN_GROUP_MEMBERS) return;
+            if (list.children.length <= MIN_MEMBERS) return;
             row.remove();
             clearFieldError('#bookingMembersField');
             syncMemberControls();
@@ -474,11 +492,10 @@
         if (!list) return;
         list.innerHTML = '';
         const savedMembers = state.student?.members;
-        if (Array.isArray(savedMembers) && savedMembers.length >= MIN_GROUP_MEMBERS) {
+        if (Array.isArray(savedMembers) && savedMembers.length >= MIN_MEMBERS) {
             savedMembers.slice(0, MAX_MEMBERS).forEach((m) => addMemberRow(m));
         } else {
             addMemberRow(state.student?.name || '');
-            addMemberRow();
         }
         if (state.student?.capstoneTitle && $('#teamInput') && !$('#teamInput').value.trim()) {
             $('#teamInput').value = state.student.capstoneTitle;
@@ -486,7 +503,8 @@
     }
 
     function setBookingType(type) {
-        const forcedGroup = state.consultationPurpose && getMeta().requiresGroup;
+        const registeredCount = Array.isArray(state.student?.members) ? state.student.members.length : 1;
+        const forcedGroup = (state.consultationPurpose && getMeta().requiresAllMembers) || registeredCount <= 1;
         state.bookingType = (forcedGroup || type === 'group') ? 'group' : 'individual';
         const isGroup = state.bookingType === 'group';
         const radio = document.querySelector(`input[name="bookingType"][value="${state.bookingType}"]`);
@@ -792,54 +810,57 @@
         clearFormFieldErrors('#bookingForm');
         setFormError('');
 
+        if (!state.student) {
+            showAuthGate();
+            return;
+        }
         if (!state.consultationPurpose) {
             goToStep(1);
             return;
         }
-        if (state.consultationPurpose === 'letter' && !state.beninsigConfirmed) {
-            openBeninsigModal();
-            return;
+        if (state.consultationPurpose === 'letter') {
+            if (state.student.instructorRole !== 'adviser') {
+                toast('Communication Letter Signature is only available when Arnemie Gayyed is your Adviser.', 'error');
+                resetBooking();
+                return;
+            }
+            if (!state.beninsigConfirmed) {
+                openBeninsigModal();
+                return;
+            }
         }
         if (!state.selectedDate || !state.selectedSlot) {
             goToStep(2);
             return;
         }
-        if (!state.student) {
-            renderStep3();
+
+        const meta = getMeta();
+        const teamName = $('#teamInput').value.trim();
+        if (teamName.length < 2) {
+            setFieldError('#teamInput', 'Please enter your Capstone / Thesis title (at least 2 characters).');
             return;
         }
 
-        const meta = getMeta();
         const reason = $('#reasonInput').value.trim();
         let payload;
 
-        if (state.bookingType === 'group' || meta.requiresGroup) {
-            const teamName = $('#teamInput').value.trim();
-            if (teamName.length < 2) {
-                setFieldError('#teamInput', 'Please enter your Capstone / Thesis title (at least 2 characters).');
-                return;
-            }
+        if (state.bookingType === 'group' || meta.requiresAllMembers) {
             const inputs = getMemberInputs();
-            const members = inputs.map((el) => el.value.trim()).filter(Boolean);
-            if (members.length < MIN_GROUP_MEMBERS) {
-                const emptyInput = inputs.find((el) => el.value.trim().length < 2) || inputs[0];
+            const emptyInput = inputs.find((el) => el.value.trim().length === 0);
+            if (emptyInput) {
                 setFieldError(
                     '#bookingMembersField',
-                    state.consultationPurpose === 'retrieval'
-                        ? 'At least 2 group members must be present for Manuscript Retrieval.'
-                        : 'Please enter at least 2 group member names.',
+                    'Please enter this member’s full name, or click × to remove the empty row.',
                     emptyInput
                 );
                 return;
             }
-            const invalidInput = inputs.find((el) => {
-                const v = el.value.trim();
-                return v.length > 0 && v.length < 2;
-            });
-            if (invalidInput) {
-                setFieldError('#bookingMembersField', 'Each member needs a full name (at least 2 characters).', invalidInput);
+            const shortInput = inputs.find((el) => el.value.trim().length < 2);
+            if (shortInput) {
+                setFieldError('#bookingMembersField', 'Each member needs a full name (at least 2 characters).', shortInput);
                 return;
             }
+            const members = inputs.map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS);
             payload = {
                 type: 'group',
                 consultationType: state.consultationPurpose,
@@ -855,6 +876,7 @@
                 type: 'individual',
                 consultationType: state.consultationPurpose,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
+                teamName,
                 reason,
                 date: state.selectedDate,
                 startMinute: state.selectedSlot.startMinute,
@@ -882,8 +904,10 @@
             if (err.status === 401) {
                 setStudent(null);
                 setAuthMode('login');
-                renderStep3();
-                setAuthError('Your session has expired. Please log in again to finish booking.');
+                setAuthError('Your session has expired. Please log in again to continue.');
+            } else if (err.code === 'ADVISER_ONLY') {
+                toast(err.message, 'error');
+                resetBooking();
             } else if (err.code === 'BENINSIG_REQUIRED') {
                 state.beninsigConfirmed = false;
                 openBeninsigModal();
@@ -914,7 +938,7 @@
 
     function showConfirmation(b) {
         const meta = getMeta(b.consultationType);
-        const isGroup = b.type === 'group' && b.members?.length >= 2;
+        const hasMultipleMembers = Array.isArray(b.members) && b.members.length >= 2;
         const capstone = b.capstoneTitle || b.teamName || state.student?.capstoneTitle || null;
         const role = b.instructorRole || state.student?.instructorRole || null;
 
@@ -943,12 +967,12 @@
         if (capstone) {
             $('#cTeam').textContent = capstone;
         }
-        if (isGroup) {
+        if (hasMultipleMembers) {
             $('#cNameLabel').textContent = `Attending (${b.members.length})`;
             $('#cName').textContent = b.members.join(', ');
         } else {
-            $('#cNameLabel').textContent = 'Representative';
-            $('#cName').textContent = b.name;
+            $('#cNameLabel').textContent = 'Attending';
+            $('#cName').textContent = b.members?.[0] || b.name;
         }
         $('#cDate').textContent = formatLongDate(b.date);
         $('#cTime').textContent = b.label;
@@ -963,13 +987,16 @@
         $('#reasonCount').textContent = '0';
         clearFormFieldErrors('#bookingForm');
         setFormError('');
+        if (state.student?.capstoneTitle && $('#teamInput')) {
+            $('#teamInput').value = state.student.capstoneTitle;
+        }
         resetMembers();
         state.consultationPurpose = null;
         state.beninsigConfirmed = false;
         state.selectedSlot = null;
         state.loadedMonthKey = null;
         state.loadedSlotsKey = null;
-        setBookingType(state.student?.members?.length >= MIN_GROUP_MEMBERS ? 'group' : 'individual');
+        setBookingType('group');
         document.querySelectorAll('.type-choice-card').forEach((card) => card.classList.remove('selected'));
         updateSelectionBox();
         goToStep(1);
@@ -1059,10 +1086,46 @@
         return String(name || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
     }
 
-    function setStudent(student) {
+    function updateRoleVisibility() {
+        const isAdviser = state.student?.instructorRole === 'adviser';
+        const letterCard = $('#letterChoiceCard');
+        if (letterCard) {
+            letterCard.classList.toggle('hidden', !isAdviser);
+        }
+        if (!isAdviser && state.consultationPurpose === 'letter') {
+            state.consultationPurpose = null;
+            state.beninsigConfirmed = false;
+            updateSelectionBox();
+        }
+
+        const projBox = $('#studentProjectBox');
+        if (projBox) {
+            if (state.student) {
+                const count = Array.isArray(state.student.members) && state.student.members.length
+                    ? state.student.members.length
+                    : 1;
+                const roleBadge = $('#projectRoleBadge');
+                if (roleBadge) {
+                    const isPanel = state.student.instructorRole === 'panel';
+                    roleBadge.textContent = isPanel ? 'Panel Member' : 'Adviser';
+                    roleBadge.className = `badge ${isPanel ? 'sky' : 'teal'}`;
+                    roleBadge.classList.toggle('hidden', !state.student.instructorRole);
+                }
+                setText('#projectTitleText', state.student.capstoneTitle || state.student.name);
+                setText('#projectMembersText', `${count} ${count === 1 ? 'member' : 'members'} · ${state.student.members?.join(', ') || state.student.name}`);
+                projBox.classList.remove('hidden');
+            } else {
+                projBox.classList.add('hidden');
+            }
+        }
+    }
+
+    function setStudent(student, navigateToStep1 = false) {
         state.student = student || null;
         const box = $('#accountBox');
         box.classList.toggle('hidden', !state.student);
+        updateRoleVisibility();
+
         if (state.student) {
             $('#accountAvatar').textContent = initials(state.student.name);
             $('#accountName').textContent = state.student.name;
@@ -1071,33 +1134,37 @@
                 $('#teamInput').value = state.student.capstoneTitle;
             }
             resetMembers();
-            if (Array.isArray(state.student.members) && state.student.members.length >= MIN_GROUP_MEMBERS) {
-                setBookingType('group');
-            }
+            setBookingType('group');
             loadMyBookings();
+            if (navigateToStep1) {
+                goToStep(1);
+            }
         } else {
             $('#myBookingsBtn')?.classList.add('hidden');
             if ($('#teamInput')) $('#teamInput').value = '';
+            state.consultationPurpose = null;
+            state.beninsigConfirmed = false;
+            state.selectedDate = null;
+            state.selectedSlot = null;
             resetMembers();
             setBookingType('group');
+            showAuthGate();
         }
         if (state.consultationPurpose) updatePurposeUI();
         syncMemberControls();
-        if (state.currentStep === 3) renderStep3();
     }
 
     function renderStep3() {
-        const signedIn = Boolean(state.student);
-        $('#authView').classList.toggle('hidden', signedIn);
-        $('#bookingForm').classList.toggle('hidden', !signedIn);
-        if (signedIn) {
-            $('#nameInput').value = state.student.name;
-            if (state.student.capstoneTitle && !$('#teamInput').value.trim()) {
-                $('#teamInput').value = state.student.capstoneTitle;
-            }
-            updatePurposeUI();
-            syncMemberControls();
+        if (!state.student) {
+            showAuthGate();
+            return;
         }
+        $('#nameInput').value = state.student.name;
+        if (state.student.capstoneTitle && !$('#teamInput').value.trim()) {
+            $('#teamInput').value = state.student.capstoneTitle;
+        }
+        updatePurposeUI();
+        syncMemberControls();
     }
 
     function setAuthMode(mode) {
@@ -1115,12 +1182,12 @@
         }
 
         const titles = {
-            login: ['Sign in to book', 'Log in with your verified university account to confirm this slot.'],
-            register: ['Create group account', 'Register once for your Capstone / Thesis group using your university email.'],
+            login: ['Sign in to schedule', 'Log in with your verified university account to view and book consultations.'],
+            register: ['Create Capstone / Thesis account', 'Register once using your university email (1 to 3 members max).'],
             forgot: ['Reset your password', 'Enter your university email and we will send a 6-digit reset code.'],
             otp: state.otpPurpose === 'reset'
                 ? ['Check your email', 'Enter the 6-digit code and choose your new password.']
-                : ['Verify your university email', 'Enter the 6-digit code we sent to activate your group account.'],
+                : ['Verify your university email', 'Enter the 6-digit code we sent to activate your account.'],
         };
         $('#authTitle').textContent = titles[mode][0];
         $('#authSubtitle').textContent = titles[mode][1];
@@ -1139,6 +1206,7 @@
         regName: '#regName',
         regEmail: '#regEmail',
         regCapstone: '#regCapstone',
+        regRole: '#regRoleField',
         regMembers: '#regMembersField',
         regPassword: '#regPassword',
     };
@@ -1187,16 +1255,14 @@
     }
 
     function onSignedIn(student, message) {
-        setStudent(student);
         ['#loginPassword', '#regPassword', '#regPassword2', '#resetPassword', '#otpCode'].forEach((s) => {
             const el = $(s);
             if (el) el.value = '';
         });
         clearInterval(state.resendTimer);
         setAuthMode('login');
-        renderStep3();
+        setStudent(student, true);
         toast(message, 'success');
-        setTimeout(() => $('#reasonInput')?.focus({ preventScroll: true }), 60);
     }
 
     function handleLogin(e) {
@@ -1222,7 +1288,7 @@
         });
     }
 
-    /* ---------------- registration group members UI ---------------- */
+    /* ---------------- registration members UI (1 to 3 members) ---------------- */
     function getRegMemberInputs() {
         return Array.from(document.querySelectorAll('#regMemberList input'));
     }
@@ -1236,16 +1302,14 @@
             if (idx === 0) {
                 input.readOnly = true;
                 input.value = repName;
-                input.placeholder = 'Member 1 (You) — Group representative';
+                input.placeholder = 'Member 1 (You) — auto-filled from your name above';
                 removeBtn.disabled = true;
-                removeBtn.title = 'Group representative is always Member 1';
+                removeBtn.title = 'You are always Member 1';
             } else {
                 input.readOnly = false;
                 input.placeholder = `Member ${idx + 1} — full name`;
-                removeBtn.disabled = rows.length <= MIN_GROUP_MEMBERS;
-                removeBtn.title = rows.length <= MIN_GROUP_MEMBERS
-                    ? 'At least 2 group members are required'
-                    : 'Remove member';
+                removeBtn.disabled = false;
+                removeBtn.title = 'Remove member';
             }
         });
         setText('#regMemberCount', `(${rows.length}/${MAX_MEMBERS})`);
@@ -1271,7 +1335,7 @@
         removeBtn.setAttribute('aria-label', 'Remove member');
         removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
         removeBtn.addEventListener('click', () => {
-            if (list.children.length <= MIN_GROUP_MEMBERS) return;
+            if (list.children.length <= MIN_MEMBERS) return;
             row.remove();
             clearFieldError('#regMembersField');
             syncRegMemberControls();
@@ -1288,7 +1352,6 @@
         if (!list) return;
         list.innerHTML = '';
         addRegMemberRow($('#regName')?.value.trim() || '');
-        addRegMemberRow();
     }
 
     function handleRegister(e) {
@@ -1319,21 +1382,22 @@
             return;
         }
 
-        const otherMembers = regInputs.slice(1).map((el) => el.value.trim()).filter(Boolean);
+        const emptyExtra = regInputs.slice(1).find((el) => el.value.trim().length === 0);
+        if (emptyExtra) {
+            setFieldError(
+                '#regMembersField',
+                'Please enter this member’s full name, or click × to remove the extra row.',
+                emptyExtra
+            );
+            return;
+        }
+        const shortExtra = regInputs.slice(1).find((el) => el.value.trim().length < 2);
+        if (shortExtra) {
+            setFieldError('#regMembersField', 'Each member needs a full name (at least 2 characters).', shortExtra);
+            return;
+        }
+        const otherMembers = regInputs.slice(1).map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS - 1);
         const members = [name, ...otherMembers];
-        if (members.length < MIN_GROUP_MEMBERS) {
-            const emptyInput = regInputs.slice(1).find((el) => el.value.trim().length < 2) || regInputs[1];
-            setFieldError('#regMembersField', 'Please enter at least 2 group member names (yourself and your groupmate).', emptyInput);
-            return;
-        }
-        const invalidMember = regInputs.slice(1).find((el) => {
-            const v = el.value.trim();
-            return v.length > 0 && v.length < 2;
-        });
-        if (invalidMember) {
-            setFieldError('#regMembersField', 'Each group member needs a full name (at least 2 characters).', invalidMember);
-            return;
-        }
 
         if (password.length < 8) {
             setFieldError('#regPassword', 'Password must be at least 8 characters long.');
@@ -1435,7 +1499,7 @@
     async function loadCurrentStudent() {
         try {
             const { student } = await api('/api/auth/me');
-            setStudent(student);
+            setStudent(student, Boolean(student));
         } catch {
             setStudent(null);
         }
@@ -1487,7 +1551,6 @@
         $('#otpCode').addEventListener('input', (e) => {
             e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
         });
-        $('#authBackBtn').addEventListener('click', () => goToStep(2));
         $('#logoutBtn').addEventListener('click', logout);
         setAuthMode('login');
     }

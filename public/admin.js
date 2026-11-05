@@ -168,8 +168,10 @@
     };
 
     async function cancelBooking(b, btn) {
-        const who = b.type === 'group' && (b.teamName || b.capstoneTitle)
-            ? `${b.teamName || b.capstoneTitle} (${b.members.length} members)`
+        const title = b.capstoneTitle || b.teamName;
+        const count = Array.isArray(b.members) ? b.members.length : 1;
+        const who = title
+            ? `${title} (${count} ${count === 1 ? 'member' : 'members'})`
             : b.name;
         if (!confirm(`Cancel the appointment with ${who} on ${longDate(b.date)} at ${b.label}?`)) return;
         btn.disabled = true;
@@ -295,6 +297,8 @@
                 }
                 if (isGroup) {
                     header.appendChild(el('span', 'badge amber', `Group · ${b.members.length}`));
+                } else if (groupHeading) {
+                    header.appendChild(el('span', 'badge amber', '1 member'));
                 }
                 if (b.notifiedAt) {
                     header.appendChild(el('span', 'badge teal', 'Checked email sent ✓'));

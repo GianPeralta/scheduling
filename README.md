@@ -6,13 +6,13 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 ## Features
 
 **Students (`/`)**
-- **Student accounts (1 representative per Capstone/Thesis group)**: students register once per group with their university email (`ALLOWED_EMAIL_DOMAINS`), Capstone/Thesis title, group members, and instructor role (`Adviser` or `Panel Member`), verified via a 6‑digit SMTP OTP.
+- **Student accounts (1 representative per Capstone/Thesis, 1–3 members max)**: students sign in or register first with their university email (`ALLOWED_EMAIL_DOMAINS`), Capstone/Thesis title, 1 to 3 members (supports solo, pair, or 3-member groups), and instructor role (`Adviser` or `Panel Member`), verified via a 6‑digit SMTP OTP.
 - **1-day advance booking rule**: consultations must be scheduled at least 1 day before the consultation day (same-day booking is closed).
 - **Four consultation types**:
-  1. **System Consultation** (`15 minutes`): All group members must be present.
+  1. **System Consultation** (`15 minutes`): All members must be present.
   2. **Drop-off Manuscript** (`Drop-off only · 0 min`): Deducts 0 minutes from the schedule; students are notified via their school email once their manuscript is checked.
-  3. **Retrieval of Manuscript** (`5 minutes`): Scheduled once students receive the email saying their manuscript is checked; at least 2 group members must be present.
-  4. **Communication Letter Signature** (`5 minutes`): Interactive prerequisite check verifying the letter already bears the initial of **Ma'am Melinda Beninsig** before continuing.
+  3. **Retrieval of Manuscript** (`5 minutes`): Scheduled once students receive the email saying their manuscript is checked; all members must be present or they will not be accommodated.
+  4. **Communication Letter Signature** (`5 minutes`, **shown only to students who registered Arnemie Gayyed as Adviser**): Interactive prerequisite check verifying the letter already bears the initial of **Ma'am Melinda Beninsig** before continuing.
 - **Weekly schedule (Tuesday – Thursday)** until **December 10**:
   - **Tuesday**: 2:10 PM – 3:30 PM
   - **Wednesday**: 12:50 PM – 2:10 PM

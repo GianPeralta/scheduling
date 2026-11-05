@@ -23,12 +23,15 @@ const DROPOFF_DURATION = 0;   // Drop-off only (takes 0 minutes off the schedule
 const RETRIEVAL_DURATION = 5; // 5 minutes for Manuscript Retrieval
 const LETTER_DURATION = 5;    // 5 minutes for Communication Letter Signature
 
+const MIN_MEMBERS = 1;        // Solo (1), pair (2), or 3-member Capstone / Thesis groups allowed
+const MAX_MEMBERS = 3;
+
 const CONSULTATION_TYPES = {
     system: {
         id: 'system',
         title: 'System Consultation',
         description: 'Present and consult about the system, software, or web app your group made.',
-        note: 'All group members must be present during System Consultations.',
+        note: 'All members must be present during System Consultations.',
         durationMinutes: SYSTEM_DURATION,
         durationLabel: '15 minutes',
     },
@@ -44,7 +47,7 @@ const CONSULTATION_TYPES = {
         id: 'retrieval',
         title: 'Retrieval of Manuscript',
         description: 'Once notified by email that your manuscript is checked, schedule this to discuss the needed changes.',
-        note: 'At least 2 group members must be present, otherwise you will not be accommodated.',
+        note: 'All members must be present, otherwise you will not be accommodated.',
         durationMinutes: RETRIEVAL_DURATION,
         durationLabel: '5 minutes',
     },
@@ -55,6 +58,7 @@ const CONSULTATION_TYPES = {
         note: 'Your letter must already have the initial of Ma’am Melinda Beninsig before requesting your adviser’s signature.',
         durationMinutes: LETTER_DURATION,
         durationLabel: '5 minutes',
+        adviserOnly: true,
     },
 };
 
@@ -596,6 +600,8 @@ app.get('/api/config', (req, res) => {
         lastBookableDate: getLastBookableDate(now),
         allowedEmailDomains: AUTH.allowedDomains,
         maxActiveBookings: AUTH.maxActiveBookings,
+        minGroupMembers: MIN_MEMBERS,
+        maxGroupMembers: MAX_MEMBERS,
     });
 });
 
@@ -631,19 +637,19 @@ app.post('/api/auth/register/start', async (req, res) => {
         return res.status(400).json({ field: 'regCapstone', error: 'Please enter your Capstone / Thesis title (3–200 characters).' });
     }
     if (!instructorRole) {
-        return res.status(400).json({ error: `Please select whether ${TEACHER_NAME} is your Adviser or Panel Member.` });
+        return res.status(400).json({ field: 'regRole', error: `Please select whether ${TEACHER_NAME} is your Adviser or Panel Member.` });
     }
 
-    // Member 1 is always the representative registering; attach remaining group members
+    // Member 1 is always the representative registering; attach up to 2 additional members (1–3 total)
     const members = [name, ...rawMembers.slice(1)];
-    if (members.length < 2) {
-        return res.status(400).json({ field: 'regMembers', error: 'Please enter at least 2 group member names (yourself and your groupmates).' });
+    if (members.length < MIN_MEMBERS) {
+        return res.status(400).json({ field: 'regMembers', error: 'Please enter at least 1 member name.' });
     }
     if (members.length > MAX_MEMBERS) {
-        return res.status(400).json({ field: 'regMembers', error: `A group can have at most ${MAX_MEMBERS} members.` });
+        return res.status(400).json({ field: 'regMembers', error: `Only up to ${MAX_MEMBERS} members are allowed in a Capstone / Thesis group.` });
     }
     if (members.some((m) => m.length < 2 || m.length > 100)) {
-        return res.status(400).json({ field: 'regMembers', error: 'Each group member needs a full name (2–100 characters).' });
+        return res.status(400).json({ field: 'regMembers', error: 'Each member needs a full name (2–100 characters).' });
     }
 
     const pwError = validatePassword(password);
@@ -872,7 +878,6 @@ app.get('/api/slots', async (req, res) => {
     res.json({ date, purpose, slots });
 });
 
-const MAX_MEMBERS = 10;
 const cleanName = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
 
 function formatDurationLabel(consultationType, durationMinutes) {
@@ -950,16 +955,24 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     const typeInfo = CONSULTATION_TYPES[consultationType];
     const durationMinutes = typeInfo.durationMinutes;
     const isDropoff = consultationType === 'dropoff';
-    const requiresGroup = consultationType === 'system' || consultationType === 'retrieval';
-    const type = (requiresGroup || body.type === 'group') ? 'group' : 'individual';
+    const requiresAllMembers = consultationType === 'system' || consultationType === 'retrieval';
+    const type = (requiresAllMembers || body.type === 'group') ? 'group' : 'individual';
     const date = String(body.date ?? '');
     const startMinute = Number(body.startMinute);
 
-    if (consultationType === 'letter' && body.beninsigInitialConfirmed !== true) {
-        return res.status(400).json({
-            code: 'BENINSIG_REQUIRED',
-            error: "Please obtain the initial of Ma'am Melinda Beninsig on your communication letter first before scheduling a signature with your adviser.",
-        });
+    if (consultationType === 'letter') {
+        if (student.instructor_role !== 'adviser') {
+            return res.status(403).json({
+                code: 'ADVISER_ONLY',
+                error: `Communication Letter Signature is only available for students who registered ${TEACHER_NAME} as their Adviser.`,
+            });
+        }
+        if (body.beninsigInitialConfirmed !== true) {
+            return res.status(400).json({
+                code: 'BENINSIG_REQUIRED',
+                error: "Please obtain the initial of Ma'am Melinda Beninsig on your communication letter first before scheduling a signature with your adviser.",
+            });
+        }
     }
 
     let rawReason = String(body.reason ?? '').trim();
@@ -970,46 +983,40 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     }
     const reason = rawReason;
 
-    let members;
-    let teamName = null;
+    // Always preserve Capstone / Thesis title even for 1- or 2-member groups
+    const teamName = cleanName(body.teamName || student.capstone_title);
+    if (teamName.length < 2 || teamName.length > 200) {
+        return res.status(400).json({
+            field: 'teamName',
+            error: 'Please enter your Capstone / Thesis title (2–200 characters).',
+        });
+    }
 
+    let members;
     if (type === 'group') {
-        teamName = cleanName(body.teamName || student.capstone_title);
-        if (teamName.length < 2 || teamName.length > 200) {
-            return res.status(400).json({
-                field: 'teamName',
-                error: 'Please enter your Capstone / Thesis title (2–200 characters).',
-            });
-        }
         const submittedMembers = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
         const fallbackMembers = Array.isArray(student.members) && student.members.length ? student.members : [student.full_name];
         members = submittedMembers.length ? submittedMembers : [...fallbackMembers];
         // Member 1 is always the logged-in student (the person responsible for the booking)
         members[0] = student.full_name;
-        if (members.length < 2) {
-            return res.status(400).json({
-                field: 'members',
-                error: consultationType === 'retrieval'
-                    ? 'At least 2 group members must be present for Manuscript Retrieval, otherwise you will not be accommodated.'
-                    : consultationType === 'system'
-                        ? 'All group members must be present during System Consultations (at least 2 members).'
-                        : 'A group booking needs at least 2 member names.',
-            });
+        if (members.length < MIN_MEMBERS) {
+            return res.status(400).json({ field: 'members', error: 'Please enter at least 1 member name.' });
         }
         if (members.length > MAX_MEMBERS) {
-            return res.status(400).json({ field: 'members', error: `A group can have at most ${MAX_MEMBERS} members.` });
+            return res.status(400).json({
+                field: 'members',
+                error: `Only up to ${MAX_MEMBERS} members are allowed in a Capstone / Thesis group.`,
+            });
         }
     } else {
-        // Individual bookings always use the verified account's name
+        // Representative-only attendance uses the verified account's name while keeping teamName
         members = [student.full_name];
     }
 
     if (members.some((m) => m.length < 2 || m.length > 100)) {
         return res.status(400).json({
             field: 'members',
-            error: type === 'group'
-                ? 'Each member needs a full name (2–100 characters).'
-                : 'Please enter your full name (2–100 characters).',
+            error: 'Each member needs a full name (2–100 characters).',
         });
     }
     if (reason.length < 5 || reason.length > 1000) {
@@ -1188,7 +1195,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
         '',
         'Important reminders:',
         '• Consultations must be booked at least 1 day before the consultation day.',
-        '• At least 2 group members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
+        '• All members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
     ].join('\n');
 
     const bodyHtml = `
@@ -1205,7 +1212,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
                 <strong>Important reminders:</strong>
                 <ul style="margin:6px 0 0;padding-left:18px">
                     <li>Bookings must be made at least <strong>1 day before</strong> the consultation day.</li>
-                    <li><strong>At least 2 group members must be present</strong> during Manuscript Retrieval, otherwise you will not be accommodated.</li>
+                    <li><strong>All members must be present</strong> during Manuscript Retrieval, otherwise you will not be accommodated.</li>
                 </ul>
             </div>
         </div>`;

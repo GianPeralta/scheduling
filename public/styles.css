@@ -1715,9 +1715,45 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 .account-logout:hover { background-color: var(--danger-soft); color: var(--danger); }
 
-.auth-head { display: grid; gap: 6px; }
-.auth-head h3 { font-size: 1.35rem; font-weight: 800; }
+.auth-head { display: grid; justify-items: start; gap: 8px; }
+.auth-head h3 { font-size: 1.45rem; font-weight: 800; }
 .auth-form { display: grid; gap: 16px; }
+#authPanel .auth-view {
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 8px 0;
+}
+.boot-panel {
+    display: grid;
+    place-items: center;
+    min-height: 360px;
+}
+.project-box {
+    padding: 13px 15px;
+    border-radius: var(--radius);
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-xs);
+    margin-bottom: 14px;
+    display: grid;
+    gap: 4px;
+}
+.project-box-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.project-box-head .selection-label {
+    margin-bottom: 0;
+}
+.project-box-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text);
+    line-height: 1.35;
+    word-break: break-word;
+}
 .group-register-notice {
     padding: 12px 14px;
     border-radius: var(--radius-sm);

@@ -25,7 +25,10 @@ alter table public.appointments drop constraint if exists appointments_team_name
 alter table public.appointments add constraint appointments_team_name_check
     check (team_name is null or char_length(team_name) between 2 and 200);
 alter table public.appointments add column if not exists members text[] not null default '{}'
-    check (cardinality(members) <= 10);
+    check (cardinality(members) <= 3);
+alter table public.appointments drop constraint if exists appointments_members_check;
+alter table public.appointments add constraint appointments_members_check
+    check (cardinality(members) <= 3) not valid;
 
 -- Upgrade path for tables created with the older hourly schema:
 alter table public.appointments add column if not exists start_minute smallint;
@@ -70,7 +73,7 @@ create table if not exists public.students (
     full_name        text        not null check (char_length(full_name) between 2 and 100),
     capstone_title   text        check (capstone_title is null or char_length(capstone_title) between 2 and 200),
     instructor_role  text        check (instructor_role is null or instructor_role in ('adviser', 'panel')),
-    members          text[]      not null default '{}' check (cardinality(members) <= 10),
+    members          text[]      not null default '{}' check (cardinality(members) <= 3),
     password_hash    text        not null,
     failed_logins    smallint    not null default 0,
     locked_until     timestamptz,
@@ -83,7 +86,10 @@ alter table public.students add column if not exists capstone_title text
 alter table public.students add column if not exists instructor_role text
     check (instructor_role is null or instructor_role in ('adviser', 'panel'));
 alter table public.students add column if not exists members text[] not null default '{}'
-    check (cardinality(members) <= 10);
+    check (cardinality(members) <= 3);
+alter table public.students drop constraint if exists students_members_check;
+alter table public.students add constraint students_members_check
+    check (cardinality(members) <= 3) not valid;
 
 -- One-time codes emailed for registration / password reset (permanent log of all attempts)
 create table if not exists public.email_otps (

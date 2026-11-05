@@ -70,6 +70,15 @@
                     </li>
                 </ul>
 
+                <div class="project-box hidden" id="studentProjectBox">
+                    <div class="project-box-head">
+                        <span class="selection-label">Registered project</span>
+                        <span class="badge teal" id="projectRoleBadge">Adviser</span>
+                    </div>
+                    <p class="project-box-title" id="projectTitleText"></p>
+                    <p class="muted small" id="projectMembersText"></p>
+                </div>
+
                 <div class="selection hidden" id="selectionBox">
                     <p class="selection-label">Your selection</p>
                     <p class="selection-purpose" id="selectionPurpose"></p>
@@ -77,16 +86,172 @@
                     <p class="selection-time" id="selectionTime"></p>
                 </div>
 
-                <div class="steps" role="navigation" aria-label="Booking progress">
+                <div class="steps hidden" id="bookingSteps" role="navigation" aria-label="Booking progress">
                     <div class="step active" data-step="1"><span>1</span> Consultation type</div>
                     <div class="step" data-step="2"><span>2</span> Date &amp; time</div>
-                    <div class="step" data-step="3"><span>3</span> Sign in &amp; details</div>
+                    <div class="step" data-step="3"><span>3</span> Confirm details</div>
                     <div class="step" data-step="4"><span>4</span> Confirmed</div>
                 </div>
             </aside>
 
-            <!-- Step 1: Choose consultation type FIRST -->
-            <div class="panel step-panel" id="step1">
+            <!-- Initial session check state -->
+            <div class="panel step-panel boot-panel" id="bootPanel">
+                <div class="empty-state">
+                    <p>Loading scheduler…</p>
+                </div>
+            </div>
+
+            <!-- Sign in / Register (shown first when the student is not signed in) -->
+            <div class="panel step-panel hidden" id="authPanel">
+                <div class="details-form auth-view" id="authView">
+                    <div class="auth-head">
+                        <span class="pill"><span class="pulse-dot"></span> Student Portal · University Email Verification</span>
+                        <h3 id="authTitle">Sign in to schedule</h3>
+                        <p class="muted small" id="authSubtitle">Log in with your verified university account, or create one for your Capstone / Thesis.</p>
+                    </div>
+
+                    <div class="segmented" role="tablist" aria-label="Sign in or register" id="authTabs">
+                        <label>
+                            <input type="radio" name="authMode" value="login" checked />
+                            <span>Log in</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="authMode" value="register" />
+                            <span>Create account</span>
+                        </label>
+                    </div>
+
+                    <!-- Top-level form alert so general errors are immediately visible -->
+                    <div class="form-error hidden" id="authError" role="alert"></div>
+
+                    <!-- Log in -->
+                    <form class="auth-form" id="loginForm" novalidate>
+                        <label class="field">
+                            <span>University email</span>
+                            <input type="email" id="loginEmail" maxlength="254" autocomplete="username" inputmode="email" />
+                        </label>
+                        <label class="field">
+                            <span>Password</span>
+                            <div class="password-wrap">
+                                <input type="password" id="loginPassword" maxlength="128" autocomplete="current-password" />
+                                <button type="button" class="pw-toggle" data-target="loginPassword" aria-label="Show password">Show</button>
+                            </div>
+                        </label>
+                        <button type="button" class="link-btn" id="forgotLink">Forgot password?</button>
+                        <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
+                            <span class="btn-label">Log in</span>
+                            <span class="spinner hidden"></span>
+                        </button>
+                    </form>
+
+                    <!-- Register -->
+                    <form class="auth-form hidden" id="registerForm" novalidate>
+                        <div class="group-register-notice">
+                            <strong>One account per Capstone / Thesis (1–3 members max):</strong> Only <strong>one representative</strong> per Capstone / Thesis may register an account. Solo (1 member) and 2-member projects are also supported.
+                        </div>
+
+                        <label class="field">
+                            <span>Your full name</span>
+                            <input type="text" id="regName" maxlength="100" placeholder="e.g. Juan Dela Cruz" autocomplete="name" />
+                        </label>
+                        <label class="field">
+                            <span>University email</span>
+                            <input type="email" id="regEmail" maxlength="254" autocomplete="email" inputmode="email" />
+                            <small class="muted field-hint" id="regEmailHint"></small>
+                        </label>
+                        <label class="field">
+                            <span>Capstone / Thesis title</span>
+                            <input type="text" id="regCapstone" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
+                        </label>
+                        <div class="field" id="regRoleField">
+                            <span>Arnemie Gayyed’s role for your Capstone / Thesis</span>
+                            <div class="segmented" role="radiogroup" aria-label="Instructor role">
+                                <label>
+                                    <input type="radio" name="regRole" value="adviser" checked />
+                                    <span>Adviser</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="regRole" value="panel" />
+                                    <span>Panel Member</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="field" id="regMembersField">
+                            <span>Capstone / Thesis members <small class="muted" id="regMemberCount"></small></span>
+                            <div class="member-list" id="regMemberList"></div>
+                            <button type="button" class="add-member" id="regAddMemberBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                                Add member (max 3)
+                            </button>
+                            <small class="muted field-hint">1 to 3 members allowed. Leave as 1 member if working solo, or add up to 2 groupmates.</small>
+                        </div>
+                        <label class="field">
+                            <span>Password</span>
+                            <div class="password-wrap">
+                                <input type="password" id="regPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
+                                <button type="button" class="pw-toggle" data-target="regPassword" aria-label="Show password">Show</button>
+                            </div>
+                        </label>
+                        <label class="field">
+                            <span>Confirm password</span>
+                            <div class="password-wrap">
+                                <input type="password" id="regPassword2" maxlength="128" placeholder="Re-enter your password" autocomplete="new-password" />
+                                <button type="button" class="pw-toggle" data-target="regPassword2" aria-label="Show password">Show</button>
+                            </div>
+                        </label>
+                        <button type="submit" class="btn btn-primary btn-block" id="registerBtn">
+                            <span class="btn-label">Send verification code</span>
+                            <span class="spinner hidden"></span>
+                        </button>
+                    </form>
+
+                    <!-- Forgot password: enter email -->
+                    <form class="auth-form hidden" id="forgotForm" novalidate>
+                        <label class="field">
+                            <span>University email</span>
+                            <input type="email" id="forgotEmail" maxlength="254" autocomplete="username" inputmode="email" />
+                        </label>
+                        <button type="submit" class="btn btn-primary btn-block" id="forgotBtn">
+                            <span class="btn-label">Send reset code</span>
+                            <span class="spinner hidden"></span>
+                        </button>
+                        <button type="button" class="link-btn" id="forgotCancel">Back to log in</button>
+                    </form>
+
+                    <!-- Enter the emailed code (registration or password reset) -->
+                    <form class="auth-form hidden" id="otpForm" novalidate>
+                        <div class="otp-sent">
+                            We sent a 6-digit code to <strong id="otpEmail"></strong>.
+                            Check your inbox (and spam/junk folder).
+                        </div>
+                        <label class="field">
+                            <span>6-digit verification code</span>
+                            <input type="text" id="otpCode" class="otp-input" maxlength="6" inputmode="numeric"
+                                   autocomplete="one-time-code" pattern="[0-9]*" placeholder="••••••" />
+                        </label>
+                        <div id="resetPasswordFields" class="hidden">
+                            <label class="field">
+                                <span>New password</span>
+                                <div class="password-wrap">
+                                    <input type="password" id="resetPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
+                                    <button type="button" class="pw-toggle" data-target="resetPassword" aria-label="Show password">Show</button>
+                                </div>
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block" id="otpBtn">
+                            <span class="btn-label">Verify &amp; continue</span>
+                            <span class="spinner hidden"></span>
+                        </button>
+                        <div class="otp-actions">
+                            <button type="button" class="link-btn" id="resendBtn">Resend code</button>
+                            <button type="button" class="link-btn" id="otpChangeEmail">Edit registration details</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Step 1: Choose consultation type (shown once signed in) -->
+            <div class="panel step-panel hidden" id="step1">
                 <div class="type-step">
                     <div class="type-step-header">
                         <span class="pill"><span class="pulse-dot"></span> Step 1 of 3 · Choose consultation purpose</span>
@@ -94,7 +259,7 @@
                         <p class="muted">All consultations must be scheduled at least <strong>1 day before</strong> the consultation day.</p>
                     </div>
 
-                    <div class="type-choice-grid">
+                    <div class="type-choice-grid" id="typeChoiceGrid">
                         <!-- 1. System Consultation (15 min) -->
                         <button type="button" class="type-choice-card" data-purpose="system">
                             <div class="type-choice-top">
@@ -105,9 +270,9 @@
                             </div>
                             <div class="type-choice-content">
                                 <h4>System Consultation</h4>
-                                <p>Present and consult about the system, software, or web app your group built.</p>
+                                <p>Present and consult about the system, software, or web app for your Capstone / Thesis.</p>
                                 <div class="type-note teal">
-                                    <strong>Requirement:</strong> All group members must be present during System Consultations.
+                                    <strong>Requirement:</strong> All members must be present during System Consultations.
                                 </div>
                             </div>
                             <div class="type-choice-cta">
@@ -149,7 +314,7 @@
                                 <h4>Retrieval of Manuscript</h4>
                                 <p>Once notified by email that your manuscript is checked, schedule this to discuss needed revisions.</p>
                                 <div class="type-note sky">
-                                    <strong>Requirement:</strong> At least 2 group members must be present, otherwise you will not be accommodated.
+                                    <strong>Requirement:</strong> All members must be present, otherwise you will not be accommodated.
                                 </div>
                             </div>
                             <div class="type-choice-cta">
@@ -158,8 +323,8 @@
                             </div>
                         </button>
 
-                        <!-- 4. Communication Letter Signature (5 min) -->
-                        <button type="button" class="type-choice-card" data-purpose="letter">
+                        <!-- 4. Communication Letter Signature (5 min — Adviser students ONLY) -->
+                        <button type="button" class="type-choice-card hidden" id="letterChoiceCard" data-purpose="letter">
                             <div class="type-choice-top">
                                 <div class="type-choice-icon violet">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
@@ -239,159 +404,8 @@
                 </div>
             </div>
 
-            <!-- Step 3: Sign in & Details -->
+            <!-- Step 3: Confirm Booking Details -->
             <div class="panel step-panel hidden" id="step3">
-                <!-- Step 3a: Log in / register (shown when the student is not signed in) -->
-                <div class="details-form auth-view hidden" id="authView">
-                    <button type="button" class="back-btn" id="authBackBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                        Back to date &amp; time
-                    </button>
-
-                    <div class="auth-head">
-                        <h3 id="authTitle">Sign in to book</h3>
-                        <p class="muted small" id="authSubtitle">Only students with a university email can book a consultation.</p>
-                    </div>
-
-                    <div class="segmented" role="tablist" aria-label="Sign in or register" id="authTabs">
-                        <label>
-                            <input type="radio" name="authMode" value="login" checked />
-                            <span>Log in</span>
-                        </label>
-                        <label>
-                            <input type="radio" name="authMode" value="register" />
-                            <span>Create account</span>
-                        </label>
-                    </div>
-
-                    <!-- Top-level form alert so general errors are immediately visible -->
-                    <div class="form-error hidden" id="authError" role="alert"></div>
-
-                    <!-- Log in -->
-                    <form class="auth-form" id="loginForm" novalidate>
-                        <label class="field">
-                            <span>University email</span>
-                            <input type="email" id="loginEmail" maxlength="254" autocomplete="username" inputmode="email" />
-                        </label>
-                        <label class="field">
-                            <span>Password</span>
-                            <div class="password-wrap">
-                                <input type="password" id="loginPassword" maxlength="128" autocomplete="current-password" />
-                                <button type="button" class="pw-toggle" data-target="loginPassword" aria-label="Show password">Show</button>
-                            </div>
-                        </label>
-                        <button type="button" class="link-btn" id="forgotLink">Forgot password?</button>
-                        <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
-                            <span class="btn-label">Log in &amp; continue</span>
-                            <span class="spinner hidden"></span>
-                        </button>
-                    </form>
-
-                    <!-- Register -->
-                    <form class="auth-form hidden" id="registerForm" novalidate>
-                        <div class="group-register-notice">
-                            <strong>One account per group:</strong> Only <strong>one representative per Capstone / Thesis group</strong> may register an account. Your account will be used to book all consultations for your group.
-                        </div>
-
-                        <label class="field">
-                            <span>Your full name (Group Representative)</span>
-                            <input type="text" id="regName" maxlength="100" placeholder="e.g. Juan Dela Cruz" autocomplete="name" />
-                        </label>
-                        <label class="field">
-                            <span>University email</span>
-                            <input type="email" id="regEmail" maxlength="254" autocomplete="email" inputmode="email" />
-                            <small class="muted field-hint" id="regEmailHint"></small>
-                        </label>
-                        <label class="field">
-                            <span>Capstone / Thesis title</span>
-                            <input type="text" id="regCapstone" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
-                        </label>
-                        <div class="field">
-                            <span>Arnemie Gayyed’s role for your group</span>
-                            <div class="segmented" role="radiogroup" aria-label="Instructor role">
-                                <label>
-                                    <input type="radio" name="regRole" value="adviser" checked />
-                                    <span>Adviser</span>
-                                </label>
-                                <label>
-                                    <input type="radio" name="regRole" value="panel" />
-                                    <span>Panel Member</span>
-                                </label>
-                            </div>
-                        </div>
-                        <div class="field" id="regMembersField">
-                            <span>Group members <small class="muted" id="regMemberCount"></small></span>
-                            <div class="member-list" id="regMemberList"></div>
-                            <button type="button" class="add-member" id="regAddMemberBtn">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-                                Add group member
-                            </button>
-                        </div>
-                        <label class="field">
-                            <span>Password</span>
-                            <div class="password-wrap">
-                                <input type="password" id="regPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
-                                <button type="button" class="pw-toggle" data-target="regPassword" aria-label="Show password">Show</button>
-                            </div>
-                        </label>
-                        <label class="field">
-                            <span>Confirm password</span>
-                            <div class="password-wrap">
-                                <input type="password" id="regPassword2" maxlength="128" placeholder="Re-enter your password" autocomplete="new-password" />
-                                <button type="button" class="pw-toggle" data-target="regPassword2" aria-label="Show password">Show</button>
-                            </div>
-                        </label>
-                        <button type="submit" class="btn btn-primary btn-block" id="registerBtn">
-                            <span class="btn-label">Send verification code</span>
-                            <span class="spinner hidden"></span>
-                        </button>
-                    </form>
-
-                    <!-- Forgot password: enter email -->
-                    <form class="auth-form hidden" id="forgotForm" novalidate>
-                        <label class="field">
-                            <span>University email</span>
-                            <input type="email" id="forgotEmail" maxlength="254" autocomplete="username" inputmode="email" />
-                        </label>
-                        <button type="submit" class="btn btn-primary btn-block" id="forgotBtn">
-                            <span class="btn-label">Send reset code</span>
-                            <span class="spinner hidden"></span>
-                        </button>
-                        <button type="button" class="link-btn" id="forgotCancel">Back to log in</button>
-                    </form>
-
-                    <!-- Enter the emailed code (registration or password reset) -->
-                    <form class="auth-form hidden" id="otpForm" novalidate>
-                        <div class="otp-sent">
-                            We sent a 6-digit code to <strong id="otpEmail"></strong>.
-                            Check your inbox (and spam/junk folder).
-                        </div>
-                        <label class="field">
-                            <span>6-digit verification code</span>
-                            <input type="text" id="otpCode" class="otp-input" maxlength="6" inputmode="numeric"
-                                   autocomplete="one-time-code" pattern="[0-9]*" placeholder="••••••" />
-                        </label>
-                        <div id="resetPasswordFields" class="hidden">
-                            <label class="field">
-                                <span>New password</span>
-                                <div class="password-wrap">
-                                    <input type="password" id="resetPassword" maxlength="128" placeholder="At least 8 characters" autocomplete="new-password" />
-                                    <button type="button" class="pw-toggle" data-target="resetPassword" aria-label="Show password">Show</button>
-                                </div>
-                            </label>
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-block" id="otpBtn">
-                            <span class="btn-label">Verify &amp; continue</span>
-                            <span class="spinner hidden"></span>
-                        </button>
-                        <div class="otp-actions">
-                            <button type="button" class="link-btn" id="resendBtn">Resend code</button>
-                            <button type="button" class="link-btn" id="otpChangeEmail">Edit registration details</button>
-                        </div>
-                    </form>
-                </div>
-
-                <!-- Step 3b: Booking details (shown when signed in) -->
                 <form class="details-form" id="bookingForm" novalidate>
                     <button type="button" class="back-btn" id="backBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -399,7 +413,7 @@
                     </button>
                     <div>
                         <h3 id="bookingFormTitle">Review &amp; confirm your booking</h3>
-                        <p class="muted small" id="bookingFormSubtitle">Verify your group details below before confirming.</p>
+                        <p class="muted small" id="bookingFormSubtitle">Verify your Capstone / Thesis details below before confirming.</p>
                     </div>
 
                     <!-- Contextual consultation rule callout -->
@@ -408,7 +422,12 @@
                     <!-- Top-level form alert so general booking errors are immediately visible -->
                     <div class="form-error hidden" id="formError" role="alert"></div>
 
-                    <div class="field" id="attendanceToggleField">
+                    <label class="field">
+                        <span>Capstone / Thesis title</span>
+                        <input type="text" id="teamInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
+                    </label>
+
+                    <div class="field hidden" id="attendanceToggleField">
                         <span>Who will attend?</span>
                         <div class="segmented" role="radiogroup" aria-label="Booking type">
                             <label>
@@ -422,34 +441,29 @@
                                 <input type="radio" name="bookingType" value="group" checked />
                                 <span>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                    Group / members
+                                    All members
                                 </span>
                             </label>
                         </div>
                     </div>
 
-                    <!-- Individual -->
+                    <!-- Representative only -->
                     <div id="individualFields" class="hidden">
                         <label class="field">
-                            <span>Representative full name</span>
+                            <span>Attending student</span>
                             <input type="text" id="nameInput" maxlength="100" readonly autocomplete="name" />
                             <small class="muted field-hint">From your verified university account.</small>
                         </label>
                     </div>
 
-                    <!-- Group -->
+                    <!-- Capstone / Thesis members (1 to 3) -->
                     <div id="groupFields" class="group-fields">
-                        <label class="field">
-                            <span>Capstone / Thesis title</span>
-                            <input type="text" id="teamInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
-                        </label>
-
                         <div class="field" id="bookingMembersField">
-                            <span><span id="membersFieldLabel">Attending group members</span> <small class="muted" id="memberCount"></small></span>
+                            <span><span id="membersFieldLabel">Capstone / Thesis members</span> <small class="muted" id="memberCount"></small></span>
                             <div class="member-list" id="memberList"></div>
                             <button type="button" class="add-member" id="addMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-                                Add member
+                                Add member (max 3)
                             </button>
                         </div>
                     </div>
