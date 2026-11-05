@@ -6,7 +6,7 @@
 
     const TYPE_BADGES = {
         system: { label: 'System · 15m', cls: 'teal' },
-        dropoff: { label: 'Drop-off · 0m', cls: 'amber' },
+        dropoff: { label: 'Drop-off only', cls: 'amber' },
         retrieval: { label: 'Retrieval · 5m', cls: 'sky' },
         letter: { label: 'Comm. Letter · 5m', cls: 'violet' },
         other: { label: 'Other · 6m', cls: 'sky' },

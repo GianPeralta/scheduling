@@ -38,7 +38,7 @@ const CONSULTATION_TYPES = {
     dropoff: {
         id: 'dropoff',
         title: 'Drop-off Manuscript',
-        description: 'Drop off your manuscript only — no minutes are taken off the consultation schedule.',
+        description: 'Drop off your manuscript only.',
         note: 'Once your manuscript is checked, you will be notified through the school email you used during registration.',
         durationMinutes: DROPOFF_DURATION,
         durationLabel: 'Drop-off only',
@@ -507,14 +507,14 @@ function generateDaySlots(dateStr, purpose = 'system') {
     for (const [winStart, winEnd] of windows) {
         const windowLabel = `${formatMinute(winStart)} – ${formatMinute(winEnd)}`;
         if (normalized === 'dropoff') {
-            // Drop-off takes 0 minutes off the schedule; students may drop off during the window.
+            // Drop-off allows students to drop off during the window.
             slots.push({
                 startMinute: winStart,
                 endMinute: winEnd,
                 durationMinutes: 0,
                 isDropoff: true,
                 label: windowLabel,
-                endLabel: 'Drop-off only · 0 min taken',
+                endLabel: 'Drop-off only',
                 windowLabel,
             });
         } else {

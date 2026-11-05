@@ -25,13 +25,13 @@
         },
         dropoff: {
             title: 'Drop-off Manuscript',
-            badge: 'Drop-off only · 0 min',
-            summary: 'Drop-off Manuscript · 0 min',
+            badge: 'Drop-off only',
+            summary: 'Drop-off Manuscript',
             color: 'amber',
             requiresAllMembers: false,
             reasonOptional: true,
-            bannerNote: 'Drop-off only (takes 0 minutes off schedule). You will be notified via school email once checked.',
-            policyHtml: '<strong>Drop-off Only (0 min):</strong> No minutes are taken off the consultation schedule. Once your manuscript is checked, you will be notified through your registered school email (<strong data-student-email></strong>).',
+            bannerNote: 'Drop-off only. You will be notified via school email once checked.',
+            policyHtml: '<strong>Drop-off Only:</strong> Once your manuscript is checked, you will be notified through your registered school email (<strong data-student-email></strong>).',
             confirmHtml: '<strong>What happens next:</strong> Once your manuscript is checked, you will receive an email at your registered school address. Return to this website afterward to book a <strong>5-minute Retrieval of Manuscript</strong>.',
             reasonLabel: 'Manuscript details / notes',
             reasonPlaceholder: 'e.g. Chapters 1–3 revised draft for checking (optional)',
@@ -648,7 +648,7 @@
         if (!slot.available) {
             range.textContent = 'Unavailable';
         } else if (slot.isDropoff) {
-            range.textContent = 'Drop-off window · 0 min deducted';
+            range.textContent = 'Drop-off window';
         } else {
             range.textContent = `until ${slot.endLabel}`;
         }
@@ -692,7 +692,7 @@
 
         if (state.consultationPurpose === 'dropoff') {
             $('#slotsSubtitle').textContent = openCount
-                ? 'Select the drop-off window below (takes 0 minutes off schedule)'
+                ? 'Select the drop-off window below'
                 : 'Drop-off is not available on this day.';
         } else {
             $('#slotsSubtitle').textContent = openCount
