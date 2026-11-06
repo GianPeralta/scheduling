@@ -1343,7 +1343,7 @@
             </div>`;
     }
 
-    /* ---------------- student profile & bookings modal ---------------- */
+    /* ---------------- student profile modal & booking badges ---------------- */
     const DISMISSED_CANCEL_KEY = 'ag_dismissed_cancelled_v1';
 
     function getDismissedCancelled() {
@@ -1373,59 +1373,6 @@
             return 'upcoming';
         }
         return 'past';
-    }
-
-    function minutesUntilBooking(b) {
-        const today = state.serverToday || state.config?.today || '';
-        const curMin = state.serverCurrentMinute || 0;
-        if (!today || !b.date) return Infinity;
-        const targetDt = utcDate(b.date);
-        const todayDt = utcDate(today);
-        const diffDays = Math.round((targetDt.getTime() - todayDt.getTime()) / 86400000);
-        const startMin = typeof b.startMinute === 'number' ? b.startMinute : (b.hour || 0) * 60;
-        return diffDays * 1440 + (startMin - curMin);
-    }
-
-    function canStudentCancelBooking(b) {
-        if (b.status === 'cancelled') return false;
-        const cutoff = state.config?.cancelCutoffMinutes || CANCEL_CUTOFF_MINUTES;
-        if (minutesUntilBooking(b) < cutoff) return false;
-        if (typeof b.canCancel === 'boolean') return b.canCancel;
-        return true;
-    }
-
-    async function cancelMyBooking(b, btn) {
-        if (!canStudentCancelBooking(b)) {
-            toast('Appointments can only be cancelled at least 2 hours before the scheduled time.', 'error');
-            return;
-        }
-        if (!confirm(`Cancel your ${b.consultationTitle} appointment on ${formatLongDate(b.date)} (${b.label})?`)) {
-            return;
-        }
-        btn.disabled = true;
-        const prevText = btn.textContent;
-        btn.textContent = 'Cancelling…';
-        try {
-            await api(`/api/bookings/${b.id}/cancel`, { method: 'POST' });
-            dismissCancelledNotice(b.id);
-            toast('Appointment cancelled.', 'success');
-            await loadMyBookings();
-            renderMyBookingsModal();
-            if (state.currentStep === 2 && state.consultationPurpose) {
-                const date = state.selectedDate;
-                state.loadedMonthKey = null;
-                state.loadedSlotsKey = null;
-                loadMonth().then((ok) => {
-                    if (ok && date) selectDate(date, false, true);
-                });
-            }
-        } catch (err) {
-            btn.disabled = false;
-            btn.textContent = prevText;
-            toast(err.message, 'error');
-            await loadMyBookings();
-            renderMyBookingsModal();
-        }
     }
 
     function renderCancelledAlertBanner() {
@@ -1474,11 +1421,10 @@
         const actions = document.createElement('div');
         actions.className = 'cancelled-alert-actions';
 
-        const viewBtn = document.createElement('button');
-        viewBtn.type = 'button';
+        const viewBtn = document.createElement('a');
+        viewBtn.href = '/appointments.html';
         viewBtn.className = 'btn btn-ghost btn-sm';
-        viewBtn.textContent = 'View Profile';
-        viewBtn.addEventListener('click', () => openMyBookingsModal());
+        viewBtn.textContent = 'View Appointments';
 
         const dismissBtn = document.createElement('button');
         dismissBtn.type = 'button';
@@ -1529,11 +1475,13 @@
     async function loadMyBookings() {
         if (!state.student) {
             state.myBookings = [];
+            $('#myAppointmentsLink')?.classList.add('hidden');
             $('#myBookingsBtn')?.classList.add('hidden');
             $('#profileCancelDot')?.classList.add('hidden');
             $('#cancelledAlertBanner')?.classList.add('hidden');
             return;
         }
+        $('#myAppointmentsLink')?.classList.remove('hidden');
         $('#myBookingsBtn')?.classList.remove('hidden');
         try {
             const data = await api('/api/my-bookings');
@@ -1553,131 +1501,9 @@
         }
     }
 
-    function renderMyBookingsModal() {
-        renderProfileSummary();
-        const list = $('#myBookingsList');
-        if (!list) return;
-        list.innerHTML = '';
-
-        const upcoming = state.myBookings
-            .filter((b) => bookingCategory(b) === 'upcoming')
-            .sort((a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute);
-        const cancelled = state.myBookings
-            .filter((b) => bookingCategory(b) === 'cancelled')
-            .sort((a, b) => (b.cancelledAt || b.date).localeCompare(a.cancelledAt || a.date));
-        const past = state.myBookings
-            .filter((b) => bookingCategory(b) === 'past')
-            .sort((a, b) => b.date.localeCompare(a.date) || b.startMinute - a.startMinute);
-
-        const items = [...upcoming, ...cancelled, ...past];
-
-        if (!items.length) {
-            const empty = document.createElement('div');
-            empty.className = 'empty-state';
-            const p = document.createElement('p');
-            p.textContent = 'No consultations scheduled yet.';
-            empty.appendChild(p);
-            list.appendChild(empty);
-            return;
-        }
-
-        items.forEach((b) => {
-            const cat = bookingCategory(b);
-            const meta = getMeta(b.consultationType, b.defenseLevel);
-            const item = document.createElement('div');
-            item.className = 'my-booking-item' + (cat === 'cancelled' ? ' is-cancelled' : '');
-
-            const top = document.createElement('div');
-            top.className = 'my-booking-top';
-
-            const badges = document.createElement('div');
-            badges.className = 'my-booking-badges';
-
-            const typeBadge = document.createElement('span');
-            typeBadge.className = `badge ${meta.color}`;
-            typeBadge.textContent = `${b.consultationTitle} · ${b.durationLabel}`;
-            badges.appendChild(typeBadge);
-
-            const statusBadge = document.createElement('span');
-            if (cat === 'cancelled') {
-                statusBadge.className = 'badge danger';
-                statusBadge.textContent = 'Cancelled';
-            } else if (cat === 'upcoming') {
-                statusBadge.className = 'badge teal';
-                statusBadge.textContent = 'Scheduled';
-            } else {
-                statusBadge.className = 'badge muted-badge';
-                statusBadge.textContent = 'Completed';
-            }
-            badges.appendChild(statusBadge);
-
-            top.appendChild(badges);
-
-            const dateStrong = document.createElement('strong');
-            dateStrong.textContent = `${formatLongDate(b.date)} · ${b.label}`;
-
-            item.append(top, dateStrong);
-
-            if (Array.isArray(b.members) && b.members.length) {
-                const membersWrap = document.createElement('div');
-                membersWrap.className = 'booking-members';
-                b.members.forEach((m) => {
-                    const chip = document.createElement('span');
-                    chip.className = 'member-chip';
-                    chip.textContent = m;
-                    membersWrap.appendChild(chip);
-                });
-                item.appendChild(membersWrap);
-            }
-
-            if (cat === 'upcoming') {
-                const actionRow = document.createElement('div');
-                actionRow.className = 'my-booking-actions';
-
-                const cancelBtn = document.createElement('button');
-                cancelBtn.type = 'button';
-                cancelBtn.className = 'btn btn-danger-soft btn-sm';
-                cancelBtn.textContent = 'Cancel appointment';
-
-                if (canStudentCancelBooking(b)) {
-                    cancelBtn.addEventListener('click', () => cancelMyBooking(b, cancelBtn));
-                    actionRow.appendChild(cancelBtn);
-                } else {
-                    cancelBtn.disabled = true;
-                    cancelBtn.title = 'Appointments can only be cancelled at least 2 hours before the scheduled time.';
-                    const cutoffNote = document.createElement('small');
-                    cutoffNote.className = 'muted cancel-cutoff-note';
-                    cutoffNote.textContent = 'Can no longer cancel (less than 2 hours before schedule)';
-                    actionRow.append(cutoffNote, cancelBtn);
-                }
-
-                item.appendChild(actionRow);
-            }
-
-            if (cat === 'cancelled') {
-                const reasonBox = document.createElement('div');
-                reasonBox.className = 'cancel-reason-box';
-
-                const reasonHeading = document.createElement('strong');
-                reasonHeading.textContent = 'Reason for cancellation:';
-
-                const reasonText = document.createElement('p');
-                reasonText.textContent = b.cancellationReason || 'No reason provided.';
-
-                reasonBox.append(reasonHeading, reasonText);
-                item.appendChild(reasonBox);
-            }
-
-            list.appendChild(item);
-        });
-    }
-
-    async function openMyBookingsModal() {
+    function openMyBookingsModal() {
         renderProfileSummary();
         $('#myBookingsModal').classList.remove('hidden');
-        $('#myBookingsList').innerHTML = '<div class="slot skeleton"></div>';
-        await loadMyBookings();
-        renderMyBookingsModal();
     }
 
     function closeMyBookingsModal() {
@@ -1759,6 +1585,7 @@
                 goToStep(1);
             }
         } else {
+            $('#myAppointmentsLink')?.classList.add('hidden');
             $('#myBookingsBtn')?.classList.add('hidden');
             if ($('#teamInput')) $('#teamInput').value = '';
             state.consultationPurpose = null;
@@ -2219,16 +2046,8 @@
             r.addEventListener('change', () => clearFieldError('#regLevelField'));
         });
 
-        // Student profile & bookings modal events
-        $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
-        $('#accountProfileBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
-        $('#sidebarProfileBtn')?.addEventListener('click', () => openMyBookingsModal('all'));
-        document.querySelectorAll('.profile-pill').forEach((pill) => {
-            pill.addEventListener('click', () => {
-                state.profileFilter = pill.dataset.pfilter || 'all';
-                renderMyBookingsModal();
-            });
-        });
+        // Student profile modal events
+        $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal());
         $('#closeMyBookingsBtn')?.addEventListener('click', closeMyBookingsModal);
         $('#myBookingsModal')?.addEventListener('click', (e) => {
             if (e.target.id === 'myBookingsModal') closeMyBookingsModal();

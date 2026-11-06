@@ -2401,7 +2401,8 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     .account-text small { display: none; }
     .account-text strong { max-width: 100px; }
     .topbar-actions { gap: 6px; }
-    #myBookingsBtn span:not(.nav-count):not(.nav-alert-dot) { display: none; }
+    #myBookingsBtn span:not(.nav-count):not(.nav-alert-dot),
+    #myAppointmentsLink span:not(.nav-count):not(.nav-alert-dot) { display: none; }
     .modal-actions.modal-actions-row {
         flex-direction: column-reverse;
     }
@@ -2417,6 +2418,29 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 @media (max-width: 420px) {
     .account-text { display: none; }
+}
+
+/* ---------- Student Appointments Page & Step 4 Actions ---------- */
+.step4-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+}
+.student-appointments-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.appointments-policy-banner {
+    margin-bottom: 18px;
+}
+.appointments-list {
+    display: grid;
+    gap: 12px;
+    padding-top: 16px;
 }
 
 /* ---------- Capstone / Thesis Defense ---------- */

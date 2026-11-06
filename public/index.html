@@ -23,11 +23,15 @@
             </span>
         </a>
         <div class="topbar-actions">
+            <a class="topbar-link hidden" id="myAppointmentsLink" href="/appointments.html">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                <span>My Appointments</span>
+                <span class="nav-count hidden" id="myBookingsCount">0</span>
+                <span class="nav-alert-dot hidden" id="profileCancelDot" title="Schedule update"></span>
+            </a>
             <button type="button" class="topbar-link hidden" id="myBookingsBtn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 <span>Profile</span>
-                <span class="nav-count hidden" id="myBookingsCount">0</span>
-                <span class="nav-alert-dot hidden" id="profileCancelDot" title="Schedule update"></span>
             </button>
             <div class="account-box hidden" id="accountBox">
                 <button type="button" class="account-logout" id="logoutBtn">Log out</button>
@@ -465,10 +469,13 @@
                     </div>
 
                     <p class="muted small cancel-policy-note">
-                        Note: You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time in your Profile.
+                        Note: You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time in <a href="/appointments.html" class="accent-text">My Appointments</a>.
                     </p>
 
-                    <button class="btn btn-ghost" id="bookAnother">Book another</button>
+                    <div class="step4-actions">
+                        <a class="btn btn-primary" href="/appointments.html">View appointments</a>
+                        <button class="btn btn-ghost" id="bookAnother">Book another</button>
+                    </div>
                 </div>
             </div>
         </section>
@@ -506,11 +513,11 @@
         </div>
     </div>
 
-    <!-- Student Profile & Schedule Modal -->
+    <!-- Student Profile Modal -->
     <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
         <div class="modal-card modal-profile">
             <div class="modal-head">
-                <h3 id="myBookingsTitle">Profile &amp; Schedule</h3>
+                <h3 id="myBookingsTitle">Profile</h3>
                 <button type="button" class="icon-btn" id="closeMyBookingsBtn" aria-label="Close">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
@@ -538,11 +545,7 @@
                 </div>
             </div>
 
-            <div class="cancel-policy-banner">
-                <strong>Note:</strong> You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time.
-            </div>
-
-            <div class="my-bookings-list" id="myBookingsList"></div>
+            <a class="btn btn-ghost btn-block" href="/appointments.html">View &amp; manage appointments</a>
         </div>
     </div>
 

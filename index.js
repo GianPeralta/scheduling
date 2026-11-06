@@ -1324,7 +1324,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         if (upcomingDefenses.length >= MAX_UPCOMING_DEFENSES) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
-                error: 'Your group already has an upcoming defense scheduled. You can cancel it in your Profile (at least 2 hours before the schedule) if you need to move it.',
+                error: 'Your group already has an upcoming defense scheduled. You can cancel it in My Appointments (at least 2 hours before the schedule) if you need to move it.',
             });
         }
     } else if (isDropoff) {
@@ -1346,7 +1346,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
                 error: AUTH.maxActiveBookings === 1
-                    ? 'You already have an upcoming timed consultation. You can book again after it is done (or cancel it in your Profile at least 2 hours before the schedule).'
+                    ? 'You already have an upcoming timed consultation. You can book again after it is done (or cancel it in My Appointments at least 2 hours before the schedule).'
                     : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done or cancelled.`,
             });
         }
@@ -1440,6 +1440,7 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+app.get('/appointments', (req, res) => res.redirect('/appointments.html'));
 app.get('/admin', (req, res) => res.redirect('/admin.html'));
 
 app.post('/api/admin/login', requireAdmin, (req, res) => res.json({ ok: true }));
