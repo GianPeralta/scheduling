@@ -194,6 +194,25 @@ alter table public.email_otps enable row level security;
 
 
 -- ---------------------------------------------------------------------------
+-- Blocked dates & time ranges (instructor unavailable / sick / official business)
+-- ---------------------------------------------------------------------------
+create table if not exists public.blocked_schedules (
+    id            uuid primary key default gen_random_uuid(),
+    blocked_date  date        not null,
+    is_full_day   boolean     not null default true,
+    start_minute  smallint    check (start_minute is null or (start_minute >= 0 and start_minute < 1440)),
+    end_minute    smallint    check (end_minute is null or (end_minute > 0 and end_minute <= 1440)),
+    reason        text        check (reason is null or char_length(reason) <= 500),
+    created_at    timestamptz not null default now(),
+    constraint blocked_schedules_time_check
+        check (is_full_day or (start_minute is not null and end_minute is not null and start_minute < end_minute))
+);
+
+create index if not exists blocked_schedules_date_idx on public.blocked_schedules (blocked_date);
+alter table public.blocked_schedules enable row level security;
+
+
+-- ---------------------------------------------------------------------------
 -- OPTIONAL: only needed if you keep using SUPABASE_ANON_KEY on the server
 -- instead of SUPABASE_SERVICE_ROLE_KEY. Uncomment and run.
 -- (The anon key stays on the server, but anyone who obtains it could then

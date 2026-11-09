@@ -613,6 +613,12 @@
 
             if (loading || !info || !info.bookable) {
                 btn.disabled = true;
+            } else if (info.blocked && info.open === 0) {
+                btn.classList.add('full', 'blocked');
+                btn.disabled = true;
+                btn.title = info.blockReason
+                    ? `Unavailable — ${info.blockReason}`
+                    : 'Unavailable on this date';
             } else if (info.open === 0) {
                 btn.classList.add('full');
                 btn.disabled = true;
@@ -1005,7 +1011,9 @@
         const range = document.createElement('span');
         range.className = 'slot-range';
         if (!slot.available) {
-            range.textContent = 'Unavailable';
+            range.textContent = slot.blocked && slot.blockReason
+                ? `Unavailable · ${slot.blockReason}`
+                : 'Unavailable';
         } else if (slot.isDropoff) {
             range.textContent = 'Drop-off window';
         } else {

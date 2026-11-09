@@ -47,6 +47,10 @@
                     <h1>Consultations</h1>
                 </div>
                 <div class="dash-actions">
+                    <button type="button" class="btn btn-primary" id="openBlockModalBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></svg>
+                        Block Date / Time
+                    </button>
                     <button class="btn btn-ghost" id="refreshBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
                         Refresh
@@ -88,12 +92,25 @@
                 </div>
             </div>
 
+            <!-- Active Blocked Dates / Times Banner -->
+            <div class="card blocked-overview-card hidden" id="activeBlocksCard">
+                <div class="blocked-overview-head">
+                    <div class="blocked-overview-title">
+                        <span class="badge danger">Unavailable</span>
+                        <strong>Blocked Dates &amp; Times</strong>
+                    </div>
+                    <button type="button" class="link-btn" id="addAnotherBlockBtn">+ Add another block</button>
+                </div>
+                <div class="blocked-pill-list" id="activeBlocksList"></div>
+            </div>
+
             <div class="card bookings-card">
                 <div class="toolbar">
                     <div class="tabs" role="tablist">
                         <button class="tab active" data-tab="upcoming">Upcoming <span class="count" id="countUpcoming">0</span></button>
                         <button class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
                         <button class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
+                        <button class="tab" data-tab="blocked">Blocked <span class="count" id="countBlocked">0</span></button>
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -104,6 +121,92 @@
             </div>
         </section>
     </main>
+
+    <!-- Block Date / Time Modal -->
+    <div class="modal-backdrop hidden" id="blockModal" role="dialog" aria-modal="true" aria-labelledby="blockModalTitle">
+        <div class="modal-card modal-wide">
+            <div class="modal-head">
+                <h3 id="blockModalTitle">Block Date or Time</h3>
+                <button type="button" class="icon-btn" id="closeBlockModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="blockScheduleForm" novalidate>
+                <p class="muted small">
+                    Prevent students from scheduling consultations, drop-offs, or defenses on a specific date or time range (for example, if you are sick or unavailable).
+                </p>
+
+                <div class="segmented" role="radiogroup" aria-label="Block scope">
+                    <label>
+                        <input type="radio" name="blockScope" value="full" checked />
+                        <span>Entire day</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="blockScope" value="time" />
+                        <span>Specific time</span>
+                    </label>
+                </div>
+
+                <div class="block-date-grid" id="blockDateGrid">
+                    <label class="field">
+                        <span id="blockDateLabel">Date</span>
+                        <input type="date" id="blockDateInput" required />
+                    </label>
+                    <label class="field" id="blockEndDateField">
+                        <span>Until date <small class="muted">(optional)</small></span>
+                        <input type="date" id="blockEndDateInput" />
+                    </label>
+                </div>
+
+                <div class="block-time-section hidden" id="blockTimeFields">
+                    <div class="quick-reasons hidden" id="blockWindowChipsWrap">
+                        <span class="selection-label">Quick pick schedule window on this day</span>
+                        <div class="quick-reason-chips" id="blockWindowChips"></div>
+                    </div>
+                    <div class="block-time-grid">
+                        <label class="field">
+                            <span>Start time</span>
+                            <input type="time" id="blockStartTimeInput" value="08:00" step="300" />
+                        </label>
+                        <label class="field">
+                            <span>End time</span>
+                            <input type="time" id="blockEndTimeInput" value="17:00" step="300" />
+                        </label>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <span>Reason / note <small class="muted">(optional — shown to students)</small></span>
+                    <div class="quick-reason-chips" id="blockQuickReasonChips">
+                        <button type="button" class="reason-chip block-reason-chip" data-reason="Out sick">Out sick</button>
+                        <button type="button" class="reason-chip block-reason-chip" data-reason="Personal emergency">Personal emergency</button>
+                        <button type="button" class="reason-chip block-reason-chip" data-reason="Faculty meeting">Faculty meeting</button>
+                        <button type="button" class="reason-chip block-reason-chip" data-reason="Official business">Official business</button>
+                        <button type="button" class="reason-chip block-reason-chip" data-reason="Holiday / No classes">Holiday / No classes</button>
+                    </div>
+                    <input type="text" id="blockReasonInput" maxlength="500" placeholder="e.g. Out sick, faculty meeting, official business" />
+                </div>
+
+                <label class="block-cancel-check" id="blockCancelExistingWrap">
+                    <input type="checkbox" id="blockCancelExistingInput" checked />
+                    <div>
+                        <strong>Also cancel existing appointments during this blocked time</strong>
+                        <small class="muted" id="blockConflictHint">Any scheduled appointments overlapping this block will be cancelled with your reason.</small>
+                    </div>
+                </label>
+
+                <div class="form-error hidden" id="blockFormError" role="alert"></div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelBlockModalBtn">Cancel</button>
+                    <button type="submit" class="btn btn-danger" id="confirmBlockBtn">
+                        <span class="btn-label">Block schedule</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Cancel Appointment Modal (with required reason visible in student's profile) -->
     <div class="modal-backdrop hidden" id="cancelModal" role="dialog" aria-modal="true" aria-labelledby="cancelModalTitle">

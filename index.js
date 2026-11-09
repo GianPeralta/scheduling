@@ -127,6 +127,7 @@ const CONFIG = {
 };
 
 const TABLE = 'appointments';
+const BLOCKED_TABLE = 'blocked_schedules';
 
 /* ------------------------------------------------------------------ */
 /* Supabase client                                                     */
@@ -714,6 +715,69 @@ function minutesUntilBooking(dateStr, startMinute, now = nowInTz()) {
     return diffDays * 1440 + (startMinute - now.minuteOfDay);
 }
 
+/* ---------- Blocked Dates & Times (Instructor Unavailable) ---------- */
+function blockInterval(b) {
+    return b.is_full_day ? [0, 1440] : [Number(b.start_minute) || 0, Number(b.end_minute) || 1440];
+}
+
+/** Check if a time window [winStart, winEnd] is completely covered by blocked intervals. */
+function isWindowFullyBlocked(winStart, winEnd, blockedIntervals) {
+    if (!blockedIntervals || !blockedIntervals.length) return false;
+    const busy = blockedIntervals
+        .filter(([s, e]) => s < winEnd && e > winStart)
+        .map(([s, e]) => [Math.max(s, winStart), Math.min(e, winEnd)])
+        .sort((a, b) => a[0] - b[0]);
+    if (!busy.length || busy[0][0] > winStart) return false;
+    let coveredEnd = busy[0][1];
+    for (let i = 1; i < busy.length; i++) {
+        if (busy[i][0] > coveredEnd) return false;
+        coveredEnd = Math.max(coveredEnd, busy[i][1]);
+    }
+    return coveredEnd >= winEnd;
+}
+
+function toBlockedSchedule(r) {
+    const isFullDay = Boolean(r.is_full_day);
+    const startMinute = isFullDay ? 0 : Number(r.start_minute);
+    const endMinute = isFullDay ? 1440 : Number(r.end_minute);
+    return {
+        id: r.id,
+        date: r.blocked_date,
+        isFullDay,
+        startMinute,
+        endMinute,
+        label: isFullDay ? 'Entire day' : `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`,
+        reason: r.reason || null,
+        createdAt: r.created_at,
+    };
+}
+
+async function fetchBlockedByDateRange(first, last) {
+    const { data, error } = await db()
+        .from(BLOCKED_TABLE)
+        .select('*')
+        .gte('blocked_date', first)
+        .lte('blocked_date', last)
+        .order('blocked_date', { ascending: true });
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) return [];
+        throw error;
+    }
+    return data || [];
+}
+
+async function fetchBlockedByDate(date) {
+    const { data, error } = await db()
+        .from(BLOCKED_TABLE)
+        .select('*')
+        .eq('blocked_date', date);
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) return [];
+        throw error;
+    }
+    return data || [];
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -735,6 +799,12 @@ app.get('/api/config', (req, res) => {
         cancelCutoffMinutes: CANCEL_CUTOFF_MINUTES,
         defenseLevels: DEFENSE_LEVELS,
         defenseStartStep: DEFENSE_START_STEP,
+        consultationWindowsByDay: Object.fromEntries(
+            Object.entries(WINDOWS_BY_DAY).map(([day, wins]) => [
+                day,
+                wins.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
+            ])
+        ),
         defenseWindowsByDay: Object.fromEntries(
             Object.entries(DEFENSE_WINDOWS_BY_DAY).map(([day, wins]) => [
                 day,
@@ -963,11 +1033,14 @@ app.get('/api/month', async (req, res) => {
     const firstDt = parseDate(first);
     const last = toDateStr(new Date(Date.UTC(firstDt.getUTCFullYear(), firstDt.getUTCMonth() + 1, 0)));
 
-    const { data, error } = await db()
-        .from(TABLE)
-        .select('*')
-        .gte('appointment_date', first)
-        .lte('appointment_date', last);
+    const [{ data, error }, blockedRows] = await Promise.all([
+        db()
+            .from(TABLE)
+            .select('*')
+            .gte('appointment_date', first)
+            .lte('appointment_date', last),
+        fetchBlockedByDateRange(first, last),
+    ]);
     if (error) return res.status(500).json({ error: error.message });
 
     const intervalsByDate = new Map();
@@ -976,6 +1049,13 @@ app.get('/api/month', async (req, res) => {
         const d = r.appointment_date;
         if (!intervalsByDate.has(d)) intervalsByDate.set(d, []);
         intervalsByDate.get(d).push(rowInterval(r));
+    }
+
+    const blocksByDate = new Map();
+    for (const b of blockedRows) {
+        const d = b.blocked_date;
+        if (!blocksByDate.has(d)) blocksByDate.set(d, []);
+        blocksByDate.get(d).push(b);
     }
 
     const now = nowInTz();
@@ -987,16 +1067,34 @@ app.get('/api/month', async (req, res) => {
             continue;
         }
         const bookedIntervals = intervalsByDate.get(d) || [];
+        const dayBlocks = blocksByDate.get(d) || [];
+        const blockedIntervals = dayBlocks.map(blockInterval);
+        const allBusyIntervals = [...bookedIntervals, ...blockedIntervals];
+        const blockReason = dayBlocks.find((b) => b.reason)?.reason || null;
+        const hasFullDayBlock = dayBlocks.some((b) => b.is_full_day);
+
         if (isDefense) {
-            days[d] = { bookable: true, open: countOpenDefenseRanges(d, defenseDuration, bookedIntervals) };
+            const open = hasFullDayBlock ? 0 : countOpenDefenseRanges(d, defenseDuration, allBusyIntervals);
+            const openWithoutBlocks = countOpenDefenseRanges(d, defenseDuration, bookedIntervals);
+            const blocked = hasFullDayBlock || (open === 0 && dayBlocks.length > 0 && openWithoutBlocks > 0);
+            days[d] = { bookable: true, open, blocked, blockReason: blocked ? blockReason : null };
             continue;
         }
         const daySlots = generateDaySlots(d, purpose);
-        const open = daySlots.filter(
+        const open = hasFullDayBlock
+            ? 0
+            : daySlots.filter(
+                (s) => isFutureSlot(d, s.startMinute, now)
+                    && (s.isDropoff
+                        ? !isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals)
+                        : !hasOverlap(s.startMinute, s.endMinute, allBusyIntervals))
+            ).length;
+        const openWithoutBlocks = daySlots.filter(
             (s) => isFutureSlot(d, s.startMinute, now)
                 && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals))
         ).length;
-        days[d] = { bookable: true, open };
+        const blocked = hasFullDayBlock || (open === 0 && dayBlocks.length > 0 && openWithoutBlocks > 0);
+        days[d] = { bookable: true, open, blocked, blockReason: blocked ? blockReason : null };
     }
 
     res.json({ month, purpose, level, days });
@@ -1016,10 +1114,17 @@ app.get('/api/slots', async (req, res) => {
         return res.json({ date, purpose, level, slots: [], windows: [] });
     }
 
-    const { data, error } = await db().from(TABLE).select('*').eq('appointment_date', date);
+    const [{ data, error }, dayBlocks] = await Promise.all([
+        db().from(TABLE).select('*').eq('appointment_date', date),
+        fetchBlockedByDate(date),
+    ]);
     if (error) return res.status(500).json({ error: error.message });
 
     const bookedIntervals = data.filter((r) => isActiveRow(r) && isTimedRow(r)).map(rowInterval);
+    const blockedIntervals = dayBlocks.map(blockInterval);
+    const allBusyIntervals = [...bookedIntervals, ...blockedIntervals];
+    const fullDayBlock = dayBlocks.find((b) => b.is_full_day) || null;
+    const blockReason = fullDayBlock?.reason || dayBlocks.find((b) => b.reason)?.reason || null;
 
     if (isDefense) {
         const durationMinutes = DEFENSE_LEVELS[level].durationMinutes;
@@ -1029,24 +1134,50 @@ app.get('/api/slots', async (req, res) => {
             level,
             durationMinutes,
             startStep: DEFENSE_START_STEP,
-            windows: defenseDayAvailability(date, durationMinutes, bookedIntervals),
+            blocked: Boolean(fullDayBlock),
+            blockReason,
+            blocks: dayBlocks.map(toBlockedSchedule),
+            windows: defenseDayAvailability(date, durationMinutes, allBusyIntervals),
             slots: [],
         });
     }
 
-    const slots = generateDaySlots(date, purpose).map((s) => ({
-        startMinute: s.startMinute,
-        endMinute: s.endMinute,
-        durationMinutes: s.durationMinutes,
-        isDropoff: Boolean(s.isDropoff),
-        label: s.label,
-        endLabel: s.endLabel,
-        windowLabel: s.windowLabel,
-        available: isFutureSlot(date, s.startMinute, now)
-            && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
-    }));
+    const slots = generateDaySlots(date, purpose).map((s) => {
+        const blockedByAdmin = Boolean(fullDayBlock) || (
+            s.isDropoff
+                ? isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals)
+                : hasOverlap(s.startMinute, s.endMinute, blockedIntervals)
+        );
+        const matchedBlock = blockedByAdmin
+            ? dayBlocks.find((b) => {
+                const [bs, be] = blockInterval(b);
+                return s.startMinute < be && s.endMinute > bs;
+            })
+            : null;
+        return {
+            startMinute: s.startMinute,
+            endMinute: s.endMinute,
+            durationMinutes: s.durationMinutes,
+            isDropoff: Boolean(s.isDropoff),
+            label: s.label,
+            endLabel: s.endLabel,
+            windowLabel: s.windowLabel,
+            blocked: blockedByAdmin,
+            blockReason: matchedBlock?.reason || null,
+            available: isFutureSlot(date, s.startMinute, now)
+                && !blockedByAdmin
+                && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
+        };
+    });
 
-    res.json({ date, purpose, slots });
+    res.json({
+        date,
+        purpose,
+        blocked: Boolean(fullDayBlock),
+        blockReason,
+        blocks: dayBlocks.map(toBlockedSchedule),
+        slots,
+    });
 });
 
 const cleanName = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
@@ -1352,6 +1483,28 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         }
     }
 
+    // Reject any booking (consultation, defense, or drop-off) that falls on a date/time blocked by the instructor.
+    const dayBlocks = await fetchBlockedByDate(date);
+    if (dayBlocks.length) {
+        const blockedIntervals = dayBlocks.map(blockInterval);
+        const isBlocked = dayBlocks.some((b) => b.is_full_day) || (
+            isDropoff
+                ? isWindowFullyBlocked(slotStart, slotEnd, blockedIntervals)
+                : hasOverlap(slotStart, slotEnd, blockedIntervals)
+        );
+        if (isBlocked) {
+            const matchedBlock = dayBlocks.find((b) => {
+                const [bs, be] = blockInterval(b);
+                return slotStart < be && slotEnd > bs;
+            }) || dayBlocks[0];
+            return res.status(409).json({
+                error: matchedBlock?.reason
+                    ? `The instructor is unavailable during that date/time (${matchedBlock.reason}). Please choose another date or time.`
+                    : 'The instructor is unavailable during that date/time. Please choose another date or time.',
+            });
+        }
+    }
+
     // For timed bookings (consultations AND defenses), reject anything overlapping an existing timed booking.
     // This is what prevents a defense from taking time already booked for a consultation, and vice versa.
     if (!isDropoff) {
@@ -1446,15 +1599,21 @@ app.get('/admin', (req, res) => res.redirect('/admin.html'));
 app.post('/api/admin/login', requireAdmin, (req, res) => res.json({ ok: true }));
 
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
-    const { data, error } = await db()
-        .from(TABLE)
-        .select('*')
-        .order('appointment_date', { ascending: true })
-        .order('start_hour', { ascending: true });
+    const [{ data, error }, blockedRows] = await Promise.all([
+        db()
+            .from(TABLE)
+            .select('*')
+            .order('appointment_date', { ascending: true })
+            .order('start_hour', { ascending: true }),
+        fetchBlockedByDateRange('1970-01-01', '9999-12-31'),
+    ]);
     if (error) return res.status(500).json({ error: error.message });
 
     const now = nowInTz();
     const bookings = data.map((r) => toBooking(r, now)).sort(
+        (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
+    );
+    const blockedSchedules = blockedRows.map(toBlockedSchedule).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
     );
     res.json({
@@ -1462,7 +1621,137 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         currentHour: now.hour,
         currentMinute: now.minuteOfDay,
         bookings,
+        blockedSchedules,
     });
+});
+
+// List all blocked dates / time ranges
+app.get('/api/admin/blocks', requireAdmin, async (req, res) => {
+    const blockedRows = await fetchBlockedByDateRange('1970-01-01', '9999-12-31');
+    const blockedSchedules = blockedRows.map(toBlockedSchedule).sort(
+        (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
+    );
+    res.json({ blockedSchedules });
+});
+
+// Block a date (or date range) or a specific time range on a date
+app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const date = String(body.date || '').trim();
+    const endDate = body.endDate ? String(body.endDate).trim() : date;
+    const isFullDay = body.isFullDay !== false;
+    const startMinute = isFullDay ? null : Number(body.startMinute);
+    const endMinute = isFullDay ? null : Number(body.endMinute);
+    const rawReason = String(body.reason ?? '').trim();
+    const reason = rawReason ? rawReason.slice(0, 500) : null;
+    const cancelExisting = Boolean(body.cancelExisting);
+
+    if (!parseDate(date)) {
+        return res.status(400).json({ field: 'blockDate', error: 'Please select a valid date.' });
+    }
+    if (!parseDate(endDate) || endDate < date) {
+        return res.status(400).json({ field: 'blockEndDate', error: 'End date must be on or after the start date.' });
+    }
+    const diffDays = Math.round((parseDate(endDate).getTime() - parseDate(date).getTime()) / 86400000);
+    if (diffDays > 60) {
+        return res.status(400).json({ field: 'blockEndDate', error: 'You can block at most 60 days at a time.' });
+    }
+    if (!isFullDay) {
+        if (!Number.isInteger(startMinute) || !Number.isInteger(endMinute)
+            || startMinute < 0 || endMinute > 1440 || startMinute >= endMinute) {
+            return res.status(400).json({
+                field: 'blockTime',
+                error: 'Please enter a valid start and end time (end time must be after start time).',
+            });
+        }
+    }
+
+    const rowsToInsert = [];
+    for (let d = date; d <= endDate; d = addDays(d, 1)) {
+        rowsToInsert.push({
+            blocked_date: d,
+            is_full_day: isFullDay,
+            start_minute: isFullDay ? null : startMinute,
+            end_minute: isFullDay ? null : endMinute,
+            reason,
+        });
+    }
+
+    const { data: inserted, error: insertErr } = await db()
+        .from(BLOCKED_TABLE)
+        .insert(rowsToInsert)
+        .select('*');
+
+    if (insertErr) {
+        if (['42P01', 'PGRST205', '23514', '42703', 'PGRST204'].includes(insertErr.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: insertErr.message });
+    }
+
+    const now = nowInTz();
+    let cancelledBookings = [];
+    if (cancelExisting) {
+        const { data: activeRows, error: activeErr } = await db()
+            .from(TABLE)
+            .select('*')
+            .gte('appointment_date', date)
+            .lte('appointment_date', endDate)
+            .neq('status', 'cancelled');
+        if (!activeErr && Array.isArray(activeRows) && activeRows.length) {
+            const bStart = isFullDay ? 0 : startMinute;
+            const bEnd = isFullDay ? 1440 : endMinute;
+            const toCancelIds = activeRows
+                .filter((r) => {
+                    if (!isActiveRow(r)) return false;
+                    if (isFullDay) return true;
+                    const [rs, re] = rowInterval(r);
+                    return rs < bEnd && re > bStart;
+                })
+                .map((r) => r.id);
+
+            if (toCancelIds.length) {
+                const cancelReasonText = reason
+                    ? `Instructor unavailable: ${reason}`
+                    : 'Cancelled because the instructor is unavailable on this date/time.';
+                const { data: updatedRows } = await db()
+                    .from(TABLE)
+                    .update({
+                        status: 'cancelled',
+                        cancellation_reason: cancelReasonText.slice(0, 500),
+                        cancelled_at: new Date().toISOString(),
+                    })
+                    .in('id', toCancelIds)
+                    .select('*');
+                if (Array.isArray(updatedRows)) {
+                    cancelledBookings = updatedRows.map((r) => toBooking(r, now));
+                }
+            }
+        }
+    }
+
+    res.status(201).json({
+        ok: true,
+        blocks: (inserted || []).map(toBlockedSchedule),
+        cancelledBookings,
+    });
+});
+
+// Remove a blocked date or time range
+app.delete('/api/admin/blocks/:id', requireAdmin, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
+    const { error } = await db().from(BLOCKED_TABLE).delete().eq('id', req.params.id);
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+    res.json({ ok: true });
 });
 
 // Send email notification to student that their dropped-off manuscript has been checked
