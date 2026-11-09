@@ -279,7 +279,7 @@
         $('#authPanel')?.classList.remove('hidden');
     }
 
-    function goToStep(n) {
+    function goToStep(n, shouldScroll = true) {
         if (!state.student) {
             showAuthGate();
             return;
@@ -298,11 +298,13 @@
         });
         if (n === 3) {
             renderStep3();
-            setTimeout(() => {
-                $('#reasonInput')?.focus({ preventScroll: true });
-            }, 60);
+            if (window.innerWidth > 960 && window.matchMedia('(hover: hover)').matches) {
+                setTimeout(() => {
+                    $('#reasonInput')?.focus({ preventScroll: true });
+                }, 60);
+            }
         }
-        if (window.innerWidth <= 960) {
+        if (shouldScroll && window.innerWidth <= 960) {
             const activePanel = $(['#step1', '#step2', '#step3', '#step4'][n - 1]);
             (activePanel || $('#scheduler'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
@@ -701,7 +703,7 @@
             } else {
                 renderSlots(data.slots);
             }
-            if (fromUser && window.innerWidth <= 680) {
+            if (fromUser && window.innerWidth <= 820) {
                 $('.slots').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         } catch (err) {
@@ -1568,7 +1570,7 @@
         }
     }
 
-    function setStudent(student, navigateToStep1 = false) {
+    function setStudent(student, navigateToStep1 = false, shouldScroll = false) {
         state.student = student || null;
         state.defenseLevel = isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : null;
         const box = $('#accountBox');
@@ -1590,7 +1592,7 @@
             setBookingType('group');
             loadMyBookings();
             if (navigateToStep1) {
-                goToStep(1);
+                goToStep(1, shouldScroll);
             }
         } else {
             $('#myAppointmentsLink')?.classList.add('hidden');

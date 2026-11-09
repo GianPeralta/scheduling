@@ -327,7 +327,9 @@
         setBlockScope('full');
         setBlockFormError('');
         $('#blockModal')?.classList.remove('hidden');
-        setTimeout(() => dateInput?.focus(), 40);
+        if (window.matchMedia('(hover: hover)').matches) {
+            setTimeout(() => dateInput?.focus(), 40);
+        }
     }
 
     function closeBlockModal() {
@@ -503,7 +505,9 @@
         }
         setCancelError('');
         $('#cancelModal')?.classList.remove('hidden');
-        setTimeout(() => input?.focus(), 40);
+        if (window.matchMedia('(hover: hover)').matches) {
+            setTimeout(() => input?.focus(), 40);
+        }
     }
 
     function closeCancelModal() {
