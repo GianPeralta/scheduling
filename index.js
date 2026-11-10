@@ -1070,14 +1070,23 @@ app.get('/api/month', async (req, res) => {
         const dayBlocks = blocksByDate.get(d) || [];
         const blockedIntervals = dayBlocks.map(blockInterval);
         const allBusyIntervals = [...bookedIntervals, ...blockedIntervals];
-        const blockReason = dayBlocks.find((b) => b.reason)?.reason || null;
+        const blockReason = dayBlocks.find((b) => b.is_full_day && b.reason)?.reason
+            || dayBlocks.find((b) => b.reason)?.reason
+            || null;
         const hasFullDayBlock = dayBlocks.some((b) => b.is_full_day);
+        const serializedBlocks = dayBlocks.map(toBlockedSchedule);
 
         if (isDefense) {
             const open = hasFullDayBlock ? 0 : countOpenDefenseRanges(d, defenseDuration, allBusyIntervals);
-            const openWithoutBlocks = countOpenDefenseRanges(d, defenseDuration, bookedIntervals);
-            const blocked = hasFullDayBlock || (open === 0 && dayBlocks.length > 0 && openWithoutBlocks > 0);
-            days[d] = { bookable: true, open, blocked, blockReason: blocked ? blockReason : null };
+            const blocked = Boolean(hasFullDayBlock || (open === 0 && dayBlocks.length > 0));
+            days[d] = {
+                bookable: true,
+                open,
+                blocked,
+                hasBlocks: dayBlocks.length > 0,
+                blockReason: dayBlocks.length > 0 ? blockReason : null,
+                blocks: serializedBlocks,
+            };
             continue;
         }
         const daySlots = generateDaySlots(d, purpose);
@@ -1089,12 +1098,15 @@ app.get('/api/month', async (req, res) => {
                         ? !isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals)
                         : !hasOverlap(s.startMinute, s.endMinute, allBusyIntervals))
             ).length;
-        const openWithoutBlocks = daySlots.filter(
-            (s) => isFutureSlot(d, s.startMinute, now)
-                && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals))
-        ).length;
-        const blocked = hasFullDayBlock || (open === 0 && dayBlocks.length > 0 && openWithoutBlocks > 0);
-        days[d] = { bookable: true, open, blocked, blockReason: blocked ? blockReason : null };
+        const blocked = Boolean(hasFullDayBlock || (open === 0 && dayBlocks.length > 0));
+        days[d] = {
+            bookable: true,
+            open,
+            blocked,
+            hasBlocks: dayBlocks.length > 0,
+            blockReason: dayBlocks.length > 0 ? blockReason : null,
+            blocks: serializedBlocks,
+        };
     }
 
     res.json({ month, purpose, level, days });
@@ -1128,16 +1140,19 @@ app.get('/api/slots', async (req, res) => {
 
     if (isDefense) {
         const durationMinutes = DEFENSE_LEVELS[level].durationMinutes;
+        const windows = defenseDayAvailability(date, durationMinutes, allBusyIntervals);
+        const openRanges = windows.reduce((n, w) => n + w.free.filter((f) => f.fits).length, 0);
+        const isDayBlocked = Boolean(fullDayBlock) || (openRanges === 0 && dayBlocks.length > 0);
         return res.json({
             date,
             purpose,
             level,
             durationMinutes,
             startStep: DEFENSE_START_STEP,
-            blocked: Boolean(fullDayBlock),
+            blocked: isDayBlocked,
             blockReason,
             blocks: dayBlocks.map(toBlockedSchedule),
-            windows: defenseDayAvailability(date, durationMinutes, allBusyIntervals),
+            windows,
             slots: [],
         });
     }
@@ -1150,6 +1165,7 @@ app.get('/api/slots', async (req, res) => {
         );
         const matchedBlock = blockedByAdmin
             ? dayBlocks.find((b) => {
+                if (b.is_full_day) return true;
                 const [bs, be] = blockInterval(b);
                 return s.startMinute < be && s.endMinute > bs;
             })
@@ -1163,17 +1179,20 @@ app.get('/api/slots', async (req, res) => {
             endLabel: s.endLabel,
             windowLabel: s.windowLabel,
             blocked: blockedByAdmin,
-            blockReason: matchedBlock?.reason || null,
+            blockReason: matchedBlock?.reason || blockReason || null,
             available: isFutureSlot(date, s.startMinute, now)
                 && !blockedByAdmin
                 && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
         };
     });
 
+    const openSlots = slots.filter((s) => s.available).length;
+    const isDayBlocked = Boolean(fullDayBlock) || (openSlots === 0 && dayBlocks.length > 0);
+
     res.json({
         date,
         purpose,
-        blocked: Boolean(fullDayBlock),
+        blocked: isDayBlocked,
         blockReason,
         blocks: dayBlocks.map(toBlockedSchedule),
         slots,

@@ -326,12 +326,14 @@
             summary.append(title, sub);
         }
         $('#cancelConfirmModal')?.classList.remove('hidden');
+        document.body.classList.add('modal-open');
     }
 
     function closeCancelConfirmModal() {
         if (state.cancelling) return;
         state.cancelTarget = null;
         $('#cancelConfirmModal')?.classList.add('hidden');
+        document.body.classList.remove('modal-open');
     }
 
     async function confirmCancelBooking() {

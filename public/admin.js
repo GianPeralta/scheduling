@@ -84,6 +84,12 @@
         return node;
     }
 
+    function syncModalBodyLock() {
+        const anyOpen = Array.from(document.querySelectorAll('.modal-backdrop'))
+            .some((m) => !m.classList.contains('hidden'));
+        document.body.classList.toggle('modal-open', anyOpen);
+    }
+
     /* ---------------- auth ---------------- */
     function showLogin(error) {
         $('#dashView').classList.add('hidden');
@@ -327,6 +333,7 @@
         setBlockScope('full');
         setBlockFormError('');
         $('#blockModal')?.classList.remove('hidden');
+        syncModalBodyLock();
         if (window.matchMedia('(hover: hover)').matches) {
             setTimeout(() => dateInput?.focus(), 40);
         }
@@ -335,6 +342,7 @@
     function closeBlockModal() {
         if (state.blocking) return;
         $('#blockModal')?.classList.add('hidden');
+        syncModalBodyLock();
         setBlockFormError('');
     }
 
@@ -505,6 +513,7 @@
         }
         setCancelError('');
         $('#cancelModal')?.classList.remove('hidden');
+        syncModalBodyLock();
         if (window.matchMedia('(hover: hover)').matches) {
             setTimeout(() => input?.focus(), 40);
         }
@@ -514,6 +523,7 @@
         if (state.cancelling) return;
         state.cancelTarget = null;
         $('#cancelModal')?.classList.add('hidden');
+        syncModalBodyLock();
         setCancelError('');
     }
 
@@ -783,6 +793,9 @@
                 if (b.notifiedAt) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
                 }
+                if (b.reference) {
+                    header.appendChild(el('code', '', `#${b.reference}`));
+                }
                 body.appendChild(header);
 
                 if (Array.isArray(b.members) && b.members.length) {
@@ -795,6 +808,10 @@
 
                 if (b.reason) {
                     body.appendChild(el('p', 'booking-reason', b.reason));
+                }
+
+                if (b.studentEmail) {
+                    body.appendChild(el('p', 'booking-meta', b.studentEmail));
                 }
 
                 if (isCancelled(b) && b.cancellationReason) {
@@ -822,7 +839,11 @@
                     actions.appendChild(btn);
                 }
 
-                card.append(time, body, actions);
+                if (actions.childNodes.length) {
+                    card.append(time, body, actions);
+                } else {
+                    card.append(time, body);
+                }
                 group.appendChild(card);
             });
 

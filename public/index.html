@@ -384,7 +384,10 @@
                     <div class="legend">
                         <span><i class="dot dot-open"></i> Available</span>
                         <span><i class="dot dot-full"></i> Full</span>
+                        <span><i class="dot dot-blocked"></i> Blocked</span>
                     </div>
+                    <div class="calendar-day-notice hidden" id="calendarDayNotice" role="status" aria-live="polite"></div>
+                    <div class="month-blocks-box hidden" id="monthBlocksBox"></div>
                 </div>
 
                 <div class="slots">
@@ -407,9 +410,18 @@
                 <form class="details-form" id="bookingForm" novalidate>
                     <button type="button" class="back-btn" id="backBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                        Back
+                        Back to date &amp; time
                     </button>
                     <h3 id="bookingFormTitle">Confirm booking</h3>
+
+                    <div class="step3-selection-summary" id="step3SelectionSummary">
+                        <div class="step3-summary-info">
+                            <span class="badge teal" id="step3PurposeBadge">System Consultation</span>
+                            <strong id="step3DateText">—</strong>
+                            <span class="muted small" id="step3TimeText">—</span>
+                        </div>
+                        <button type="button" class="change-purpose-btn" id="step3ChangeSlotBtn">Change</button>
+                    </div>
 
                     <div class="form-error hidden" id="formError" role="alert"></div>
 

@@ -141,6 +141,18 @@
         });
     }
 
+    function formatShortWeekdayDate(str) {
+        return utcDate(str).toLocaleDateString('en-US', {
+            weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
+        });
+    }
+
+    function syncModalBodyLock() {
+        const anyOpen = Array.from(document.querySelectorAll('.modal-backdrop'))
+            .some((el) => !el.classList.contains('hidden'));
+        document.body.classList.toggle('modal-open', anyOpen);
+    }
+
     function formatMinute(totalMinutes) {
         const h = Math.floor(totalMinutes / 60) % 24;
         const m = totalMinutes % 60;
@@ -382,11 +394,13 @@
         $('#beninsigAskView').classList.remove('hidden');
         $('#beninsigNoView').classList.add('hidden');
         $('#beninsigModal').classList.remove('hidden');
+        syncModalBodyLock();
         setTimeout(() => $('#beninsigYesBtn')?.focus(), 40);
     }
 
     function closeBeninsigModal() {
         $('#beninsigModal').classList.add('hidden');
+        syncModalBodyLock();
     }
 
     function onClickConsultationCard(purpose) {
@@ -453,13 +467,16 @@
         if (currentSelectedDate && state.monthDays[currentSelectedDate]?.bookable && state.monthDays[currentSelectedDate].open > 0) {
             await selectDate(currentSelectedDate, false, true);
         } else {
-            let firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
-            if (!firstOpen && state.config && monthKey(state.viewYear, state.viewMonth) < state.config.lastBookableDate.slice(0, 7)) {
+            const bookableInCurrent = Object.keys(state.monthDays).sort().filter((d) => state.monthDays[d]?.bookable);
+            let firstOpen = bookableInCurrent.find((d) => state.monthDays[d].open > 0);
+            if (!bookableInCurrent.length && state.config && monthKey(state.viewYear, state.viewMonth) < state.config.lastBookableDate.slice(0, 7)) {
                 const changed = await changeMonth(1);
                 if (!changed) return;
                 firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
             }
+            const fallbackBookable = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d]?.bookable);
             if (firstOpen) await selectDate(firstOpen, false, true);
+            else if (fallbackBookable) await selectDate(fallbackBookable, false, true);
             else resetSlotsPanel();
         }
     }
@@ -613,31 +630,211 @@
                 btn.title = 'Today — bookings must be made at least 1 day before the scheduled day';
             }
 
-            if (loading || !info || !info.bookable) {
+            if (loading) {
                 btn.disabled = true;
+            } else if (!info || !info.bookable) {
+                if (ds === config.today) {
+                    btn.setAttribute('aria-disabled', 'true');
+                    btn.addEventListener('click', () => {
+                        toast('Bookings must be made at least 1 day before the consultation day.', 'info');
+                    });
+                } else {
+                    btn.disabled = true;
+                }
             } else if (info.blocked && info.open === 0) {
                 btn.classList.add('full', 'blocked');
-                btn.disabled = true;
+                btn.setAttribute('aria-disabled', 'true');
                 btn.title = info.blockReason
                     ? `Unavailable — ${info.blockReason}`
                     : 'Unavailable on this date';
+                btn.addEventListener('click', () => selectDate(ds, true));
             } else if (info.open === 0) {
                 btn.classList.add('full');
-                btn.disabled = true;
+                btn.setAttribute('aria-disabled', 'true');
                 btn.title = 'Fully booked';
+                btn.addEventListener('click', () => selectDate(ds, true));
             } else {
                 btn.classList.add('available');
-                btn.title = state.consultationPurpose === 'dropoff'
+                if (info.hasBlocks) btn.classList.add('has-block');
+                const openTitle = state.consultationPurpose === 'dropoff'
                     ? 'Open for manuscript drop-off'
                     : state.consultationPurpose === 'defense'
                         ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
                         : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
+                btn.title = info.hasBlocks
+                    ? `${openTitle} · Note: ${info.blockReason || 'Some hours blocked by instructor'}`
+                    : openTitle;
                 btn.addEventListener('click', () => selectDate(ds, true));
             }
 
             if (ds === state.selectedDate) btn.classList.add('selected');
             container.appendChild(btn);
         }
+
+        if (!loading) {
+            renderMonthBlocksBox();
+            updateCalendarDayNotice(state.selectedDate);
+        }
+    }
+
+    function renderMonthBlocksBox() {
+        const box = $('#monthBlocksBox');
+        if (!box) return;
+        const blockedDates = Object.keys(state.monthDays)
+            .sort()
+            .filter((d) => state.monthDays[d]?.bookable && (state.monthDays[d]?.blocked || state.monthDays[d]?.hasBlocks));
+
+        if (!blockedDates.length) {
+            box.innerHTML = '';
+            box.classList.add('hidden');
+            return;
+        }
+
+        box.innerHTML = '';
+        const head = document.createElement('div');
+        head.className = 'month-blocks-head';
+        const badge = document.createElement('span');
+        badge.className = 'badge danger';
+        badge.textContent = 'Unavailable';
+        const headText = document.createElement('span');
+        headText.textContent = 'Blocked schedules this month (tap a date for details)';
+        head.append(badge, headText);
+        box.appendChild(head);
+
+        const list = document.createElement('div');
+        list.className = 'month-blocks-list';
+
+        blockedDates.forEach((d) => {
+            const info = state.monthDays[d];
+            const blocks = Array.isArray(info.blocks) && info.blocks.length
+                ? info.blocks
+                : [{ isFullDay: true, label: 'Entire day', reason: info.blockReason }];
+
+            blocks.forEach((blk) => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'month-block-item' + (d === state.selectedDate ? ' active' : '');
+                item.dataset.date = d;
+
+                const top = document.createElement('div');
+                top.className = 'month-block-top';
+
+                const dateLabel = document.createElement('strong');
+                dateLabel.textContent = formatShortWeekdayDate(d);
+
+                const scopeBadge = document.createElement('span');
+                scopeBadge.className = 'month-block-scope';
+                scopeBadge.textContent = blk.isFullDay ? 'Entire day' : blk.label;
+
+                top.append(dateLabel, scopeBadge);
+
+                const reasonEl = document.createElement('span');
+                reasonEl.className = 'month-block-reason';
+                const reasonText = blk.reason || info.blockReason;
+                reasonEl.textContent = reasonText
+                    ? `Reason: ${reasonText}`
+                    : 'Reason: Instructor unavailable';
+
+                item.append(top, reasonEl);
+                item.addEventListener('click', () => selectDate(d, true));
+                list.appendChild(item);
+            });
+        });
+
+        box.appendChild(list);
+        box.classList.remove('hidden');
+    }
+
+    function updateCalendarDayNotice(ds, slotData = null) {
+        document.querySelectorAll('.month-block-item').forEach((el) => {
+            el.classList.toggle('active', el.dataset.date === ds);
+        });
+
+        const notice = $('#calendarDayNotice');
+        if (!notice) return;
+        if (!ds) {
+            notice.innerHTML = '';
+            notice.className = 'calendar-day-notice hidden';
+            return;
+        }
+
+        const info = state.monthDays[ds];
+        const blocks = (Array.isArray(slotData?.blocks) && slotData.blocks.length)
+            ? slotData.blocks
+            : (Array.isArray(info?.blocks) ? info.blocks : []);
+        const isBlocked = Boolean(slotData?.blocked ?? info?.blocked);
+        const reason = slotData?.blockReason
+            || info?.blockReason
+            || blocks.find((b) => b.reason)?.reason
+            || null;
+
+        if (isBlocked || blocks.length > 0) {
+            notice.innerHTML = '';
+            notice.className = `calendar-day-notice ${isBlocked ? 'is-blocked' : 'is-partial'}`;
+
+            const top = document.createElement('div');
+            top.className = 'calendar-notice-top';
+
+            const badge = document.createElement('span');
+            badge.className = `badge ${isBlocked ? 'danger' : 'amber'}`;
+            badge.textContent = isBlocked ? 'Unavailable' : 'Partial Block';
+
+            const dateStrong = document.createElement('strong');
+            dateStrong.textContent = formatLongDate(ds);
+
+            top.append(badge, dateStrong);
+            notice.appendChild(top);
+
+            if (blocks.length > 0) {
+                blocks.forEach((blk) => {
+                    const p = document.createElement('p');
+                    p.className = 'calendar-notice-reason';
+                    const scopeLabel = blk.isFullDay ? 'Entire day blocked' : `Blocked (${blk.label})`;
+                    const rText = blk.reason || reason || 'Instructor is unavailable during this schedule.';
+                    p.innerHTML = `<strong>${scopeLabel}:</strong> `;
+                    const span = document.createElement('span');
+                    span.textContent = rText;
+                    p.appendChild(span);
+                    notice.appendChild(p);
+                });
+            } else {
+                const p = document.createElement('p');
+                p.className = 'calendar-notice-reason';
+                p.innerHTML = '<strong>Reason:</strong> ';
+                const span = document.createElement('span');
+                span.textContent = reason || 'Instructor is unavailable on this date.';
+                p.appendChild(span);
+                notice.appendChild(p);
+            }
+            return;
+        }
+
+        if (info && info.bookable && info.open === 0) {
+            notice.innerHTML = '';
+            notice.className = 'calendar-day-notice is-full';
+
+            const top = document.createElement('div');
+            top.className = 'calendar-notice-top';
+
+            const badge = document.createElement('span');
+            badge.className = 'badge muted-badge';
+            badge.textContent = 'Full';
+
+            const dateStrong = document.createElement('strong');
+            dateStrong.textContent = formatLongDate(ds);
+
+            top.append(badge, dateStrong);
+
+            const p = document.createElement('p');
+            p.className = 'calendar-notice-reason';
+            p.textContent = 'All consultation slots on this date are already booked.';
+
+            notice.append(top, p);
+            return;
+        }
+
+        notice.innerHTML = '';
+        notice.className = 'calendar-day-notice hidden';
     }
 
     function changeMonth(delta) {
@@ -677,6 +874,7 @@
         document.querySelectorAll('.day.selected').forEach((el) => el.classList.remove('selected'));
         const btn = document.querySelector(`.day[data-date="${ds}"]`);
         if (btn) btn.classList.add('selected');
+        updateCalendarDayNotice(ds);
 
         $('#slotsTitle').textContent = formatLongDate(ds);
         $('#slotsSubtitle').textContent = 'Loading available times…';
@@ -697,14 +895,21 @@
             if (reqId !== state.slotsRequest) return;
             state.loadingSlotsKey = null;
             state.loadedSlotsKey = key;
+            updateCalendarDayNotice(ds, data);
             if (purpose === 'defense') {
                 state.defenseDay = data;
                 renderDefenseSlots(data);
             } else {
-                renderSlots(data.slots);
+                renderSlots(data.slots, data);
             }
             if (fromUser && window.innerWidth <= 820) {
-                $('.slots').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                const dayInfo = state.monthDays[ds];
+                const isDayFullyBlocked = Boolean(data?.blocked ?? dayInfo?.blocked);
+                if (isDayFullyBlocked) {
+                    ($('#calendarDayNotice') || $('.slots'))?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } else {
+                    $('.slots')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
             }
         } catch (err) {
             if (reqId !== state.slotsRequest) return;
@@ -713,6 +918,60 @@
             $('#slotsSubtitle').textContent = 'Could not load time slots.';
             toast(err.message, 'error');
         }
+    }
+
+    function createDayBlocksBanner(data) {
+        const blocks = Array.isArray(data?.blocks) ? data.blocks : [];
+        const isFullBlocked = Boolean(data?.blocked);
+        if (!isFullBlocked && !blocks.length) return null;
+
+        const banner = document.createElement('div');
+        banner.className = 'slots-blocked-banner';
+
+        const head = document.createElement('div');
+        head.className = 'slots-blocked-head';
+
+        const badge = document.createElement('span');
+        badge.className = 'badge danger';
+        badge.textContent = isFullBlocked ? 'Unavailable' : 'Blocked Time';
+
+        const title = document.createElement('strong');
+        title.textContent = isFullBlocked
+            ? 'Blocked by Instructor'
+            : 'Some hours on this date are blocked';
+
+        head.append(badge, title);
+        banner.appendChild(head);
+
+        if (blocks.length) {
+            blocks.forEach((blk) => {
+                const item = document.createElement('div');
+                item.className = 'slots-blocked-item';
+
+                const scope = document.createElement('strong');
+                scope.textContent = blk.isFullDay ? 'Entire day:' : `${blk.label}:`;
+
+                const reason = document.createElement('span');
+                reason.textContent = blk.reason || data?.blockReason || 'Instructor is unavailable during this schedule.';
+
+                item.append(scope, reason);
+                banner.appendChild(item);
+            });
+        } else {
+            const item = document.createElement('div');
+            item.className = 'slots-blocked-item';
+
+            const scope = document.createElement('strong');
+            scope.textContent = 'Reason:';
+
+            const reason = document.createElement('span');
+            reason.textContent = data?.blockReason || 'Instructor is unavailable on this date.';
+
+            item.append(scope, reason);
+            banner.appendChild(item);
+        }
+
+        return banner;
     }
 
     /**
@@ -806,6 +1065,23 @@
             };
         }
 
+        const blockConflict = (data.blocks || []).find((b) => {
+            const bStart = b.isFullDay ? 0 : b.startMinute;
+            const bEnd = b.isFullDay ? 1440 : b.endMinute;
+            return startMinute < bEnd && endMinute > bStart;
+        });
+        if (blockConflict) {
+            const reasonSuffix = (blockConflict.reason || data.blockReason)
+                ? ` — ${blockConflict.reason || data.blockReason}`
+                : '';
+            return {
+                ok: false,
+                startMinute,
+                endMinute,
+                error: `${formatMinute(startMinute)} – ${formatMinute(endMinute)} falls within a time blocked by the instructor (${blockConflict.label}${reasonSuffix}). Please choose another time.`,
+            };
+        }
+
         const conflict = (matchingWin.busy || []).find((b) => startMinute < b.endMinute && endMinute > b.startMinute);
         if (conflict) {
             return {
@@ -845,12 +1121,25 @@
             });
         });
 
-        $('#slotsSubtitle').textContent = fittingGaps.length
-            ? `Open: ${fittingGaps.map((f) => f.label).join(' · ')}`
-            : `No open ${levelInfo.durationLabel} slot left on this day.`;
+        const blockBanner = createDayBlocksBanner(data);
+        if (blockBanner) {
+            list.appendChild(blockBanner);
+        }
+
+        if (fittingGaps.length) {
+            $('#slotsSubtitle').textContent = `Open: ${fittingGaps.map((f) => f.label).join(' · ')}`;
+        } else if (data.blocked || (data.blocks && data.blocks.length > 0)) {
+            $('#slotsSubtitle').textContent = data.blockReason
+                ? `Unavailable — ${data.blockReason}`
+                : 'Instructor is unavailable on this date.';
+        } else {
+            $('#slotsSubtitle').textContent = `No open ${levelInfo.durationLabel} slot left on this day.`;
+        }
 
         if (!fittingGaps.length) {
-            list.innerHTML = '<div class="empty-state"><p>No available time on this day.</p></div>';
+            if (!blockBanner) {
+                list.innerHTML = '<div class="empty-state"><p>No available time on this day.</p></div>';
+            }
             return;
         }
 
@@ -1003,7 +1292,9 @@
     function createSlotButton(slot, i) {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'slot' + (slot.isDropoff ? ' slot-dropoff' : '');
+        btn.className = 'slot'
+            + (slot.isDropoff ? ' slot-dropoff' : '')
+            + (!slot.available && slot.blocked ? ' blocked-slot' : '');
         btn.style.animationDelay = `${Math.min(i, 12) * 18}ms`;
 
         const time = document.createElement('span');
@@ -1013,9 +1304,13 @@
         const range = document.createElement('span');
         range.className = 'slot-range';
         if (!slot.available) {
-            range.textContent = slot.blocked && slot.blockReason
-                ? `Unavailable · ${slot.blockReason}`
-                : 'Unavailable';
+            if (slot.blocked) {
+                range.textContent = slot.blockReason
+                    ? `Unavailable — ${slot.blockReason}`
+                    : 'Unavailable (Blocked)';
+            } else {
+                range.textContent = 'Booked';
+            }
         } else if (slot.isDropoff) {
             range.textContent = 'Drop-off window';
         } else {
@@ -1047,7 +1342,7 @@
         return next;
     }
 
-    function renderSlots(slots) {
+    function renderSlots(slots, data = null) {
         const list = $('#slotList');
         const tabsEl = $('#windowTabs');
         list.innerHTML = '';
@@ -1056,10 +1351,20 @@
             tabsEl.classList.add('hidden');
         }
 
+        const blockBanner = createDayBlocksBanner(data);
+        if (blockBanner) {
+            list.appendChild(blockBanner);
+        }
+
         const openCount = slots.filter((s) => s.available).length;
         const meta = getMeta();
+        const hasBlocks = Boolean(data?.blocked || (data?.blocks && data.blocks.length > 0));
 
-        if (state.consultationPurpose === 'dropoff') {
+        if (!openCount && hasBlocks) {
+            $('#slotsSubtitle').textContent = data?.blockReason
+                ? `Unavailable — ${data.blockReason}`
+                : 'Instructor is unavailable on this date.';
+        } else if (state.consultationPurpose === 'dropoff') {
             $('#slotsSubtitle').textContent = openCount
                 ? 'Select the drop-off window below'
                 : 'Drop-off is not available on this day.';
@@ -1070,7 +1375,9 @@
         }
 
         if (!slots.length) {
-            list.innerHTML = '<div class="empty-state"><p>No time slots on this day.</p></div>';
+            if (!blockBanner) {
+                list.innerHTML = '<div class="empty-state"><p>No time slots on this day.</p></div>';
+            }
             return;
         }
 
@@ -1097,13 +1404,14 @@
                 const winOpen = winSlots.filter((s) => s.available).length;
                 const tab = document.createElement('button');
                 tab.type = 'button';
-                tab.className = 'window-tab' + (w === state.activeWindowLabel ? ' active' : '');
+                tab.className = 'window-tab'
+                    + (w === state.activeWindowLabel ? ' active' : '')
+                    + (winOpen === 0 ? ' window-tab-empty' : '');
                 tab.textContent = `${w} (${winOpen})`;
-                tab.disabled = winOpen === 0;
                 tab.addEventListener('click', () => {
                     if (state.activeWindowLabel === w) return;
                     state.activeWindowLabel = w;
-                    renderSlots(slots);
+                    renderSlots(slots, data);
                     list.scrollTop = 0;
                 });
                 tabsEl.appendChild(tab);
@@ -1339,6 +1647,7 @@
         state.selectedDate = null;
         state.loadingSlotsKey = null;
         state.loadedSlotsKey = null;
+        updateCalendarDayNotice(null);
         const tabsEl = $('#windowTabs');
         if (tabsEl) {
             tabsEl.innerHTML = '';
@@ -1514,10 +1823,12 @@
     function openMyBookingsModal() {
         renderProfileSummary();
         $('#myBookingsModal').classList.remove('hidden');
+        syncModalBodyLock();
     }
 
     function closeMyBookingsModal() {
         $('#myBookingsModal').classList.add('hidden');
+        syncModalBodyLock();
     }
 
     /* ---------------- student account ---------------- */
@@ -1618,6 +1929,21 @@
         if (state.student.capstoneTitle && $('#teamInput') && !$('#teamInput').value.trim()) {
             $('#teamInput').value = state.student.capstoneTitle;
         }
+        const meta = getMeta();
+        const badgeEl = $('#step3PurposeBadge');
+        if (badgeEl) {
+            badgeEl.textContent = meta.summary;
+            badgeEl.className = `badge ${meta.color}`;
+        }
+        setText('#step3DateText', state.selectedDate ? formatLongDate(state.selectedDate) : '—');
+        setText(
+            '#step3TimeText',
+            state.selectedSlot
+                ? (state.selectedSlot.isDropoff
+                    ? `${state.selectedSlot.label} (Drop-off)`
+                    : `${state.selectedSlot.label} – ${state.selectedSlot.endLabel}`)
+                : '—'
+        );
         updatePurposeUI();
         syncMemberControls();
     }
@@ -2078,6 +2404,7 @@
         $('#prevMonth')?.addEventListener('click', () => changeMonth(-1));
         $('#nextMonth')?.addEventListener('click', () => changeMonth(1));
         $('#backBtn')?.addEventListener('click', () => goToStep(2));
+        $('#step3ChangeSlotBtn')?.addEventListener('click', () => goToStep(2));
 
         document.querySelectorAll('.step').forEach((stepEl) => {
             const targetStep = Number(stepEl.dataset.step);
