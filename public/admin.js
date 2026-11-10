@@ -16,6 +16,7 @@
         password: sessionStorage.getItem(STORAGE_KEY) || '',
         bookings: [],
         blockedSchedules: [],
+        students: [],
         config: null,
         today: '',
         currentHour: 0,
@@ -144,6 +145,7 @@
         state.password = '';
         state.bookings = [];
         state.blockedSchedules = [];
+        state.students = [];
         showLogin();
     }
 
@@ -173,6 +175,7 @@
             state.blockedSchedules = (data.blockedSchedules || []).sort(
                 (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
             );
+            state.students = data.students || [];
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
@@ -457,21 +460,108 @@
         }
     }
 
+    const LEVEL_LABELS = {
+        capstone1: 'Capstone 1',
+        capstone2: 'Capstone 2',
+        thesis1: 'Thesis 1',
+        thesis2: 'Thesis 2',
+    };
+
     function matchesSearch(b, q) {
         if (!q) return true;
-        if (b.name.toLowerCase().includes(q)) return true;
+        if (b.name && b.name.toLowerCase().includes(q)) return true;
         if (b.teamName && b.teamName.toLowerCase().includes(q)) return true;
         if (b.capstoneTitle && b.capstoneTitle.toLowerCase().includes(q)) return true;
         if (b.consultationTitle && b.consultationTitle.toLowerCase().includes(q)) return true;
         if (b.consultationType && b.consultationType.toLowerCase().includes(q)) return true;
-        if (b.defenseLevelLabel && b.defenseLevelLabel.toLowerCase().includes(q)) return true;
+        const levelLabel = b.projectLevelLabel || b.defenseLevelLabel || LEVEL_LABELS[b.projectLevel || b.defenseLevel] || '';
+        if (levelLabel && levelLabel.toLowerCase().includes(q)) return true;
         if (b.instructorRole && b.instructorRole.toLowerCase().includes(q)) return true;
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
-        if (b.reason.toLowerCase().includes(q)) return true;
+        if (b.reason && b.reason.toLowerCase().includes(q)) return true;
         if (b.cancellationReason && b.cancellationReason.toLowerCase().includes(q)) return true;
-        if (b.reference.toLowerCase().includes(q)) return true;
+        if (b.reference && b.reference.toLowerCase().includes(q)) return true;
         if (b.studentEmail && b.studentEmail.toLowerCase().includes(q)) return true;
         return false;
+    }
+
+    function matchesStudentSearch(s, q) {
+        if (!q) return true;
+        if (s.name && s.name.toLowerCase().includes(q)) return true;
+        if (s.email && s.email.toLowerCase().includes(q)) return true;
+        if (s.capstoneTitle && s.capstoneTitle.toLowerCase().includes(q)) return true;
+        const levelLabel = s.projectLevelLabel || LEVEL_LABELS[s.projectLevel] || '';
+        if (levelLabel && levelLabel.toLowerCase().includes(q)) return true;
+        if (s.instructorRole && s.instructorRole.toLowerCase().includes(q)) return true;
+        if (Array.isArray(s.members) && s.members.some((m) => m.toLowerCase().includes(q))) return true;
+        return false;
+    }
+
+    function renderStudentsTab(container, q) {
+        const list = state.students.filter((s) => matchesStudentSearch(s, q));
+        if (!list.length) {
+            const empty = el('div', 'empty-state');
+            empty.style.marginTop = '12px';
+            empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+            empty.appendChild(el('p', '', q ? 'No students or groups match your search.' : 'No registered student groups yet.'));
+            container.appendChild(empty);
+            return;
+        }
+
+        const wrap = el('div', 'date-group');
+        wrap.appendChild(el('div', 'date-group-title', `Registered Groups & Students (${list.length})`));
+
+        list.forEach((s, idx) => {
+            const card = el('div', 'booking student-group-card');
+            card.style.animationDelay = `${Math.min(idx, 12) * 25}ms`;
+
+            const levelText = s.projectLevelLabel || LEVEL_LABELS[s.projectLevel] || 'Group';
+            const side = el('div', 'booking-time');
+            side.appendChild(el('strong', '', levelText));
+            side.appendChild(
+                el('span', '', s.instructorRole === 'panel' ? 'Panel Member' : s.instructorRole === 'adviser' ? 'Adviser' : 'Student')
+            );
+
+            const body = el('div', 'booking-body');
+            const header = el('div', 'booking-name');
+            header.appendChild(el('span', 'booking-title', s.capstoneTitle || s.name));
+
+            if (s.projectLevelLabel || LEVEL_LABELS[s.projectLevel]) {
+                header.appendChild(el('span', 'badge rose', s.projectLevelLabel || LEVEL_LABELS[s.projectLevel]));
+            }
+            if (s.instructorRole === 'panel') {
+                header.appendChild(el('span', 'badge sky', 'Panel'));
+            } else if (s.instructorRole === 'adviser') {
+                header.appendChild(el('span', 'badge teal', 'Adviser'));
+            }
+
+            const studentBookings = state.bookings.filter(
+                (b) => (b.studentId && b.studentId === s.id) || (b.studentEmail && s.email && b.studentEmail.toLowerCase() === s.email.toLowerCase())
+            );
+            const upcomingCount = studentBookings.filter((b) => !isCancelled(b) && !isPast(b)).length;
+            if (upcomingCount > 0) {
+                header.appendChild(el('span', 'badge amber', `${upcomingCount} upcoming`));
+            } else if (studentBookings.length > 0) {
+                header.appendChild(el('span', 'badge muted-badge', `${studentBookings.length} total booking${studentBookings.length === 1 ? '' : 's'}`));
+            }
+            body.appendChild(header);
+
+            const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
+            const membersWrap = el('div', 'booking-members');
+            members.forEach((m, mIdx) => {
+                membersWrap.appendChild(el('span', 'member-chip', mIdx === 0 ? `${m} (Rep)` : m));
+            });
+            body.appendChild(membersWrap);
+
+            const metaParts = [`Representative: ${s.name}`];
+            if (s.email) metaParts.push(s.email);
+            body.appendChild(el('p', 'booking-meta', metaParts.join(' · ')));
+
+            card.append(side, body);
+            wrap.appendChild(card);
+        });
+
+        container.appendChild(wrap);
     }
 
     function matchesBlockSearch(blk, q) {
@@ -567,11 +657,16 @@
         $('#countUpcoming').textContent = upcoming.length;
         $('#countPast').textContent = past.length;
         if ($('#countCancelled')) $('#countCancelled').textContent = cancelled.length;
+        if ($('#countStudents')) $('#countStudents').textContent = state.students.length;
 
         const q = state.search.toLowerCase();
         const container = $('#bookingList');
         container.innerHTML = '';
 
+        if (state.tab === 'students') {
+            renderStudentsTab(container, q);
+            return;
+        }
         if (state.tab === 'blocked') {
             renderBlockedTab(container, q);
             return;
@@ -644,6 +739,11 @@
                     };
                 header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
 
+                const levelLabel = b.projectLevelLabel || b.defenseLevelLabel || LEVEL_LABELS[b.projectLevel || b.defenseLevel] || null;
+                if (levelLabel && b.consultationType !== 'defense') {
+                    header.appendChild(el('span', 'badge rose', levelLabel));
+                }
+
                 if (b.instructorRole === 'panel') {
                     header.appendChild(el('span', 'badge sky', 'Panel'));
                 } else if (b.instructorRole === 'adviser') {
@@ -652,18 +752,28 @@
                 if (b.notifiedAt) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
                 }
+                if (b.reference) {
+                    header.appendChild(el('code', '', `#${b.reference}`));
+                }
                 body.appendChild(header);
 
                 if (Array.isArray(b.members) && b.members.length) {
                     const membersWrap = el('div', 'booking-members');
-                    b.members.forEach((memberName) => {
-                        membersWrap.appendChild(el('span', 'member-chip', memberName));
+                    b.members.forEach((memberName, mIdx) => {
+                        membersWrap.appendChild(el('span', 'member-chip', mIdx === 0 ? `${memberName} (Rep)` : memberName));
                     });
                     body.appendChild(membersWrap);
                 }
 
                 if (b.reason) {
                     body.appendChild(el('p', 'booking-reason', b.reason));
+                }
+
+                const metaParts = [];
+                if (b.name) metaParts.push(`Rep: ${b.name}`);
+                if (b.studentEmail) metaParts.push(b.studentEmail);
+                if (metaParts.length) {
+                    body.appendChild(el('p', 'booking-meta', metaParts.join(' · ')));
                 }
 
                 if (isCancelled(b) && b.cancellationReason) {

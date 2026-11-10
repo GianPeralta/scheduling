@@ -1227,9 +1227,16 @@ function formatConsultationTitle(consultationType, defenseLevel = null) {
 }
 
 /** Shape a database row for the frontend. */
-function toBooking(r, now) {
+function toBooking(r, now, studentLookup = null) {
     const current = (now && typeof now === 'object' && now.date) ? now : nowInTz();
-    const members = Array.isArray(r.members) && r.members.length ? r.members : [r.student_name];
+    const matchedStudent = studentLookup
+        ? (studentLookup.byId.get(r.student_id) || studentLookup.byEmail.get(String(r.student_email || '').toLowerCase()) || null)
+        : null;
+    const members = Array.isArray(r.members) && r.members.length
+        ? r.members
+        : (Array.isArray(matchedStudent?.members) && matchedStudent.members.length
+            ? matchedStudent.members
+            : [r.student_name]);
     const timed = isTimedRow(r);
     const [startMinute, endMinute] = rowInterval(r);
     const durationMinutes = timed ? (endMinute - startMinute) : 0;
@@ -1238,7 +1245,10 @@ function toBooking(r, now) {
     const status = r.status === 'cancelled' ? 'cancelled' : 'scheduled';
     const minutesUntilStart = minutesUntilBooking(r.appointment_date, startMinute, current);
     const canCancel = status === 'scheduled' && minutesUntilStart >= CANCEL_CUTOFF_MINUTES;
-    const defenseLevel = consultationType === 'defense' ? normalizeDefenseLevel(r.defense_level) : null;
+    const projectLevel = normalizeDefenseLevel(r.defense_level)
+        || normalizeDefenseLevel(matchedStudent?.project_level)
+        || null;
+    const defenseLevel = consultationType === 'defense' ? projectLevel : null;
     return {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
@@ -1247,14 +1257,17 @@ function toBooking(r, now) {
         consultationTitle: formatConsultationTitle(consultationType, defenseLevel),
         defenseLevel,
         defenseLevelLabel: defenseLevel ? DEFENSE_LEVELS[defenseLevel].label : null,
+        projectLevel,
+        projectLevelLabel: projectLevel ? DEFENSE_LEVELS[projectLevel].label : null,
         isDropoff: !timed,
         durationMinutes,
         durationLabel: formatDurationLabel(consultationType, durationMinutes),
-        name: r.student_name,
-        studentEmail: r.student_email || null,
-        capstoneTitle: r.capstone_title || r.team_name || null,
-        instructorRole: r.instructor_role || null,
-        teamName: r.team_name || null,
+        studentId: r.student_id || matchedStudent?.id || null,
+        name: r.student_name || matchedStudent?.full_name || '',
+        studentEmail: r.student_email || matchedStudent?.email || null,
+        capstoneTitle: r.capstone_title || r.team_name || matchedStudent?.capstone_title || null,
+        instructorRole: r.instructor_role || matchedStudent?.instructor_role || null,
+        teamName: r.team_name || matchedStudent?.capstone_title || null,
         members,
         reason: r.reason,
         date: r.appointment_date,
@@ -1563,7 +1576,9 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         capstone_title: student.capstone_title || teamName || null,
         instructor_role: student.instructor_role || null,
     };
+    const studentLevel = normalizeDefenseLevel(student.project_level);
     if (isDefense) row.defense_level = defenseLevel;
+    else if (studentLevel) row.defense_level = studentLevel;
 
     const { data, error } = await db()
         .from(TABLE)
@@ -1623,29 +1638,59 @@ app.get('/admin', (req, res) => res.redirect('/admin.html'));
 app.post('/api/admin/login', requireAdmin, (req, res) => res.json({ ok: true }));
 
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
-    const [{ data, error }, blockedRows] = await Promise.all([
+    const [{ data, error }, blockedRows, studentsRes] = await Promise.all([
         db()
             .from(TABLE)
             .select('*')
             .order('appointment_date', { ascending: true })
             .order('start_hour', { ascending: true }),
         fetchBlockedByDateRange('1970-01-01', '9999-12-31'),
+        db()
+            .from(STUDENTS_TABLE)
+            .select('id, email, full_name, capstone_title, instructor_role, project_level, members, last_login_at, created_at')
+            .order('created_at', { ascending: false }),
     ]);
     if (error) return res.status(500).json({ error: error.message });
 
+    const studentRows = Array.isArray(studentsRes?.data) ? studentsRes.data : [];
+    const studentLookup = {
+        byId: new Map(),
+        byEmail: new Map(),
+    };
+    studentRows.forEach((s) => {
+        studentLookup.byId.set(s.id, s);
+        if (s.email) studentLookup.byEmail.set(s.email.toLowerCase(), s);
+    });
+
     const now = nowInTz();
-    const bookings = data.map((r) => toBooking(r, now)).sort(
+    const bookings = data.map((r) => toBooking(r, now, studentLookup)).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
     );
     const blockedSchedules = blockedRows.map(toBlockedSchedule).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
     );
+    const students = studentRows.map((s) => {
+        const level = normalizeDefenseLevel(s.project_level);
+        return {
+            id: s.id,
+            name: s.full_name,
+            email: s.email,
+            capstoneTitle: s.capstone_title || null,
+            instructorRole: s.instructor_role || null,
+            projectLevel: level,
+            projectLevelLabel: level ? DEFENSE_LEVELS[level].label : null,
+            members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
+            lastLoginAt: s.last_login_at || null,
+            createdAt: s.created_at || null,
+        };
+    });
     res.json({
         today: now.date,
         currentHour: now.hour,
         currentMinute: now.minuteOfDay,
         bookings,
         blockedSchedules,
+        students,
     });
 });
 
