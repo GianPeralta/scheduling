@@ -123,7 +123,7 @@ const CONFIG = {
     location: process.env.MEETING_LOCATION || 'Faculty Office',
     timezone: process.env.TIMEZONE || 'Asia/Manila',
     workingDays: [2, 3, 4],
-    bookingEndDate: process.env.BOOKING_END_DATE || null, // defaults to Dec 10 of current year
+    bookingEndDate: process.env.BOOKING_END_DATE || null, // defaults to Nov 30 of current year
 };
 
 const TABLE = 'appointments';
@@ -506,7 +506,11 @@ function nowInTz() {
 }
 
 function getLastBookableDate(now = nowInTz()) {
-    return CONFIG.bookingEndDate || `${now.date.slice(0, 4)}-12-10`;
+    const novEnd = `${now.date.slice(0, 4)}-11-30`;
+    if (CONFIG.bookingEndDate && CONFIG.bookingEndDate < novEnd) {
+        return CONFIG.bookingEndDate;
+    }
+    return novEnd;
 }
 
 function parseDate(str) {
@@ -628,6 +632,7 @@ function windowsForDate(dateStr, purpose = 'system') {
 function isBookableDate(dateStr, now = nowInTz(), purpose = 'system') {
     const dt = parseDate(dateStr);
     if (!dt) return false;
+    if (dt.getUTCMonth() !== 10) return false; // Only November (month index 10) is available for now
     if (!windowsForDate(dateStr, purpose).length) return false;
     if (dateStr < getFirstBookableDate(now)) return false;
     if (dateStr > getLastBookableDate(now)) return false;

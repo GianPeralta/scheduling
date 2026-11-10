@@ -596,7 +596,7 @@
         });
 
         const minMonthKey = (config.firstBookableDate || config.today).slice(0, 7);
-        const lastKey = config.lastBookableDate.slice(0, 7);
+        const lastKey = `${config.lastBookableDate.slice(0, 4)}-12`;
         const current = monthKey(y, m);
         $('#prevMonth').disabled = loading || current <= minMonthKey;
         $('#nextMonth').disabled = loading || current >= lastKey;
@@ -630,7 +630,7 @@
 
             if (loading) {
                 btn.disabled = true;
-            } else if (!info || !info.bookable) {
+            } else if (m !== 10 || !info || !info.bookable) {
                 if (ds === config.today) {
                     btn.setAttribute('aria-disabled', 'true');
                     btn.addEventListener('click', () => {
@@ -707,7 +707,7 @@
 
         const targetKey = monthKey(y, m);
         const minKey = (state.config.firstBookableDate || state.config.today).slice(0, 7);
-        const lastKey = state.config.lastBookableDate.slice(0, 7);
+        const lastKey = `${state.config.lastBookableDate.slice(0, 4)}-12`;
         if (targetKey < minKey || targetKey > lastKey) return Promise.resolve(false);
 
         state.viewMonth = m;
