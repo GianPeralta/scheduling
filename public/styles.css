@@ -2367,6 +2367,86 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     flex-shrink: 0;
 }
 
+/* ---------- Admin Student Groups Section ---------- */
+.admin-section-head {
+    margin: 34px 0 14px;
+}
+.admin-section-head h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+}
+.admin-section-head p {
+    font-size: 0.88rem;
+    margin-top: 2px;
+}
+.students-grid {
+    padding: 18px 20px 22px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+    gap: 14px;
+}
+.students-grid:has(.empty-state) {
+    grid-template-columns: 1fr;
+}
+.student-group-card {
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+.student-group-card:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-sm);
+}
+.student-card-top {
+    margin-bottom: 2px;
+}
+.student-project-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.38;
+    margin: 0;
+}
+.student-members-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.student-field-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+.student-card-footer {
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.82rem;
+    color: var(--text-soft);
+}
+.student-rep strong {
+    color: var(--text);
+    font-weight: 600;
+}
+.student-email {
+    color: var(--text-muted);
+    word-break: break-all;
+}
+
 /* ==========================================================================
    Responsive Design: Tablet, Portrait Tablet, Mobile & Small Phones
    ========================================================================== */
@@ -2805,6 +2885,15 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     .search input { min-height: 42px; }
 
     .bookings { padding: 6px 12px 16px; }
+    .admin-section-head { margin: 26px 0 12px; }
+    .students-grid {
+        padding: 12px 12px 16px;
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    .student-group-card {
+        padding: 14px;
+    }
     .booking {
         grid-template-columns: 1fr;
         gap: 10px;

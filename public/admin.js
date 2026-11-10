@@ -23,6 +23,8 @@
         currentMinute: 0,
         tab: 'upcoming',
         search: '',
+        studentRoleFilter: 'all',
+        studentSearch: '',
         loggingIn: false,
         loadReqId: 0,
         cancelTarget: null,
@@ -497,71 +499,89 @@
         return false;
     }
 
-    function renderStudentsTab(container, q) {
-        const list = state.students.filter((s) => matchesStudentSearch(s, q));
+    function renderStudentsSection() {
+        const container = $('#studentList');
+        if (!container) return;
+
+        const allCount = state.students.length;
+        const adviserCount = state.students.filter((s) => s.instructorRole === 'adviser').length;
+        const panelCount = state.students.filter((s) => s.instructorRole === 'panel').length;
+
+        if ($('#countStudentsAll')) $('#countStudentsAll').textContent = allCount;
+        if ($('#countStudentsAdviser')) $('#countStudentsAdviser').textContent = adviserCount;
+        if ($('#countStudentsPanel')) $('#countStudentsPanel').textContent = panelCount;
+
+        const q = state.studentSearch.toLowerCase();
+        const list = state.students.filter((s) => {
+            if (state.studentRoleFilter !== 'all' && s.instructorRole !== state.studentRoleFilter) {
+                return false;
+            }
+            return matchesStudentSearch(s, q);
+        });
+
+        container.innerHTML = '';
+
         if (!list.length) {
             const empty = el('div', 'empty-state');
-            empty.style.marginTop = '12px';
+            empty.style.gridColumn = '1 / -1';
             empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
-            empty.appendChild(el('p', '', q ? 'No students or groups match your search.' : 'No registered student groups yet.'));
+            empty.appendChild(
+                el('p', '', q || state.studentRoleFilter !== 'all' ? 'No student groups match your filter.' : 'No registered student groups yet.')
+            );
             container.appendChild(empty);
             return;
         }
 
-        const wrap = el('div', 'date-group');
-        wrap.appendChild(el('div', 'date-group-title', `Registered Groups & Students (${list.length})`));
-
         list.forEach((s, idx) => {
-            const card = el('div', 'booking student-group-card');
-            card.style.animationDelay = `${Math.min(idx, 12) * 25}ms`;
+            const card = el('div', 'student-group-card');
+            card.style.animationDelay = `${Math.min(idx, 12) * 20}ms`;
 
-            const levelText = s.projectLevelLabel || LEVEL_LABELS[s.projectLevel] || 'Group';
-            const side = el('div', 'booking-time');
-            side.appendChild(el('strong', '', levelText));
-            side.appendChild(
-                el('span', '', s.instructorRole === 'panel' ? 'Panel Member' : s.instructorRole === 'adviser' ? 'Adviser' : 'Student')
-            );
-
-            const body = el('div', 'booking-body');
-            const header = el('div', 'booking-name');
-            header.appendChild(el('span', 'booking-title', s.capstoneTitle || s.name));
-
-            if (s.projectLevelLabel || LEVEL_LABELS[s.projectLevel]) {
-                header.appendChild(el('span', 'badge rose', s.projectLevelLabel || LEVEL_LABELS[s.projectLevel]));
+            const top = el('div', 'student-card-top');
+            const badges = el('div', 'badge-row');
+            const levelText = s.projectLevelLabel || LEVEL_LABELS[s.projectLevel];
+            if (levelText) {
+                badges.appendChild(el('span', 'badge rose', levelText));
             }
             if (s.instructorRole === 'panel') {
-                header.appendChild(el('span', 'badge sky', 'Panel'));
+                badges.appendChild(el('span', 'badge sky', 'Panel Member'));
             } else if (s.instructorRole === 'adviser') {
-                header.appendChild(el('span', 'badge teal', 'Adviser'));
+                badges.appendChild(el('span', 'badge teal', 'Adviser'));
             }
 
             const studentBookings = state.bookings.filter(
-                (b) => (b.studentId && b.studentId === s.id) || (b.studentEmail && s.email && b.studentEmail.toLowerCase() === s.email.toLowerCase())
+                (b) => (b.studentId && b.studentId === s.id)
+                    || (b.studentEmail && s.email && b.studentEmail.toLowerCase() === s.email.toLowerCase())
             );
             const upcomingCount = studentBookings.filter((b) => !isCancelled(b) && !isPast(b)).length;
             if (upcomingCount > 0) {
-                header.appendChild(el('span', 'badge amber', `${upcomingCount} upcoming`));
+                badges.appendChild(el('span', 'badge amber', `${upcomingCount} upcoming`));
             } else if (studentBookings.length > 0) {
-                header.appendChild(el('span', 'badge muted-badge', `${studentBookings.length} total booking${studentBookings.length === 1 ? '' : 's'}`));
+                badges.appendChild(el('span', 'badge muted-badge', `${studentBookings.length} booking${studentBookings.length === 1 ? '' : 's'}`));
             }
-            body.appendChild(header);
+            top.appendChild(badges);
+
+            const projectTitle = el('h3', 'student-project-title', s.capstoneTitle || 'Untitled Project');
+            card.append(top, projectTitle);
 
             const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
+            const membersSection = el('div', 'student-members-block');
+            membersSection.appendChild(el('span', 'student-field-label', `Group Members (${members.length})`));
             const membersWrap = el('div', 'booking-members');
             members.forEach((m, mIdx) => {
                 membersWrap.appendChild(el('span', 'member-chip', mIdx === 0 ? `${m} (Rep)` : m));
             });
-            body.appendChild(membersWrap);
+            membersSection.appendChild(membersWrap);
+            card.appendChild(membersSection);
 
-            const metaParts = [`Representative: ${s.name}`];
-            if (s.email) metaParts.push(s.email);
-            body.appendChild(el('p', 'booking-meta', metaParts.join(' · ')));
+            const footer = el('div', 'student-card-footer');
+            footer.appendChild(el('strong', '', s.name));
+            if (s.email) {
+                footer.appendChild(el('span', 'muted small', s.email));
+            }
+            card.appendChild(footer);
 
-            card.append(side, body);
-            wrap.appendChild(card);
+            container.appendChild(card);
         });
-
-        container.appendChild(wrap);
     }
 
     function matchesBlockSearch(blk, q) {
@@ -657,16 +677,13 @@
         $('#countUpcoming').textContent = upcoming.length;
         $('#countPast').textContent = past.length;
         if ($('#countCancelled')) $('#countCancelled').textContent = cancelled.length;
-        if ($('#countStudents')) $('#countStudents').textContent = state.students.length;
+
+        renderStudentsSection();
 
         const q = state.search.toLowerCase();
         const container = $('#bookingList');
         container.innerHTML = '';
 
-        if (state.tab === 'students') {
-            renderStudentsTab(container, q);
-            return;
-        }
         if (state.tab === 'blocked') {
             renderBlockedTab(container, q);
             return;
@@ -739,41 +756,21 @@
                     };
                 header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
 
-                const levelLabel = b.projectLevelLabel || b.defenseLevelLabel || LEVEL_LABELS[b.projectLevel || b.defenseLevel] || null;
-                if (levelLabel && b.consultationType !== 'defense') {
-                    header.appendChild(el('span', 'badge rose', levelLabel));
-                }
-
-                if (b.instructorRole === 'panel') {
-                    header.appendChild(el('span', 'badge sky', 'Panel'));
-                } else if (b.instructorRole === 'adviser') {
-                    header.appendChild(el('span', 'badge teal', 'Adviser'));
-                }
                 if (b.notifiedAt) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
-                }
-                if (b.reference) {
-                    header.appendChild(el('code', '', `#${b.reference}`));
                 }
                 body.appendChild(header);
 
                 if (Array.isArray(b.members) && b.members.length) {
                     const membersWrap = el('div', 'booking-members');
-                    b.members.forEach((memberName, mIdx) => {
-                        membersWrap.appendChild(el('span', 'member-chip', mIdx === 0 ? `${memberName} (Rep)` : memberName));
+                    b.members.forEach((memberName) => {
+                        membersWrap.appendChild(el('span', 'member-chip', memberName));
                     });
                     body.appendChild(membersWrap);
                 }
 
                 if (b.reason) {
                     body.appendChild(el('p', 'booking-reason', b.reason));
-                }
-
-                const metaParts = [];
-                if (b.name) metaParts.push(`Rep: ${b.name}`);
-                if (b.studentEmail) metaParts.push(b.studentEmail);
-                if (metaParts.length) {
-                    body.appendChild(el('p', 'booking-meta', metaParts.join(' · ')));
                 }
 
                 if (isCancelled(b) && b.cancellationReason) {
@@ -828,11 +825,22 @@
         state.search = e.target.value.trim();
         render();
     });
-    document.querySelectorAll('.tab').forEach((tab) => {
+    document.querySelectorAll('.tab[data-tab]').forEach((tab) => {
         tab.addEventListener('click', () => {
-            document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
+            document.querySelectorAll('.tab[data-tab]').forEach((t) => t.classList.toggle('active', t === tab));
             state.tab = tab.dataset.tab;
             render();
+        });
+    });
+    $('#studentSearchInput')?.addEventListener('input', (e) => {
+        state.studentSearch = e.target.value.trim();
+        renderStudentsSection();
+    });
+    document.querySelectorAll('.student-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.student-tab').forEach((t) => t.classList.toggle('active', t === tab));
+            state.studentRoleFilter = tab.dataset.role || 'all';
+            renderStudentsSection();
         });
     });
 

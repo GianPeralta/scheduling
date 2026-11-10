@@ -107,15 +107,37 @@
                         <button class="tab active" data-tab="upcoming">Upcoming <span class="count" id="countUpcoming">0</span></button>
                         <button class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
                         <button class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
-                        <button class="tab" data-tab="students">Students <span class="count" id="countStudents">0</span></button>
                         <button class="tab" data-tab="blocked">Blocked <span class="count" id="countBlocked">0</span></button>
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                        <input type="search" id="searchInput" placeholder="Search…" />
+                        <input type="search" id="searchInput" placeholder="Search consultations…" />
                     </label>
                 </div>
                 <div class="bookings" id="bookingList"></div>
+            </div>
+
+            <!-- Separate Section: Registered Students & Groups -->
+            <div class="admin-section-head">
+                <div>
+                    <h2>Student Groups</h2>
+                    <p class="muted small">Registered Capstone &amp; Thesis groups, members, course level, and your role.</p>
+                </div>
+            </div>
+
+            <div class="card bookings-card students-card">
+                <div class="toolbar">
+                    <div class="tabs student-tabs" role="tablist">
+                        <button class="tab student-tab active" data-role="all">All Groups <span class="count" id="countStudentsAll">0</span></button>
+                        <button class="tab student-tab" data-role="adviser">Adviser <span class="count" id="countStudentsAdviser">0</span></button>
+                        <button class="tab student-tab" data-role="panel">Panel <span class="count" id="countStudentsPanel">0</span></button>
+                    </div>
+                    <label class="search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                        <input type="search" id="studentSearchInput" placeholder="Search project, member, course…" />
+                    </label>
+                </div>
+                <div class="students-grid" id="studentList"></div>
             </div>
         </section>
     </main>
