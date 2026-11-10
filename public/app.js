@@ -474,9 +474,7 @@
                 if (!changed) return;
                 firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
             }
-            const fallbackBookable = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d]?.bookable);
             if (firstOpen) await selectDate(firstOpen, false, true);
-            else if (fallbackBookable) await selectDate(fallbackBookable, false, true);
             else resetSlotsPanel();
         }
     }
@@ -646,23 +644,22 @@
                 btn.setAttribute('aria-disabled', 'true');
                 btn.title = info.blockReason
                     ? `Unavailable — ${info.blockReason}`
-                    : 'Unavailable on this date';
-                btn.addEventListener('click', () => selectDate(ds, true));
+                    : 'Unavailable';
+                btn.addEventListener('click', () => showCalendarDayNotice(ds));
             } else if (info.open === 0) {
                 btn.classList.add('full');
                 btn.setAttribute('aria-disabled', 'true');
                 btn.title = 'Fully booked';
-                btn.addEventListener('click', () => selectDate(ds, true));
+                btn.addEventListener('click', () => showCalendarDayNotice(ds));
             } else {
                 btn.classList.add('available');
-                if (info.hasBlocks) btn.classList.add('has-block');
                 const openTitle = state.consultationPurpose === 'dropoff'
                     ? 'Open for manuscript drop-off'
                     : state.consultationPurpose === 'defense'
                         ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
                         : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
-                btn.title = info.hasBlocks
-                    ? `${openTitle} · Note: ${info.blockReason || 'Some hours blocked by instructor'}`
+                btn.title = info.hasBlocks && info.blockReason
+                    ? `${openTitle} (${info.blockReason})`
                     : openTitle;
                 btn.addEventListener('click', () => selectDate(ds, true));
             }
@@ -672,169 +669,33 @@
         }
 
         if (!loading) {
-            renderMonthBlocksBox();
-            updateCalendarDayNotice(state.selectedDate);
+            hideCalendarDayNotice();
         }
     }
 
-    function renderMonthBlocksBox() {
-        const box = $('#monthBlocksBox');
-        if (!box) return;
-        const blockedDates = Object.keys(state.monthDays)
-            .sort()
-            .filter((d) => state.monthDays[d]?.bookable && (state.monthDays[d]?.blocked || state.monthDays[d]?.hasBlocks));
-
-        if (!blockedDates.length) {
-            box.innerHTML = '';
-            box.classList.add('hidden');
-            return;
-        }
-
-        box.innerHTML = '';
-        const head = document.createElement('div');
-        head.className = 'month-blocks-head';
-        const badge = document.createElement('span');
-        badge.className = 'badge danger';
-        badge.textContent = 'Unavailable';
-        const headText = document.createElement('span');
-        headText.textContent = 'Blocked schedules this month (tap a date for details)';
-        head.append(badge, headText);
-        box.appendChild(head);
-
-        const list = document.createElement('div');
-        list.className = 'month-blocks-list';
-
-        blockedDates.forEach((d) => {
-            const info = state.monthDays[d];
-            const blocks = Array.isArray(info.blocks) && info.blocks.length
-                ? info.blocks
-                : [{ isFullDay: true, label: 'Entire day', reason: info.blockReason }];
-
-            blocks.forEach((blk) => {
-                const item = document.createElement('button');
-                item.type = 'button';
-                item.className = 'month-block-item' + (d === state.selectedDate ? ' active' : '');
-                item.dataset.date = d;
-
-                const top = document.createElement('div');
-                top.className = 'month-block-top';
-
-                const dateLabel = document.createElement('strong');
-                dateLabel.textContent = formatShortWeekdayDate(d);
-
-                const scopeBadge = document.createElement('span');
-                scopeBadge.className = 'month-block-scope';
-                scopeBadge.textContent = blk.isFullDay ? 'Entire day' : blk.label;
-
-                top.append(dateLabel, scopeBadge);
-
-                const reasonEl = document.createElement('span');
-                reasonEl.className = 'month-block-reason';
-                const reasonText = blk.reason || info.blockReason;
-                reasonEl.textContent = reasonText
-                    ? `Reason: ${reasonText}`
-                    : 'Reason: Instructor unavailable';
-
-                item.append(top, reasonEl);
-                item.addEventListener('click', () => selectDate(d, true));
-                list.appendChild(item);
-            });
-        });
-
-        box.appendChild(list);
-        box.classList.remove('hidden');
-    }
-
-    function updateCalendarDayNotice(ds, slotData = null) {
-        document.querySelectorAll('.month-block-item').forEach((el) => {
-            el.classList.toggle('active', el.dataset.date === ds);
-        });
-
+    function hideCalendarDayNotice() {
         const notice = $('#calendarDayNotice');
         if (!notice) return;
-        if (!ds) {
-            notice.innerHTML = '';
-            notice.className = 'calendar-day-notice hidden';
-            return;
-        }
-
-        const info = state.monthDays[ds];
-        const blocks = (Array.isArray(slotData?.blocks) && slotData.blocks.length)
-            ? slotData.blocks
-            : (Array.isArray(info?.blocks) ? info.blocks : []);
-        const isBlocked = Boolean(slotData?.blocked ?? info?.blocked);
-        const reason = slotData?.blockReason
-            || info?.blockReason
-            || blocks.find((b) => b.reason)?.reason
-            || null;
-
-        if (isBlocked || blocks.length > 0) {
-            notice.innerHTML = '';
-            notice.className = `calendar-day-notice ${isBlocked ? 'is-blocked' : 'is-partial'}`;
-
-            const top = document.createElement('div');
-            top.className = 'calendar-notice-top';
-
-            const badge = document.createElement('span');
-            badge.className = `badge ${isBlocked ? 'danger' : 'amber'}`;
-            badge.textContent = isBlocked ? 'Unavailable' : 'Partial Block';
-
-            const dateStrong = document.createElement('strong');
-            dateStrong.textContent = formatLongDate(ds);
-
-            top.append(badge, dateStrong);
-            notice.appendChild(top);
-
-            if (blocks.length > 0) {
-                blocks.forEach((blk) => {
-                    const p = document.createElement('p');
-                    p.className = 'calendar-notice-reason';
-                    const scopeLabel = blk.isFullDay ? 'Entire day blocked' : `Blocked (${blk.label})`;
-                    const rText = blk.reason || reason || 'Instructor is unavailable during this schedule.';
-                    p.innerHTML = `<strong>${scopeLabel}:</strong> `;
-                    const span = document.createElement('span');
-                    span.textContent = rText;
-                    p.appendChild(span);
-                    notice.appendChild(p);
-                });
-            } else {
-                const p = document.createElement('p');
-                p.className = 'calendar-notice-reason';
-                p.innerHTML = '<strong>Reason:</strong> ';
-                const span = document.createElement('span');
-                span.textContent = reason || 'Instructor is unavailable on this date.';
-                p.appendChild(span);
-                notice.appendChild(p);
-            }
-            return;
-        }
-
-        if (info && info.bookable && info.open === 0) {
-            notice.innerHTML = '';
-            notice.className = 'calendar-day-notice is-full';
-
-            const top = document.createElement('div');
-            top.className = 'calendar-notice-top';
-
-            const badge = document.createElement('span');
-            badge.className = 'badge muted-badge';
-            badge.textContent = 'Full';
-
-            const dateStrong = document.createElement('strong');
-            dateStrong.textContent = formatLongDate(ds);
-
-            top.append(badge, dateStrong);
-
-            const p = document.createElement('p');
-            p.className = 'calendar-notice-reason';
-            p.textContent = 'All consultation slots on this date are already booked.';
-
-            notice.append(top, p);
-            return;
-        }
-
-        notice.innerHTML = '';
+        notice.textContent = '';
         notice.className = 'calendar-day-notice hidden';
+    }
+
+    function showCalendarDayNotice(ds) {
+        const notice = $('#calendarDayNotice');
+        if (!notice || !ds) return;
+        const info = state.monthDays[ds];
+        if (!info) return;
+
+        const label = formatShortWeekdayDate(ds);
+        if (info.blocked) {
+            notice.textContent = info.blockReason
+                ? `${label} — Unavailable: ${info.blockReason}`
+                : `${label} — Unavailable`;
+            notice.className = 'calendar-day-notice is-blocked';
+        } else {
+            notice.textContent = `${label} — Fully booked`;
+            notice.className = 'calendar-day-notice is-full';
+        }
     }
 
     function changeMonth(delta) {
@@ -870,11 +731,11 @@
         state.activeWindowLabel = null;
         state.defenseDay = null;
         updateSelectionBox();
+        hideCalendarDayNotice();
 
         document.querySelectorAll('.day.selected').forEach((el) => el.classList.remove('selected'));
         const btn = document.querySelector(`.day[data-date="${ds}"]`);
         if (btn) btn.classList.add('selected');
-        updateCalendarDayNotice(ds);
 
         $('#slotsTitle').textContent = formatLongDate(ds);
         $('#slotsSubtitle').textContent = 'Loading available times…';
@@ -895,7 +756,6 @@
             if (reqId !== state.slotsRequest) return;
             state.loadingSlotsKey = null;
             state.loadedSlotsKey = key;
-            updateCalendarDayNotice(ds, data);
             if (purpose === 'defense') {
                 state.defenseDay = data;
                 renderDefenseSlots(data);
@@ -903,13 +763,7 @@
                 renderSlots(data.slots, data);
             }
             if (fromUser && window.innerWidth <= 820) {
-                const dayInfo = state.monthDays[ds];
-                const isDayFullyBlocked = Boolean(data?.blocked ?? dayInfo?.blocked);
-                if (isDayFullyBlocked) {
-                    ($('#calendarDayNotice') || $('.slots'))?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                } else {
-                    $('.slots')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
+                $('.slots')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         } catch (err) {
             if (reqId !== state.slotsRequest) return;
@@ -918,60 +772,6 @@
             $('#slotsSubtitle').textContent = 'Could not load time slots.';
             toast(err.message, 'error');
         }
-    }
-
-    function createDayBlocksBanner(data) {
-        const blocks = Array.isArray(data?.blocks) ? data.blocks : [];
-        const isFullBlocked = Boolean(data?.blocked);
-        if (!isFullBlocked && !blocks.length) return null;
-
-        const banner = document.createElement('div');
-        banner.className = 'slots-blocked-banner';
-
-        const head = document.createElement('div');
-        head.className = 'slots-blocked-head';
-
-        const badge = document.createElement('span');
-        badge.className = 'badge danger';
-        badge.textContent = isFullBlocked ? 'Unavailable' : 'Blocked Time';
-
-        const title = document.createElement('strong');
-        title.textContent = isFullBlocked
-            ? 'Blocked by Instructor'
-            : 'Some hours on this date are blocked';
-
-        head.append(badge, title);
-        banner.appendChild(head);
-
-        if (blocks.length) {
-            blocks.forEach((blk) => {
-                const item = document.createElement('div');
-                item.className = 'slots-blocked-item';
-
-                const scope = document.createElement('strong');
-                scope.textContent = blk.isFullDay ? 'Entire day:' : `${blk.label}:`;
-
-                const reason = document.createElement('span');
-                reason.textContent = blk.reason || data?.blockReason || 'Instructor is unavailable during this schedule.';
-
-                item.append(scope, reason);
-                banner.appendChild(item);
-            });
-        } else {
-            const item = document.createElement('div');
-            item.className = 'slots-blocked-item';
-
-            const scope = document.createElement('strong');
-            scope.textContent = 'Reason:';
-
-            const reason = document.createElement('span');
-            reason.textContent = data?.blockReason || 'Instructor is unavailable on this date.';
-
-            item.append(scope, reason);
-            banner.appendChild(item);
-        }
-
-        return banner;
     }
 
     /**
@@ -1121,25 +921,18 @@
             });
         });
 
-        const blockBanner = createDayBlocksBanner(data);
-        if (blockBanner) {
-            list.appendChild(blockBanner);
-        }
-
         if (fittingGaps.length) {
             $('#slotsSubtitle').textContent = `Open: ${fittingGaps.map((f) => f.label).join(' · ')}`;
         } else if (data.blocked || (data.blocks && data.blocks.length > 0)) {
             $('#slotsSubtitle').textContent = data.blockReason
                 ? `Unavailable — ${data.blockReason}`
-                : 'Instructor is unavailable on this date.';
+                : 'Unavailable on this date.';
         } else {
             $('#slotsSubtitle').textContent = `No open ${levelInfo.durationLabel} slot left on this day.`;
         }
 
         if (!fittingGaps.length) {
-            if (!blockBanner) {
-                list.innerHTML = '<div class="empty-state"><p>No available time on this day.</p></div>';
-            }
+            list.innerHTML = '<div class="empty-state"><p>No available time on this day.</p></div>';
             return;
         }
 
@@ -1292,9 +1085,7 @@
     function createSlotButton(slot, i) {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'slot'
-            + (slot.isDropoff ? ' slot-dropoff' : '')
-            + (!slot.available && slot.blocked ? ' blocked-slot' : '');
+        btn.className = 'slot' + (slot.isDropoff ? ' slot-dropoff' : '');
         btn.style.animationDelay = `${Math.min(i, 12) * 18}ms`;
 
         const time = document.createElement('span');
@@ -1307,7 +1098,7 @@
             if (slot.blocked) {
                 range.textContent = slot.blockReason
                     ? `Unavailable — ${slot.blockReason}`
-                    : 'Unavailable (Blocked)';
+                    : 'Unavailable';
             } else {
                 range.textContent = 'Booked';
             }
@@ -1351,11 +1142,6 @@
             tabsEl.classList.add('hidden');
         }
 
-        const blockBanner = createDayBlocksBanner(data);
-        if (blockBanner) {
-            list.appendChild(blockBanner);
-        }
-
         const openCount = slots.filter((s) => s.available).length;
         const meta = getMeta();
         const hasBlocks = Boolean(data?.blocked || (data?.blocks && data.blocks.length > 0));
@@ -1363,7 +1149,7 @@
         if (!openCount && hasBlocks) {
             $('#slotsSubtitle').textContent = data?.blockReason
                 ? `Unavailable — ${data.blockReason}`
-                : 'Instructor is unavailable on this date.';
+                : 'Unavailable on this date.';
         } else if (state.consultationPurpose === 'dropoff') {
             $('#slotsSubtitle').textContent = openCount
                 ? 'Select the drop-off window below'
@@ -1375,9 +1161,7 @@
         }
 
         if (!slots.length) {
-            if (!blockBanner) {
-                list.innerHTML = '<div class="empty-state"><p>No time slots on this day.</p></div>';
-            }
+            list.innerHTML = '<div class="empty-state"><p>No time slots on this day.</p></div>';
             return;
         }
 
@@ -1647,7 +1431,7 @@
         state.selectedDate = null;
         state.loadingSlotsKey = null;
         state.loadedSlotsKey = null;
-        updateCalendarDayNotice(null);
+        hideCalendarDayNotice();
         const tabsEl = $('#windowTabs');
         if (tabsEl) {
             tabsEl.innerHTML = '';
@@ -1929,21 +1713,6 @@
         if (state.student.capstoneTitle && $('#teamInput') && !$('#teamInput').value.trim()) {
             $('#teamInput').value = state.student.capstoneTitle;
         }
-        const meta = getMeta();
-        const badgeEl = $('#step3PurposeBadge');
-        if (badgeEl) {
-            badgeEl.textContent = meta.summary;
-            badgeEl.className = `badge ${meta.color}`;
-        }
-        setText('#step3DateText', state.selectedDate ? formatLongDate(state.selectedDate) : '—');
-        setText(
-            '#step3TimeText',
-            state.selectedSlot
-                ? (state.selectedSlot.isDropoff
-                    ? `${state.selectedSlot.label} (Drop-off)`
-                    : `${state.selectedSlot.label} – ${state.selectedSlot.endLabel}`)
-                : '—'
-        );
         updatePurposeUI();
         syncMemberControls();
     }
@@ -2404,7 +2173,6 @@
         $('#prevMonth')?.addEventListener('click', () => changeMonth(-1));
         $('#nextMonth')?.addEventListener('click', () => changeMonth(1));
         $('#backBtn')?.addEventListener('click', () => goToStep(2));
-        $('#step3ChangeSlotBtn')?.addEventListener('click', () => goToStep(2));
 
         document.querySelectorAll('.step').forEach((stepEl) => {
             const targetStep = Number(stepEl.dataset.step);

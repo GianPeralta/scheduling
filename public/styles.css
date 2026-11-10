@@ -757,117 +757,23 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 .calendar-day-notice {
     margin-top: 12px;
-    padding: 11px 13px;
+    padding: 8px 12px;
     border-radius: var(--radius-sm);
-    display: grid;
-    gap: 4px;
-    font-size: 0.84rem;
-    line-height: 1.45;
-    animation: rise 0.22s var(--ease) both;
+    font-size: 0.82rem;
+    font-weight: 500;
+    line-height: 1.4;
+    word-break: break-word;
+    animation: rise 0.2s var(--ease) both;
 }
 .calendar-day-notice.is-blocked {
     background-color: var(--danger-soft);
     border: 1px solid var(--danger-border);
-    border-left: 3.5px solid var(--danger);
-    color: var(--text);
-}
-.calendar-day-notice.is-partial {
-    background-color: var(--amber-soft);
-    border: 1px solid var(--amber-border);
-    border-left: 3.5px solid #d97706;
-    color: var(--text);
+    color: #991b1b;
 }
 .calendar-day-notice.is-full {
     background-color: var(--surface-subtle);
-    border: 1px solid var(--border-strong);
-    border-left: 3.5px solid var(--muted);
+    border: 1px solid var(--border);
     color: var(--text-soft);
-}
-.calendar-notice-top {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 8px;
-}
-.calendar-notice-top strong {
-    font-size: 0.85rem;
-    color: var(--text);
-}
-.calendar-notice-reason {
-    font-size: 0.83rem;
-    color: var(--text);
-    line-height: 1.45;
-    word-break: break-word;
-}
-.calendar-notice-reason strong {
-    color: #991b1b;
-}
-.calendar-day-notice.is-partial .calendar-notice-reason strong {
-    color: var(--amber-text);
-}
-
-.month-blocks-box {
-    margin-top: 12px;
-    padding: 11px 12px;
-    border-radius: var(--radius);
-    background-color: #fffafa;
-    border: 1px solid var(--danger-border);
-    display: grid;
-    gap: 8px;
-}
-.month-blocks-head {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 8px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--text-soft);
-}
-.month-blocks-list {
-    display: grid;
-    gap: 6px;
-}
-.month-block-item {
-    width: 100%;
-    display: grid;
-    gap: 3px;
-    padding: 9px 11px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--danger-border);
-    background-color: var(--surface);
-    text-align: left;
-    color: var(--text);
-    transition: all 0.16s var(--ease);
-}
-.month-block-item:hover,
-.month-block-item.active {
-    border-color: var(--danger);
-    background-color: var(--danger-soft);
-    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.12);
-}
-.month-block-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 4px 8px;
-    font-size: 0.83rem;
-}
-.month-block-scope {
-    font-size: 0.73rem;
-    font-weight: 700;
-    color: var(--danger);
-    background-color: var(--danger-soft);
-    padding: 1px 7px;
-    border-radius: 999px;
-    border: 1px solid var(--danger-border);
-}
-.month-block-reason {
-    font-size: 0.81rem;
-    color: var(--text-soft);
-    line-height: 1.4;
-    word-break: break-word;
 }
 
 /* ---------- slots ---------- */
@@ -918,60 +824,6 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 .slot.taken .slot-time { color: #94a3b8; text-decoration: line-through; }
 .slot.taken .slot-range { color: #94a3b8; }
-.slot.taken.blocked-slot {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 3px;
-    background-color: #fffafa;
-    border-color: var(--danger-border);
-    color: var(--text-soft);
-}
-.slot.taken.blocked-slot .slot-time {
-    color: #991b1b;
-    opacity: 0.85;
-}
-.slot.taken.blocked-slot .slot-range {
-    color: #b91c1c;
-    font-weight: 600;
-    font-size: 0.8rem;
-    line-height: 1.38;
-    white-space: normal;
-    word-break: break-word;
-}
-
-.slots-blocked-banner {
-    grid-column: 1 / -1;
-    padding: 12px 14px;
-    border-radius: var(--radius);
-    background-color: var(--danger-soft);
-    border: 1px solid var(--danger-border);
-    border-left: 4px solid var(--danger);
-    display: grid;
-    gap: 6px;
-    animation: rise 0.25s var(--ease) both;
-}
-.slots-blocked-head {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 0.88rem;
-    color: #991b1b;
-}
-.slots-blocked-item {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 6px;
-    font-size: 0.84rem;
-    line-height: 1.45;
-    color: var(--text);
-    word-break: break-word;
-}
-.slots-blocked-item strong {
-    color: #991b1b;
-    flex-shrink: 0;
-}
 .slot.selected {
     flex-direction: column;
     align-items: flex-start;
@@ -2355,27 +2207,6 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .booking-actions:empty {
     display: none;
 }
-.step3-selection-summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 10px 14px;
-    padding: 12px 14px;
-    border-radius: var(--radius);
-    background-color: var(--surface-subtle);
-    border: 1.5px solid var(--primary-border);
-}
-.step3-summary-info {
-    display: grid;
-    justify-items: start;
-    gap: 2px;
-    min-width: 0;
-}
-.step3-summary-info strong {
-    font-size: 0.92rem;
-    color: var(--text);
-}
 .btn-sm {
     padding: 8px 12px;
     font-size: 0.82rem;
@@ -2503,67 +2334,8 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 
 /* ---------- Admin Blocked Dates & Times ---------- */
-.blocked-overview-card {
-    padding: 16px 20px;
-    margin-bottom: 18px;
-    border-color: var(--danger-border);
-    background-color: #fffafa;
-    box-shadow: var(--shadow-sm);
-    display: grid;
-    gap: 12px;
-}
-.blocked-overview-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-.blocked-overview-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.92rem;
-}
-.blocked-pill-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-.blocked-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 10px 7px 12px;
-    border-radius: var(--radius-sm);
-    background-color: var(--surface);
-    border: 1px solid var(--danger-border);
-    font-size: 0.84rem;
-}
-.blocked-pill-info {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-.blocked-pill-remove {
-    padding: 4px 9px;
-    border-radius: 6px;
-    border: 1px solid var(--border-strong);
-    background-color: var(--surface-subtle);
-    color: var(--text-soft);
-    font-size: 0.76rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.15s var(--ease);
-}
-.blocked-pill-remove:hover:not(:disabled) {
-    border-color: var(--primary);
-    background-color: var(--primary-soft);
-    color: var(--primary);
-}
-
 .booking.booking-blocked {
+    align-items: center;
     border-color: var(--danger-border);
     background-color: #fffdfd;
 }
@@ -2573,51 +2345,24 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     color: var(--danger);
 }
 
-.block-date-grid,
 .block-time-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
 }
-.block-date-grid.single-col {
-    grid-template-columns: 1fr;
-}
-.block-time-section {
-    display: grid;
-    gap: 12px;
-    padding: 14px;
-    border-radius: var(--radius);
-    background-color: var(--surface-subtle);
-    border: 1px solid var(--border);
-}
 .block-cancel-check {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 10px;
-    padding: 12px 14px;
-    border-radius: var(--radius-sm);
-    background-color: var(--surface-subtle);
-    border: 1px solid var(--border);
+    font-size: 0.88rem;
+    color: var(--text-soft);
     cursor: pointer;
 }
 .block-cancel-check input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    margin-top: 2px;
+    width: 17px;
+    height: 17px;
     accent-color: var(--primary);
     flex-shrink: 0;
-}
-.block-cancel-check div {
-    display: grid;
-    gap: 2px;
-}
-.block-cancel-check strong {
-    font-size: 0.88rem;
-    color: var(--text);
-}
-.block-cancel-check small.conflict-active {
-    color: var(--danger);
-    font-weight: 600;
 }
 
 /* ==========================================================================
