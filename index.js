@@ -22,6 +22,7 @@ const SYSTEM_DURATION = 15;   // 15 minutes for System Consultation
 const DROPOFF_DURATION = 0;   // Drop-off only (takes 0 minutes off the schedule)
 const RETRIEVAL_DURATION = 5; // 5 minutes for Manuscript Retrieval
 const LETTER_DURATION = 5;    // 5 minutes for Communication Letter Signature
+const OTHER_DURATION = 10;    // 10 minutes for Other Consultations
 
 const MIN_MEMBERS = 1;        // Solo (1), pair (2), or 3-member Capstone / Thesis groups allowed
 const MAX_MEMBERS = 3;
@@ -60,6 +61,14 @@ const CONSULTATION_TYPES = {
         durationMinutes: LETTER_DURATION,
         durationLabel: '5 minutes',
         adviserOnly: true,
+    },
+    other: {
+        id: 'other',
+        title: 'Other Consultations',
+        description: 'Consult about other Capstone or Thesis concerns.',
+        note: 'Available for all students.',
+        durationMinutes: OTHER_DURATION,
+        durationLabel: '10 minutes',
     },
     defense: {
         id: 'defense',
@@ -1222,7 +1231,7 @@ function formatConsultationTitle(consultationType, defenseLevel = null) {
         return level ? `${level.label} Defense` : 'Defense';
     }
     if (CONSULTATION_TYPES[consultationType]) return CONSULTATION_TYPES[consultationType].title;
-    if (consultationType === 'other') return 'Other Consultation';
+    if (consultationType === 'other') return 'Other Consultations';
     return 'Consultation';
 }
 

@@ -15,6 +15,7 @@
         dropoff: 'amber',
         retrieval: 'sky',
         letter: 'violet',
+        other: 'sky',
         defense: 'rose',
     };
 

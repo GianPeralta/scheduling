@@ -9,7 +9,7 @@
         dropoff: { label: 'Drop-off only', cls: 'amber' },
         retrieval: { label: 'Retrieval · 5m', cls: 'sky' },
         letter: { label: 'Comm. Letter · 5m', cls: 'violet' },
-        other: { label: 'Other · 6m', cls: 'sky' },
+        other: { label: 'Other · 10m', cls: 'sky' },
     };
 
     const state = {

@@ -8,7 +8,7 @@ create table if not exists public.appointments (
     appointment_date  date        not null,
     start_hour        smallint    not null,
     start_minute      smallint    not null check (start_minute between 0 and 1439),
-    duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 15, 60, 80, 120)),
+    duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 10, 15, 60, 80, 120)),
     consultation_type   text        not null default 'system'
                                     check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other')),
     status              text        not null default 'scheduled'
@@ -58,7 +58,7 @@ alter table public.appointments drop constraint if exists appointments_slot_uniq
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
 alter table public.appointments drop constraint if exists appointments_duration_minutes_check;
 alter table public.appointments add constraint appointments_duration_minutes_check
-    check (duration_minutes in (0, 5, 6, 15, 60, 80, 120));
+    check (duration_minutes in (0, 5, 6, 10, 15, 60, 80, 120));
 alter table public.appointments drop constraint if exists appointments_consultation_type_check;
 alter table public.appointments add constraint appointments_consultation_type_check
     check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other'));
