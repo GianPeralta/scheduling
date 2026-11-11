@@ -446,7 +446,7 @@
     async function notifyManuscriptChecked(b, btn) {
         const target = b.studentEmail || 'student';
         const again = b.notifiedAt ? ' again' : '';
-        if (!confirm(`Send "Manuscript Checked — Please Schedule Retrieval" email${again} to ${target}?`)) return;
+        if (!confirm(`Send "Manuscript Ready for Pickup" notification email${again} to ${target}?`)) return;
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'Sending…';

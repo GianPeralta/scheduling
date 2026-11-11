@@ -1848,39 +1848,42 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     }
 
     const title = row.capstone_title || row.team_name || 'your Capstone / Thesis manuscript';
-    const greeting = `Hi ${row.student_name},`;
+    const greeting = `Dear ${row.student_name},`;
     const siteOrigin = `${req.protocol}://${req.get('host')}`;
-    const subject = `Manuscript Checked — Schedule Your Retrieval (${TEACHER_NAME})`;
+    const subject = `Manuscript Ready for Pickup — Please Schedule Your Retrieval`;
     const bodyText = [
         greeting,
         '',
-        `Good day! Your manuscript (${title}) has been checked by ${TEACHER_NAME}.`,
+        `Good day. This is to inform you that your manuscript (${title}) has been reviewed and is now ready for pickup.`,
         '',
-        'Please return to the consultation scheduling website to schedule a "Retrieval of Manuscript" (5 minutes) slot so your instructor can discuss the needed changes with your group:',
+        'Kindly visit the consultation scheduling portal to book a "Retrieval of Manuscript" (5-minute) appointment so the necessary revisions and feedback can be discussed with your group:',
         siteOrigin,
         '',
-        'Important reminders:',
-        '• Consultations must be booked at least 1 day before the consultation day.',
-        '• All members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
+        'Important Reminders:',
+        '• Appointments must be scheduled at least one (1) day prior to your preferred consultation date.',
+        '• All group members are required to be present during the manuscript retrieval; incomplete groups will not be accommodated.',
+        '',
+        'Thank you.',
     ].join('\n');
 
     const bodyHtml = `
-        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.55">
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
             <p>${escapeHtml(greeting)}</p>
-            <p>Good day! Your manuscript (<strong>${escapeHtml(title)}</strong>) has been checked by <strong>${escapeHtml(TEACHER_NAME)}</strong>.</p>
-            <p>Please return to the consultation scheduling website and book a <strong>Retrieval of Manuscript (5 minutes)</strong> slot so your instructor can discuss the needed revisions with your group:</p>
-            <p style="margin:20px 0">
+            <p>Good day. This is to inform you that your manuscript (<strong>${escapeHtml(title)}</strong>) has been reviewed and is now <strong>ready for pickup</strong>.</p>
+            <p>Kindly visit the consultation scheduling portal to book a <strong>Retrieval of Manuscript (5-minute)</strong> appointment so the necessary revisions and feedback can be discussed with your group:</p>
+            <p style="margin:22px 0">
                 <a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">
                     Schedule Manuscript Retrieval
                 </a>
             </p>
             <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
-                <strong>Important reminders:</strong>
+                <strong>Important Reminders:</strong>
                 <ul style="margin:6px 0 0;padding-left:18px">
-                    <li>Bookings must be made at least <strong>1 day before</strong> the consultation day.</li>
-                    <li><strong>All members must be present</strong> during Manuscript Retrieval, otherwise you will not be accommodated.</li>
+                    <li>Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred consultation date.</li>
+                    <li><strong>All group members are required to be present</strong> during the manuscript retrieval; incomplete groups will not be accommodated.</li>
                 </ul>
             </div>
+            <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
         </div>`;
 
     await mailer().sendMail({
