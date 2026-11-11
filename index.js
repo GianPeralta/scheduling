@@ -1861,7 +1861,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
         '',
         'Important Reminders:',
         '• Appointments must be scheduled at least one (1) day prior to your preferred consultation date.',
-        '• All group members are required to be present during the manuscript retrieval; incomplete groups will not be accommodated.',
+        '• At least two (2) or all group members are required to be present during the manuscript retrieval; otherwise, your group will not be accommodated.',
         '',
         'Thank you.',
     ].join('\n');
@@ -1880,7 +1880,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
                 <strong>Important Reminders:</strong>
                 <ul style="margin:6px 0 0;padding-left:18px">
                     <li>Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred consultation date.</li>
-                    <li><strong>All group members are required to be present</strong> during the manuscript retrieval; incomplete groups will not be accommodated.</li>
+                    <li><strong>At least two (2) or all group members are required to be present</strong> during the manuscript retrieval; otherwise, your group will not be accommodated.</li>
                 </ul>
             </div>
             <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
