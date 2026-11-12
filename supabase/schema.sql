@@ -143,7 +143,7 @@ create table if not exists public.email_otps (
     capstone_title   text,
     instructor_role  text,
     members          text[],
-    purpose          text        not null check (purpose in ('register', 'reset')),
+    purpose          text        not null check (purpose in ('register', 'reset', 'email_change')),
     otp_code         text,
     code_hash        text        not null,
     status           text        not null default 'pending'
@@ -178,6 +178,9 @@ alter table public.email_otps add column if not exists members text[];
 alter table public.email_otps add column if not exists otp_code text;
 alter table public.email_otps add column if not exists status text not null default 'pending';
 alter table public.email_otps add column if not exists verified_at timestamptz;
+alter table public.email_otps drop constraint if exists email_otps_purpose_check;
+alter table public.email_otps add constraint email_otps_purpose_check
+    check (purpose in ('register', 'reset', 'email_change'));
 create index if not exists email_otps_email_purpose_idx on public.email_otps (email, purpose, created_at desc);
 
 -- Link every booking to the student account that made it

@@ -1942,7 +1942,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 
 .modal-card.modal-profile {
-    max-width: 620px;
+    max-width: 580px;
     max-height: 88vh;
     display: flex;
     flex-direction: column;
@@ -1950,6 +1950,10 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 .modal-card.modal-profile .modal-head {
     margin-bottom: 0;
+}
+.profile-view-stack {
+    display: grid;
+    gap: 14px;
 }
 .profile-summary-card {
     padding: 14px 16px;

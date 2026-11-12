@@ -62,6 +62,7 @@
                     </div>
                     <p class="project-box-title" id="projectTitleText"></p>
                     <p class="muted small" id="projectMembersText"></p>
+                    <button type="button" class="link-btn project-profile-link" id="sidebarEditProfileBtn">Edit info</button>
                 </div>
 
                 <div class="selection hidden" id="selectionBox">
@@ -538,29 +539,128 @@
                 </button>
             </div>
 
-            <div class="profile-summary-card" id="profileSummaryCard">
-                <div class="profile-summary-top">
-                    <div>
-                        <span class="selection-label">Capstone / Thesis</span>
-                        <h4 id="profileCapstoneTitle">—</h4>
+            <!-- Summary View -->
+            <div id="profileSummaryView" class="profile-view-stack">
+                <div class="profile-summary-card" id="profileSummaryCard">
+                    <div class="profile-summary-top">
+                        <div>
+                            <span class="selection-label">Capstone / Thesis</span>
+                            <h4 id="profileCapstoneTitle">—</h4>
+                        </div>
+                        <div class="badge-row">
+                            <span class="badge rose hidden" id="profileLevelBadge"></span>
+                            <span class="badge teal" id="profileRoleBadge">Adviser</span>
+                        </div>
                     </div>
-                    <div class="badge-row">
-                        <span class="badge rose hidden" id="profileLevelBadge"></span>
-                        <span class="badge teal" id="profileRoleBadge">Adviser</span>
+                    <div class="profile-meta-row">
+                        <span id="profileRepName"></span>
+                        <span class="muted">·</span>
+                        <span class="muted" id="profileRepEmail"></span>
+                    </div>
+                    <div class="profile-members-wrap">
+                        <span class="selection-label">Group members</span>
+                        <div class="booking-members" id="profileMemberChips"></div>
                     </div>
                 </div>
-                <div class="profile-meta-row">
-                    <span id="profileRepName"></span>
-                    <span class="muted">·</span>
-                    <span class="muted" id="profileRepEmail"></span>
-                </div>
-                <div class="profile-members-wrap">
-                    <span class="selection-label">Group members</span>
-                    <div class="booking-members" id="profileMemberChips"></div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="openEditProfileBtn">
+                        Edit registration info
+                    </button>
+                    <a class="btn btn-ghost btn-block" href="/appointments.html">View &amp; manage appointments</a>
                 </div>
             </div>
 
-            <a class="btn btn-ghost btn-block" href="/appointments.html">View &amp; manage appointments</a>
+            <!-- Edit Info View -->
+            <form class="auth-form hidden" id="profileEditForm" novalidate>
+                <div class="form-error hidden" id="profileEditError" role="alert"></div>
+
+                <label class="field">
+                    <span>Full name</span>
+                    <input type="text" id="profileName" maxlength="100" placeholder="e.g. Juan Dela Cruz" autocomplete="name" />
+                </label>
+                <label class="field">
+                    <span>University email</span>
+                    <input type="email" id="profileEmail" maxlength="254" autocomplete="email" inputmode="email" />
+                    <small class="muted field-hint" id="profileEmailHint">If you change your university email, we will send a 6-digit OTP code to verify the new email.</small>
+                </label>
+                <label class="field">
+                    <span>Capstone / Thesis title</span>
+                    <input type="text" id="profileCapstone" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
+                </label>
+                <div class="field" id="profileRoleField">
+                    <span>Instructor role</span>
+                    <div class="segmented" role="radiogroup" aria-label="Instructor role">
+                        <label>
+                            <input type="radio" name="profileRole" value="adviser" checked />
+                            <span>Adviser</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="profileRole" value="panel" />
+                            <span>Panel Member</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="field" id="profileLevelField">
+                    <span>Course</span>
+                    <div class="segmented level-segmented" role="radiogroup" aria-label="Course">
+                        <label>
+                            <input type="radio" name="profileLevel" value="capstone1" />
+                            <span>Capstone 1</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="profileLevel" value="capstone2" />
+                            <span>Capstone 2</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="profileLevel" value="thesis1" />
+                            <span>Thesis 1</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="profileLevel" value="thesis2" />
+                            <span>Thesis 2</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="field" id="profileMembersField">
+                    <span>Members <small class="muted" id="profileMemberCount"></small></span>
+                    <div class="member-list" id="profileMemberList"></div>
+                    <button type="button" class="add-member" id="profileAddMemberBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                        Add member (max 3)
+                    </button>
+                </div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelEditProfileBtn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="saveProfileBtn">
+                        <span class="btn-label">Save changes</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+
+            <!-- Verify New Email OTP View -->
+            <form class="auth-form hidden" id="profileOtpForm" novalidate>
+                <div class="form-error hidden" id="profileOtpError" role="alert"></div>
+
+                <div class="otp-sent">
+                    Verification code sent to <strong id="profileOtpEmail"></strong>. Check your inbox and <strong>spam/junk folder</strong>.
+                </div>
+                <label class="field">
+                    <span>6-digit verification code</span>
+                    <input type="text" id="profileOtpCode" class="otp-input" maxlength="6" inputmode="numeric"
+                           autocomplete="one-time-code" pattern="[0-9]*" placeholder="••••••" />
+                </label>
+                <button type="submit" class="btn btn-primary btn-block" id="profileOtpVerifyBtn">
+                    <span class="btn-label">Verify &amp; update email</span>
+                    <span class="spinner hidden"></span>
+                </button>
+                <div class="otp-actions">
+                    <button type="button" class="link-btn" id="profileOtpResendBtn">Resend code</button>
+                    <button type="button" class="link-btn" id="profileOtpBackBtn">Back to edit</button>
+                </div>
+            </form>
         </div>
     </div>
 

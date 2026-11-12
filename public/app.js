@@ -130,6 +130,10 @@
         otpEmail: '',
         resendTimer: null,
         authBusy: false,
+        profileView: 'summary', // 'summary' | 'edit' | 'otp'
+        profileOtpEmail: '',
+        profileResendTimer: null,
+        profileBusy: false,
     };
 
     /* ---------------- helpers ---------------- */
@@ -1617,15 +1621,358 @@
         }
     }
 
-    function openMyBookingsModal() {
+    function openMyBookingsModal(startInEditMode = false) {
         renderProfileSummary();
+        if (startInEditMode) {
+            populateProfileEditForm();
+            setProfileModalView('edit');
+        } else {
+            setProfileModalView('summary');
+        }
         $('#myBookingsModal').classList.remove('hidden');
         syncModalBodyLock();
     }
 
     function closeMyBookingsModal() {
+        if (state.profileBusy) return;
+        clearInterval(state.profileResendTimer);
         $('#myBookingsModal').classList.add('hidden');
         syncModalBodyLock();
+    }
+
+    /* ---------------- student profile edit & email OTP verification ---------------- */
+    const PROFILE_FIELD_MAP = {
+        profileName: '#profileName',
+        profileEmail: '#profileEmail',
+        profileCapstone: '#profileCapstone',
+        profileRole: '#profileRoleField',
+        profileLevel: '#profileLevelField',
+        profileMembers: '#profileMembersField',
+    };
+
+    function setProfileModalView(view) {
+        state.profileView = view;
+        showBannerError('#profileEditError', '');
+        showBannerError('#profileOtpError', '');
+        clearFormFieldErrors('#profileEditForm');
+        clearFormFieldErrors('#profileOtpForm');
+
+        $('#profileSummaryView')?.classList.toggle('hidden', view !== 'summary');
+        $('#profileEditForm')?.classList.toggle('hidden', view !== 'edit');
+        $('#profileOtpForm')?.classList.toggle('hidden', view !== 'otp');
+
+        const titles = {
+            summary: 'Profile',
+            edit: 'Edit registration info',
+            otp: 'Verify new email',
+        };
+        setText('#myBookingsTitle', titles[view] || 'Profile');
+    }
+
+    function getProfileMemberInputs() {
+        return Array.from(document.querySelectorAll('#profileMemberList input'));
+    }
+
+    function syncProfileMemberControls() {
+        const rows = Array.from(document.querySelectorAll('#profileMemberList .member-row'));
+        const repName = $('#profileName')?.value.trim() || '';
+        rows.forEach((row, idx) => {
+            const input = row.querySelector('input');
+            const removeBtn = row.querySelector('.remove-member');
+            if (idx === 0) {
+                input.readOnly = true;
+                input.value = repName;
+                input.placeholder = 'Member 1 (You) — auto-filled from your name above';
+                removeBtn.disabled = true;
+                removeBtn.title = 'You are always Member 1';
+            } else {
+                input.readOnly = false;
+                input.placeholder = `Member ${idx + 1} — full name`;
+                removeBtn.disabled = false;
+                removeBtn.title = 'Remove member';
+            }
+        });
+        setText('#profileMemberCount', `(${rows.length}/${MAX_MEMBERS})`);
+        $('#profileAddMemberBtn')?.classList.toggle('hidden', rows.length >= MAX_MEMBERS);
+    }
+
+    function addProfileMemberRow(initialValue = '', shouldFocus = false) {
+        const list = $('#profileMemberList');
+        if (!list || list.children.length >= MAX_MEMBERS) return;
+
+        const row = document.createElement('div');
+        row.className = 'member-row';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 100;
+        input.value = initialValue;
+        input.addEventListener('input', () => clearFieldError('#profileMembersField'));
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-member';
+        removeBtn.setAttribute('aria-label', 'Remove member');
+        removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        removeBtn.addEventListener('click', () => {
+            if (list.children.length <= MIN_MEMBERS) return;
+            row.remove();
+            clearFieldError('#profileMembersField');
+            syncProfileMemberControls();
+        });
+
+        row.append(input, removeBtn);
+        list.appendChild(row);
+        syncProfileMemberControls();
+        if (shouldFocus) input.focus();
+    }
+
+    function syncProfileSaveButtonLabel() {
+        const saveBtn = $('#saveProfileBtn');
+        if (!saveBtn || state.profileBusy) return;
+        const emailVal = ($('#profileEmail')?.value || '').trim().toLowerCase();
+        const currentEmail = (state.student?.email || '').trim().toLowerCase();
+        const emailChanged = Boolean(emailVal && currentEmail && emailVal !== currentEmail);
+        const labelText = emailChanged ? 'Send OTP & save' : 'Save changes';
+        saveBtn.dataset.label = labelText;
+        const labelSpan = saveBtn.querySelector('.btn-label');
+        if (labelSpan) labelSpan.textContent = labelText;
+    }
+
+    function populateProfileEditForm() {
+        const s = state.student;
+        if (!s) return;
+        if ($('#profileName')) $('#profileName').value = s.name || '';
+        if ($('#profileEmail')) $('#profileEmail').value = s.email || '';
+        if ($('#profileCapstone')) $('#profileCapstone').value = s.capstoneTitle || '';
+
+        const roleVal = s.instructorRole === 'panel' ? 'panel' : 'adviser';
+        const roleRadio = document.querySelector(`input[name="profileRole"][value="${roleVal}"]`);
+        if (roleRadio) roleRadio.checked = true;
+
+        document.querySelectorAll('input[name="profileLevel"]').forEach((r) => {
+            r.checked = r.value === s.projectLevel;
+        });
+
+        const list = $('#profileMemberList');
+        if (list) {
+            list.innerHTML = '';
+            const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name || ''];
+            members.slice(0, MAX_MEMBERS).forEach((m) => addProfileMemberRow(m));
+        }
+        syncProfileMemberControls();
+        syncProfileSaveButtonLabel();
+    }
+
+    function startProfileResendCountdown(seconds = 60) {
+        const btn = $('#profileOtpResendBtn');
+        if (!btn) return;
+        clearInterval(state.profileResendTimer);
+        let left = seconds;
+        const tick = () => {
+            btn.disabled = left > 0;
+            btn.textContent = left > 0 ? `Resend code (${left}s)` : 'Resend code';
+            if (left-- <= 0) clearInterval(state.profileResendTimer);
+        };
+        tick();
+        state.profileResendTimer = setInterval(tick, 1000);
+    }
+
+    function applyUpdatedStudentState(updatedStudent) {
+        const prevLevel = state.student?.projectLevel;
+        state.student = updatedStudent;
+        state.defenseLevel = isDefenseLevel(updatedStudent?.projectLevel) ? updatedStudent.projectLevel : null;
+
+        const myBookingsBtn = $('#myBookingsBtn');
+        if (myBookingsBtn) {
+            const membersStr = Array.isArray(updatedStudent.members) && updatedStudent.members.length
+                ? updatedStudent.members.join(', ')
+                : updatedStudent.name;
+            myBookingsBtn.title = `Profile · Members: ${membersStr}`;
+        }
+
+        if ($('#teamInput')) {
+            $('#teamInput').value = updatedStudent.capstoneTitle || '';
+        }
+        resetMembers();
+        updateRoleVisibility();
+        renderProfileSummary();
+        loadMyBookings();
+
+        // If the student was viewing Communication Letter steps and switched role to Panel, return to Step 1
+        if (!state.consultationPurpose && (state.currentStep === 2 || state.currentStep === 3)) {
+            goToStep(1);
+            return;
+        }
+
+        // If defense course level changed while on Step 2 or Step 3 for defense, refresh availability
+        if (state.consultationPurpose === 'defense' && prevLevel !== updatedStudent.projectLevel) {
+            updatePurposeUI();
+            updateSelectionBox();
+            if (state.currentStep === 2 || state.currentStep === 3) {
+                const date = state.selectedDate;
+                state.selectedSlot = null;
+                state.loadedMonthKey = null;
+                state.loadedSlotsKey = null;
+                updateSelectionBox();
+                if (state.currentStep === 3) goToStep(2);
+                loadMonth().then((ok) => {
+                    if (ok && date) selectDate(date, false, true);
+                });
+            }
+        } else if (state.consultationPurpose) {
+            updatePurposeUI();
+            updateSelectionBox();
+        }
+    }
+
+    async function handleProfileUpdate(e) {
+        e.preventDefault();
+        if (state.profileBusy || !state.student) return;
+        clearFormFieldErrors('#profileEditForm');
+        showBannerError('#profileEditError', '');
+
+        const name = $('#profileName').value.trim();
+        const email = $('#profileEmail').value.trim().toLowerCase();
+        const capstoneTitle = $('#profileCapstone').value.trim();
+        const instructorRole = document.querySelector('input[name="profileRole"]:checked')?.value || 'adviser';
+        const projectLevel = document.querySelector('input[name="profileLevel"]:checked')?.value || '';
+        const memberInputs = getProfileMemberInputs();
+        const domains = state.config?.allowedEmailDomains || [];
+
+        if (name.length < 2) {
+            setFieldError('#profileName', 'Please enter your full name (at least 2 characters).');
+            return;
+        }
+        if (!email || (domains.length && !domains.some((d) => email.endsWith(`@${d}`) || email.endsWith(`.${d}`)))) {
+            const hint = domains.length ? ` (${domains.map((d) => '@' + d).join(' or ')})` : '';
+            setFieldError('#profileEmail', `Please enter your university email${hint}.`);
+            return;
+        }
+        if (capstoneTitle.length < 3) {
+            setFieldError('#profileCapstone', 'Please enter your Capstone / Thesis title (at least 3 characters).');
+            return;
+        }
+        if (!isDefenseLevel(projectLevel)) {
+            setFieldError('#profileLevelField', 'Please select your course: Capstone 1, Capstone 2, Thesis 1, or Thesis 2.');
+            return;
+        }
+
+        const emptyExtra = memberInputs.slice(1).find((el) => el.value.trim().length === 0);
+        if (emptyExtra) {
+            setFieldError(
+                '#profileMembersField',
+                'Please enter this member’s full name, or click × to remove the extra row.',
+                emptyExtra
+            );
+            return;
+        }
+        const shortExtra = memberInputs.slice(1).find((el) => el.value.trim().length < 2);
+        if (shortExtra) {
+            setFieldError('#profileMembersField', 'Each member needs a full name (at least 2 characters).', shortExtra);
+            return;
+        }
+        const otherMembers = memberInputs.slice(1).map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS - 1);
+        const members = [name, ...otherMembers];
+
+        const emailChanged = email !== (state.student.email || '').toLowerCase();
+        const btn = $('#saveProfileBtn');
+        state.profileBusy = true;
+        setButtonBusy(btn, true, emailChanged ? 'Sending code…' : 'Saving…');
+
+        try {
+            const data = await api('/api/profile/update', {
+                method: 'POST',
+                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, projectLevel, members }),
+            });
+            if (data.otpRequired) {
+                state.profileOtpEmail = data.email;
+                setText('#profileOtpEmail', data.email);
+                if ($('#profileOtpCode')) $('#profileOtpCode').value = '';
+                setProfileModalView('otp');
+                startProfileResendCountdown(data.resendSeconds || 60);
+                setTimeout(() => $('#profileOtpCode')?.focus(), 50);
+                toast('Verification code sent to your new university email.', 'success');
+            } else {
+                applyUpdatedStudentState(data.student);
+                setProfileModalView('summary');
+                toast('Your registration info has been updated.', 'success');
+            }
+        } catch (err) {
+            if (err.status === 401) {
+                closeMyBookingsModal();
+                setStudent(null);
+                setAuthMode('login');
+                setAuthError('Your session has expired. Please log in again.');
+            } else if (err.field && PROFILE_FIELD_MAP[err.field]) {
+                setFieldError(PROFILE_FIELD_MAP[err.field], err.message);
+            } else {
+                showBannerError('#profileEditError', err.message);
+            }
+        } finally {
+            state.profileBusy = false;
+            setButtonBusy(btn, false);
+            syncProfileSaveButtonLabel();
+        }
+    }
+
+    async function handleProfileOtpVerify(e) {
+        e.preventDefault();
+        if (state.profileBusy || !state.student) return;
+        clearFormFieldErrors('#profileOtpForm');
+        showBannerError('#profileOtpError', '');
+
+        const code = ($('#profileOtpCode')?.value || '').replace(/\D/g, '');
+        if (code.length !== 6) {
+            setFieldError('#profileOtpCode', 'Please enter the 6-digit verification code from your email.');
+            return;
+        }
+
+        const btn = $('#profileOtpVerifyBtn');
+        state.profileBusy = true;
+        setButtonBusy(btn, true, 'Verifying…');
+
+        try {
+            const data = await api('/api/profile/email/verify', {
+                method: 'POST',
+                body: JSON.stringify({ email: state.profileOtpEmail, code }),
+            });
+            clearInterval(state.profileResendTimer);
+            applyUpdatedStudentState(data.student);
+            setProfileModalView('summary');
+            toast('Email verified and registration info updated!', 'success');
+        } catch (err) {
+            if (err.status === 401) {
+                closeMyBookingsModal();
+                setStudent(null);
+                setAuthMode('login');
+                setAuthError('Your session has expired. Please log in again.');
+            } else {
+                showBannerError('#profileOtpError', err.message);
+            }
+        } finally {
+            state.profileBusy = false;
+            setButtonBusy(btn, false);
+        }
+    }
+
+    async function handleProfileOtpResend() {
+        const btn = $('#profileOtpResendBtn');
+        if (!btn || btn.disabled || state.profileBusy) return;
+        btn.disabled = true;
+        showBannerError('#profileOtpError', '');
+
+        try {
+            const data = await api('/api/auth/resend', {
+                method: 'POST',
+                body: JSON.stringify({ email: state.profileOtpEmail, purpose: 'email_change' }),
+            });
+            toast('A new verification code has been sent to your new email.', 'success');
+            startProfileResendCountdown(data.resendSeconds || 60);
+        } catch (err) {
+            showBannerError('#profileOtpError', err.message);
+            btn.disabled = false;
+        }
     }
 
     /* ---------------- student account ---------------- */
@@ -2066,6 +2413,13 @@
         try {
             const { student } = await api('/api/auth/me');
             setStudent(student, Boolean(student));
+            if (student) {
+                const params = new URLSearchParams(window.location.search);
+                if (params.get('editProfile') === '1' || params.get('profile') === '1') {
+                    openMyBookingsModal(params.get('editProfile') === '1');
+                    window.history.replaceState({}, '', window.location.pathname);
+                }
+            }
         } catch {
             setStudent(null);
         }
@@ -2125,10 +2479,15 @@
         const domains = config.allowedEmailDomains || [];
         if (!domains.length) return;
         const example = `youremail@${domains[0]}`;
+        const domainText = domains.map((d) => '@' + d).join(' or ');
         $('#loginEmail').placeholder = example;
         $('#regEmail').placeholder = example;
         $('#forgotEmail').placeholder = example;
-        $('#regEmailHint').textContent = `Must end with ${domains.map((d) => '@' + d).join(' or ')}`;
+        if ($('#profileEmail')) $('#profileEmail').placeholder = example;
+        $('#regEmailHint').textContent = `Must end with ${domainText}`;
+        if ($('#profileEmailHint')) {
+            $('#profileEmailHint').textContent = `Must end with ${domainText}. Changing your email will send a 6-digit OTP verification code to the new address.`;
+        }
     }
 
     /* ---------------- init ---------------- */
@@ -2163,9 +2522,37 @@
         document.querySelectorAll('input[name="regLevel"]').forEach((r) => {
             r.addEventListener('change', () => clearFieldError('#regLevelField'));
         });
+        document.querySelectorAll('input[name="profileLevel"]').forEach((r) => {
+            r.addEventListener('change', () => clearFieldError('#profileLevelField'));
+        });
 
         // Student profile modal events
-        $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal());
+        $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal(false));
+        $('#sidebarEditProfileBtn')?.addEventListener('click', () => openMyBookingsModal(true));
+        $('#openEditProfileBtn')?.addEventListener('click', () => {
+            populateProfileEditForm();
+            setProfileModalView('edit');
+            setTimeout(() => $('#profileName')?.focus(), 40);
+        });
+        $('#cancelEditProfileBtn')?.addEventListener('click', () => {
+            setProfileModalView('summary');
+        });
+        $('#profileName')?.addEventListener('input', syncProfileMemberControls);
+        $('#profileEmail')?.addEventListener('input', syncProfileSaveButtonLabel);
+        $('#profileAddMemberBtn')?.addEventListener('click', () => addProfileMemberRow('', true));
+        $('#profileEditForm')?.addEventListener('submit', handleProfileUpdate);
+
+        $('#profileOtpForm')?.addEventListener('submit', handleProfileOtpVerify);
+        $('#profileOtpResendBtn')?.addEventListener('click', handleProfileOtpResend);
+        $('#profileOtpBackBtn')?.addEventListener('click', () => {
+            clearInterval(state.profileResendTimer);
+            setProfileModalView('edit');
+            setTimeout(() => $('#profileEmail')?.focus(), 40);
+        });
+        $('#profileOtpCode')?.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+        });
+
         $('#closeMyBookingsBtn')?.addEventListener('click', closeMyBookingsModal);
         $('#myBookingsModal')?.addEventListener('click', (e) => {
             if (e.target.id === 'myBookingsModal') closeMyBookingsModal();

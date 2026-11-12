@@ -351,12 +351,17 @@ const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
 
 async function sendOtpEmail(to, code, purpose, name) {
     const isReset = purpose === 'reset';
+    const isEmailChange = purpose === 'email_change';
     const subject = isReset
         ? `${code} is your password reset code`
-        : `${code} is your verification code`;
+        : isEmailChange
+            ? `${code} is your email verification code`
+            : `${code} is your verification code`;
     const intro = isReset
         ? `Use the code below to reset your password for booking consultations with ${TEACHER_NAME}.`
-        : `Use the code below to verify your university email and finish creating your account for booking consultations with ${TEACHER_NAME}.`;
+        : isEmailChange
+            ? `Use the code below to verify your new university email address for booking consultations with ${TEACHER_NAME}.`
+            : `Use the code below to verify your university email and finish creating your account for booking consultations with ${TEACHER_NAME}.`;
     const greeting = name ? `Hi ${name},` : 'Hi,';
     const footer = `This code expires in ${AUTH.otpMinutes} minutes. If you didn't request it, you can ignore this email.`;
 
@@ -381,11 +386,12 @@ const otpHash = (email, purpose, code) =>
     crypto.createHmac('sha256', sessionSecret()).update(`${purpose}:${email}:${code}`).digest('hex');
 
 async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
+    const purposeList = purpose === 'email_change' ? ['email_change', 'register'] : [purpose];
     const { data: existing, error } = await db()
         .from(OTP_TABLE)
         .select('id, created_at, status')
         .eq('email', email)
-        .eq('purpose', purpose)
+        .in('purpose', purposeList)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -403,30 +409,41 @@ async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
         .from(OTP_TABLE)
         .update({ status: 'superseded' })
         .eq('email', email)
-        .eq('purpose', purpose)
+        .in('purpose', purposeList)
         .eq('status', 'pending');
 
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     const now = Date.now();
-    const { data: inserted, error: insertErr } = await db()
+    const rowData = {
+        email,
+        student_name: name || payload?.name || null,
+        capstone_title: payload?.capstoneTitle || null,
+        instructor_role: payload?.instructorRole || null,
+        members: Array.isArray(payload?.members) ? payload.members : null,
+        purpose,
+        otp_code: code,
+        code_hash: otpHash(email, purpose, code),
+        status: 'pending',
+        payload,
+        attempts: 0,
+        created_at: new Date(now).toISOString(),
+        expires_at: new Date(now + AUTH.otpMinutes * 60 * 1000).toISOString(),
+    };
+
+    let { data: inserted, error: insertErr } = await db()
         .from(OTP_TABLE)
-        .insert([{
-            email,
-            student_name: name || payload?.name || null,
-            capstone_title: payload?.capstoneTitle || null,
-            instructor_role: payload?.instructorRole || null,
-            members: Array.isArray(payload?.members) ? payload.members : null,
-            purpose,
-            otp_code: code,
-            code_hash: otpHash(email, purpose, code),
-            status: 'pending',
-            payload,
-            attempts: 0,
-            created_at: new Date(now).toISOString(),
-            expires_at: new Date(now + AUTH.otpMinutes * 60 * 1000).toISOString(),
-        }])
+        .insert([rowData])
         .select('id')
         .single();
+    if (insertErr && insertErr.code === '23514' && purpose === 'email_change') {
+        const fallbackRes = await db()
+            .from(OTP_TABLE)
+            .insert([{ ...rowData, purpose: 'register' }])
+            .select('id')
+            .single();
+        inserted = fallbackRes.data;
+        insertErr = fallbackRes.error;
+    }
     if (insertErr) throw insertErr;
 
     try {
@@ -441,11 +458,12 @@ async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
 
 /** Checks a code; marks the row verified and returns it (with its payload) on success, otherwise throws. */
 async function consumeOtp(email, purpose, code) {
+    const purposeList = purpose === 'email_change' ? ['email_change', 'register'] : [purpose];
     const { data: row, error } = await db()
         .from(OTP_TABLE)
         .select('*')
         .eq('email', email)
-        .eq('purpose', purpose)
+        .in('purpose', purposeList)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -929,13 +947,19 @@ app.post('/api/auth/register/verify', async (req, res) => {
 
 app.post('/api/auth/resend', async (req, res) => {
     const email = normalizeEmail(req.body?.email);
-    const purpose = req.body?.purpose === 'reset' ? 'reset' : 'register';
+    const rawPurpose = req.body?.purpose;
+    const purpose = rawPurpose === 'reset'
+        ? 'reset'
+        : rawPurpose === 'email_change'
+            ? 'email_change'
+            : 'register';
+    const purposeList = purpose === 'email_change' ? ['email_change', 'register'] : [purpose];
 
     const { data: row, error } = await db()
         .from(OTP_TABLE)
         .select('payload')
         .eq('email', email)
-        .eq('purpose', purpose)
+        .in('purpose', purposeList)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -946,6 +970,15 @@ app.post('/api/auth/resend', async (req, res) => {
             return res.status(400).json({ error: 'Your registration session expired. Please fill in the form again.' });
         }
         await issueOtp(email, 'register', { payload: row.payload, name: row.payload.name });
+    } else if (purpose === 'email_change') {
+        const student = await currentStudent(req);
+        if (!student) {
+            return res.status(401).json({ error: 'Please log in to continue.', code: 'AUTH_REQUIRED' });
+        }
+        if (!row?.payload || row.payload.studentId !== student.id) {
+            return res.status(400).json({ error: 'Your email verification session expired. Please submit your changes again.' });
+        }
+        await issueOtp(email, 'email_change', { payload: row.payload, name: row.payload.name || student.full_name });
     } else {
         const student = await findStudentByEmail(email);
         if (student) await issueOtp(email, 'reset', { name: student.full_name });
@@ -1029,6 +1062,179 @@ app.post('/api/auth/forgot/verify', async (req, res) => {
 
     setSession(res, updated);
     res.json({ student: publicStudent(updated) });
+});
+
+/* ---------- Student profile update (with OTP verification for email changes) ---------- */
+function validateStudentProfileFields(body) {
+    const name = cleanName(body?.name);
+    const email = normalizeEmail(body?.email);
+    const capstoneTitle = cleanName(body?.capstoneTitle);
+    const instructorRole = body?.instructorRole === 'panel'
+        ? 'panel'
+        : body?.instructorRole === 'adviser'
+            ? 'adviser'
+            : null;
+    const projectLevel = normalizeDefenseLevel(body?.projectLevel);
+    const rawMembers = (Array.isArray(body?.members) ? body.members : []).map(cleanName).filter(Boolean);
+
+    if (name.length < 2 || name.length > 100) {
+        return { field: 'profileName', error: 'Please enter your full name (2–100 characters).' };
+    }
+    if (!isUniversityEmail(email)) {
+        return { field: 'profileEmail', error: `Please use your university email (${domainHint()}).` };
+    }
+    if (capstoneTitle.length < 3 || capstoneTitle.length > 200) {
+        return { field: 'profileCapstone', error: 'Please enter your Capstone / Thesis title (3–200 characters).' };
+    }
+    if (!instructorRole) {
+        return { field: 'profileRole', error: `Please select whether ${TEACHER_NAME} is your Adviser or Panel Member.` };
+    }
+    if (!projectLevel) {
+        return { field: 'profileLevel', error: 'Please select your course: Capstone 1, Capstone 2, Thesis 1, or Thesis 2.' };
+    }
+
+    const members = [name, ...rawMembers.slice(1)];
+    if (members.length < MIN_MEMBERS) {
+        return { field: 'profileMembers', error: 'Please enter at least 1 member name.' };
+    }
+    if (members.length > MAX_MEMBERS) {
+        return { field: 'profileMembers', error: `Only up to ${MAX_MEMBERS} members are allowed in a Capstone / Thesis group.` };
+    }
+    if (members.some((m) => m.length < 2 || m.length > 100)) {
+        return { field: 'profileMembers', error: 'Each member needs a full name (2–100 characters).' };
+    }
+
+    return {
+        values: { name, email, capstoneTitle, instructorRole, projectLevel, members },
+    };
+}
+
+async function applyStudentProfileUpdate(studentId, { name, email, capstoneTitle, instructorRole, projectLevel, members }) {
+    const { data: updated, error } = await db()
+        .from(STUDENTS_TABLE)
+        .update({
+            email,
+            full_name: name,
+            capstone_title: capstoneTitle,
+            instructor_role: instructorRole,
+            project_level: normalizeDefenseLevel(projectLevel),
+            members: Array.isArray(members) && members.length ? members : [name],
+        })
+        .eq('id', studentId)
+        .select('*')
+        .single();
+
+    if (error) {
+        if (error.code === '23505') {
+            throw httpError(409, 'This email is already registered to another account.', { field: 'profileEmail' });
+        }
+        throw error;
+    }
+
+    // Keep the student's appointments in sync with their updated email and group details
+    await db()
+        .from(TABLE)
+        .update({
+            student_email: email,
+            student_name: name,
+            capstone_title: capstoneTitle,
+            team_name: capstoneTitle,
+            instructor_role: instructorRole,
+            members: Array.isArray(members) && members.length ? members : [name],
+        })
+        .eq('student_id', studentId);
+
+    return updated;
+}
+
+async function handleStudentProfileUpdate(req, res) {
+    const student = req.student;
+    const validation = validateStudentProfileFields(req.body);
+    if (validation.error) {
+        return res.status(400).json({ field: validation.field, error: validation.error });
+    }
+
+    const { name, email, capstoneTitle, instructorRole, projectLevel, members } = validation.values;
+    const emailChanged = email !== normalizeEmail(student.email);
+
+    if (emailChanged) {
+        const existing = await findStudentByEmail(email);
+        if (existing && existing.id !== student.id) {
+            return res.status(409).json({
+                field: 'profileEmail',
+                error: 'This email is already registered to another account.',
+            });
+        }
+
+        const payload = {
+            studentId: student.id,
+            name,
+            email,
+            capstoneTitle,
+            instructorRole,
+            projectLevel,
+            members,
+        };
+        await issueOtp(email, 'email_change', { payload, name });
+        return res.json({
+            ok: true,
+            otpRequired: true,
+            email,
+            expiresInMinutes: AUTH.otpMinutes,
+            resendSeconds: AUTH.otpResendSeconds,
+        });
+    }
+
+    const updated = await applyStudentProfileUpdate(student.id, {
+        name,
+        email: student.email,
+        capstoneTitle,
+        instructorRole,
+        projectLevel,
+        members,
+    });
+    setSession(res, updated);
+    return res.json({
+        ok: true,
+        otpRequired: false,
+        student: publicStudent(updated),
+    });
+}
+
+app.put('/api/profile', requireStudent, handleStudentProfileUpdate);
+app.post('/api/profile/update', requireStudent, handleStudentProfileUpdate);
+
+app.post('/api/profile/email/verify', requireStudent, async (req, res) => {
+    const student = req.student;
+    const email = normalizeEmail(req.body?.email);
+    if (!isUniversityEmail(email)) {
+        return res.status(400).json({ error: `Please use your university email (${domainHint()}).` });
+    }
+
+    const existing = await findStudentByEmail(email);
+    if (existing && existing.id !== student.id) {
+        return res.status(409).json({ error: 'This email is already registered to another account.' });
+    }
+
+    const row = await consumeOtp(email, 'email_change', req.body?.code);
+    const payload = row.payload || {};
+    if (payload.studentId !== student.id) {
+        return res.status(400).json({ error: 'Verification session does not match your account. Please try again.' });
+    }
+
+    const updated = await applyStudentProfileUpdate(student.id, {
+        name: payload.name || student.full_name,
+        email,
+        capstoneTitle: payload.capstoneTitle || student.capstone_title,
+        instructorRole: payload.instructorRole || student.instructor_role,
+        projectLevel: payload.projectLevel || student.project_level,
+        members: Array.isArray(payload.members) && payload.members.length
+            ? payload.members
+            : (Array.isArray(student.members) && student.members.length ? student.members : [student.full_name]),
+    });
+
+    setSession(res, updated);
+    res.json({ ok: true, student: publicStudent(updated) });
 });
 
 // Number of open slots for every day in a month: /api/month?month=2026-11&purpose=system
