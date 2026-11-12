@@ -2450,6 +2450,47 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     color: var(--text-muted);
     word-break: break-all;
 }
+.student-card-log-box {
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border);
+    display: grid;
+    gap: 3px;
+}
+.student-log-diff-list {
+    display: grid;
+    gap: 8px;
+}
+.student-log-diff-item {
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border);
+    display: grid;
+    gap: 4px;
+}
+.student-log-diff-values {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.84rem;
+    line-height: 1.4;
+    word-break: break-word;
+}
+.diff-old {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+.diff-arrow {
+    color: var(--primary);
+    font-weight: 700;
+}
+.diff-new {
+    color: var(--text);
+    font-weight: 600;
+}
 
 /* ==========================================================================
    Responsive Design: Tablet, Portrait Tablet, Mobile & Small Phones

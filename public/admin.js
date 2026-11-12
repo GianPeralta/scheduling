@@ -17,6 +17,7 @@
         bookings: [],
         blockedSchedules: [],
         students: [],
+        studentUpdateLogs: [],
         config: null,
         today: '',
         currentHour: 0,
@@ -148,6 +149,7 @@
         state.bookings = [];
         state.blockedSchedules = [];
         state.students = [];
+        state.studentUpdateLogs = [];
         showLogin();
     }
 
@@ -178,6 +180,7 @@
                 (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
             );
             state.students = data.students || [];
+            state.studentUpdateLogs = data.studentUpdateLogs || [];
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
@@ -487,6 +490,45 @@
         return false;
     }
 
+    const FIELD_LABELS = {
+        full_name: 'Full name',
+        email: 'University email',
+        capstone_title: 'Capstone / Thesis title',
+        instructor_role: 'Instructor role',
+        project_level: 'Course',
+        members: 'Group members',
+    };
+
+    function formatTimestamp(iso) {
+        if (!iso) return '';
+        const dt = new Date(iso);
+        if (Number.isNaN(dt.getTime())) return '';
+        return dt.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+    }
+
+    function extractLogChanges(log) {
+        if (Array.isArray(log.changes) && log.changes.length) {
+            return log.changes;
+        }
+        const prev = log.previousValues || {};
+        const next = log.newValues || {};
+        const fields = Array.isArray(log.changedFields) && log.changedFields.length
+            ? log.changedFields
+            : Object.keys({ ...prev, ...next });
+        return fields.map((f) => ({
+            field: f,
+            label: FIELD_LABELS[f] || f,
+            from: prev[f] ?? '—',
+            to: next[f] ?? '—',
+        }));
+    }
+
     function matchesStudentSearch(s, q) {
         if (!q) return true;
         if (s.name && s.name.toLowerCase().includes(q)) return true;
@@ -499,6 +541,76 @@
         return false;
     }
 
+    function matchesLogSearch(log, q) {
+        if (!q) return true;
+        if (log.studentName && log.studentName.toLowerCase().includes(q)) return true;
+        if (log.studentEmail && log.studentEmail.toLowerCase().includes(q)) return true;
+        if (log.changesSummary && log.changesSummary.toLowerCase().includes(q)) return true;
+        return extractLogChanges(log).some(
+            (c) => String(c.label).toLowerCase().includes(q)
+                || String(c.from).toLowerCase().includes(q)
+                || String(c.to).toLowerCase().includes(q)
+        );
+    }
+
+    function renderStudentLogsView(container, q) {
+        const logs = state.studentUpdateLogs.filter((l) => matchesLogSearch(l, q));
+        if (!logs.length) {
+            const empty = el('div', 'empty-state');
+            empty.style.gridColumn = '1 / -1';
+            empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+            empty.appendChild(el('p', '', q ? 'No update logs match your search.' : 'No student profile updates logged yet.'));
+            container.appendChild(empty);
+            return;
+        }
+
+        logs.forEach((log, idx) => {
+            const card = el('div', 'student-group-card student-log-card');
+            card.style.animationDelay = `${Math.min(idx, 12) * 20}ms`;
+
+            const top = el('div', 'student-card-top');
+            const badges = el('div', 'badge-row');
+            badges.appendChild(el('span', 'badge teal', 'Profile Updated'));
+            if (log.verifiedViaOtp) {
+                badges.appendChild(el('span', 'badge violet', 'Email OTP Verified'));
+            }
+            const timeText = formatTimestamp(log.createdAt);
+            if (timeText) {
+                badges.appendChild(el('span', 'badge muted-badge', timeText));
+            }
+            top.appendChild(badges);
+
+            const heading = el('h3', 'student-project-title', log.studentName || 'Student');
+            card.append(top, heading);
+
+            const changesList = el('div', 'student-log-diff-list');
+            const changes = extractLogChanges(log);
+            if (changes.length) {
+                changes.forEach((c) => {
+                    const row = el('div', 'student-log-diff-item');
+                    row.appendChild(el('span', 'student-field-label', c.label));
+                    const vals = el('div', 'student-log-diff-values');
+                    vals.appendChild(el('span', 'diff-old', String(c.from)));
+                    vals.appendChild(el('span', 'diff-arrow', '→'));
+                    vals.appendChild(el('span', 'diff-new', String(c.to)));
+                    row.appendChild(vals);
+                    changesList.appendChild(row);
+                });
+            } else if (log.changesSummary) {
+                changesList.appendChild(el('p', 'muted small', log.changesSummary));
+            }
+            card.appendChild(changesList);
+
+            if (log.studentEmail) {
+                const footer = el('div', 'student-card-footer');
+                footer.appendChild(el('span', 'muted small', log.studentEmail));
+                card.appendChild(footer);
+            }
+
+            container.appendChild(card);
+        });
+    }
+
     function renderStudentsSection() {
         const container = $('#studentList');
         if (!container) return;
@@ -506,20 +618,27 @@
         const allCount = state.students.length;
         const adviserCount = state.students.filter((s) => s.instructorRole === 'adviser').length;
         const panelCount = state.students.filter((s) => s.instructorRole === 'panel').length;
+        const logsCount = state.studentUpdateLogs.length;
 
         if ($('#countStudentsAll')) $('#countStudentsAll').textContent = allCount;
         if ($('#countStudentsAdviser')) $('#countStudentsAdviser').textContent = adviserCount;
         if ($('#countStudentsPanel')) $('#countStudentsPanel').textContent = panelCount;
+        if ($('#countStudentsLogs')) $('#countStudentsLogs').textContent = logsCount;
 
         const q = state.studentSearch.toLowerCase();
+        container.innerHTML = '';
+
+        if (state.studentRoleFilter === 'logs') {
+            renderStudentLogsView(container, q);
+            return;
+        }
+
         const list = state.students.filter((s) => {
             if (state.studentRoleFilter !== 'all' && s.instructorRole !== state.studentRoleFilter) {
                 return false;
             }
             return matchesStudentSearch(s, q);
         });
-
-        container.innerHTML = '';
 
         if (!list.length) {
             const empty = el('div', 'empty-state');
@@ -558,6 +677,11 @@
             } else if (studentBookings.length > 0) {
                 badges.appendChild(el('span', 'badge muted-badge', `${studentBookings.length} booking${studentBookings.length === 1 ? '' : 's'}`));
             }
+
+            const editCount = Array.isArray(s.changeHistory) ? s.changeHistory.length : 0;
+            if (editCount > 0) {
+                badges.appendChild(el('span', 'badge violet', `${editCount} edit${editCount === 1 ? '' : 's'}`));
+            }
             top.appendChild(badges);
 
             const projectTitle = el('h3', 'student-project-title', s.capstoneTitle || 'Untitled Project');
@@ -572,6 +696,17 @@
             });
             membersSection.appendChild(membersWrap);
             card.appendChild(membersSection);
+
+            if (editCount > 0) {
+                const latestLog = s.changeHistory[0];
+                const logBox = el('div', 'student-card-log-box');
+                const logTitle = formatTimestamp(latestLog.createdAt)
+                    ? `Latest update (${formatTimestamp(latestLog.createdAt)}):`
+                    : 'Latest update:';
+                logBox.appendChild(el('span', 'student-field-label', logTitle));
+                logBox.appendChild(el('p', 'muted small', latestLog.changesSummary || 'Updated registration info'));
+                card.appendChild(logBox);
+            }
 
             const footer = el('div', 'student-card-footer');
             footer.appendChild(el('strong', '', s.name));

@@ -134,6 +134,24 @@ alter table public.students add column if not exists project_level text;
 alter table public.students drop constraint if exists students_project_level_check;
 alter table public.students add constraint students_project_level_check
     check (project_level is null or project_level in ('capstone1', 'capstone2', 'thesis1', 'thesis2'));
+alter table public.students add column if not exists updated_at timestamptz;
+alter table public.students add column if not exists change_history jsonb not null default '[]'::jsonb;
+
+-- Audit log of changes students make to their registration info
+create table if not exists public.student_update_logs (
+    id                uuid primary key default gen_random_uuid(),
+    student_id        uuid references public.students (id) on delete cascade,
+    student_name      text,
+    student_email     text,
+    changed_fields    text[]      not null default '{}',
+    previous_values   jsonb       not null default '{}'::jsonb,
+    new_values        jsonb       not null default '{}'::jsonb,
+    changes_summary   text,
+    verified_via_otp  boolean     not null default false,
+    created_at        timestamptz not null default now()
+);
+create index if not exists student_update_logs_student_idx on public.student_update_logs (student_id, created_at desc);
+alter table public.student_update_logs enable row level security;
 
 -- One-time codes emailed for registration / password reset (permanent log of all attempts)
 create table if not exists public.email_otps (

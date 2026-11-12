@@ -159,6 +159,7 @@ function db() {
 /* Student accounts (university email + OTP verification)              */
 /* ------------------------------------------------------------------ */
 const STUDENTS_TABLE = 'students';
+const STUDENT_LOGS_TABLE = 'student_update_logs';
 const OTP_TABLE = 'email_otps';
 const SESSION_COOKIE = 'sid';
 
@@ -325,6 +326,8 @@ const publicStudent = (s) => ({
     instructorRole: s.instructor_role || null,
     projectLevel: normalizeDefenseLevel(s.project_level),
     members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
+    updatedAt: s.updated_at || null,
+    changeHistory: Array.isArray(s.change_history) ? s.change_history : [],
 });
 
 /* ---------- email (SMTP) ---------- */
@@ -1109,26 +1112,205 @@ function validateStudentProfileFields(body) {
     };
 }
 
-async function applyStudentProfileUpdate(studentId, { name, email, capstoneTitle, instructorRole, projectLevel, members }) {
-    const { data: updated, error } = await db()
+function formatRoleLabel(role) {
+    if (role === 'panel') return 'Panel Member';
+    if (role === 'adviser') return 'Adviser';
+    return role || '—';
+}
+
+function formatLevelLabel(level) {
+    const normalized = normalizeDefenseLevel(level);
+    return normalized ? DEFENSE_LEVELS[normalized].label : (level || '—');
+}
+
+function computeStudentProfileDiff(current, next) {
+    const prevMembers = Array.isArray(current.members) && current.members.length
+        ? current.members
+        : [current.full_name];
+    const nextMembers = Array.isArray(next.members) && next.members.length
+        ? next.members
+        : [next.name];
+
+    const comparisons = [
+        {
+            field: 'full_name',
+            label: 'Full name',
+            prevRaw: current.full_name || '',
+            nextRaw: next.name || '',
+            from: current.full_name || '—',
+            to: next.name || '—',
+        },
+        {
+            field: 'email',
+            label: 'University email',
+            prevRaw: normalizeEmail(current.email),
+            nextRaw: normalizeEmail(next.email),
+            from: current.email || '—',
+            to: next.email || '—',
+        },
+        {
+            field: 'capstone_title',
+            label: 'Capstone / Thesis title',
+            prevRaw: current.capstone_title || '',
+            nextRaw: next.capstoneTitle || '',
+            from: current.capstone_title || '—',
+            to: next.capstoneTitle || '—',
+        },
+        {
+            field: 'instructor_role',
+            label: 'Instructor role',
+            prevRaw: current.instructor_role || '',
+            nextRaw: next.instructorRole || '',
+            from: formatRoleLabel(current.instructor_role),
+            to: formatRoleLabel(next.instructorRole),
+        },
+        {
+            field: 'project_level',
+            label: 'Course',
+            prevRaw: normalizeDefenseLevel(current.project_level) || '',
+            nextRaw: normalizeDefenseLevel(next.projectLevel) || '',
+            from: formatLevelLabel(current.project_level),
+            to: formatLevelLabel(next.projectLevel),
+        },
+        {
+            field: 'members',
+            label: 'Group members',
+            prevRaw: JSON.stringify(prevMembers),
+            nextRaw: JSON.stringify(nextMembers),
+            from: prevMembers.join(', '),
+            to: nextMembers.join(', '),
+        },
+    ];
+
+    const changedFields = [];
+    const previousValues = {};
+    const newValues = {};
+    const changes = [];
+
+    for (const item of comparisons) {
+        if (item.prevRaw !== item.nextRaw) {
+            changedFields.push(item.field);
+            previousValues[item.field] = item.from;
+            newValues[item.field] = item.to;
+            changes.push({
+                field: item.field,
+                label: item.label,
+                from: item.from,
+                to: item.to,
+            });
+        }
+    }
+
+    const changesSummary = changes.map((c) => `${c.label}: "${c.from}" → "${c.to}"`).join('; ');
+    return {
+        hasChanges: changedFields.length > 0,
+        changedFields,
+        previousValues,
+        newValues,
+        changes,
+        changesSummary,
+    };
+}
+
+async function applyStudentProfileUpdate(
+    currentStudentRow,
+    { name, email, capstoneTitle, instructorRole, projectLevel, members },
+    { verifiedViaOtp = false } = {}
+) {
+    const studentId = currentStudentRow.id;
+    const normalizedMembers = Array.isArray(members) && members.length ? members : [name];
+    const normalizedLevel = normalizeDefenseLevel(projectLevel);
+    const diff = computeStudentProfileDiff(currentStudentRow, {
+        name,
+        email,
+        capstoneTitle,
+        instructorRole,
+        projectLevel: normalizedLevel,
+        members: normalizedMembers,
+    });
+
+    const nowIso = new Date().toISOString();
+    const coreUpdate = {
+        email,
+        full_name: name,
+        capstone_title: capstoneTitle,
+        instructor_role: instructorRole,
+        project_level: normalizedLevel,
+        members: normalizedMembers,
+    };
+
+    let logEntry = null;
+    if (diff.hasChanges) {
+        logEntry = {
+            id: crypto.randomUUID(),
+            studentId,
+            studentName: name,
+            studentEmail: email,
+            changedFields: diff.changedFields,
+            previousValues: diff.previousValues,
+            newValues: diff.newValues,
+            changes: diff.changes,
+            changesSummary: diff.changesSummary,
+            verifiedViaOtp: Boolean(verifiedViaOtp),
+            createdAt: nowIso,
+        };
+        console.log(
+            `[Student Profile Update] ${name} (${email})${verifiedViaOtp ? ' [OTP verified]' : ''}: ${diff.changesSummary}`
+        );
+    }
+
+    const prevHistory = Array.isArray(currentStudentRow.change_history) ? currentStudentRow.change_history : [];
+    const nextHistory = logEntry ? [logEntry, ...prevHistory].slice(0, 50) : prevHistory;
+
+    let { data: updated, error } = await db()
         .from(STUDENTS_TABLE)
-        .update({
-            email,
-            full_name: name,
-            capstone_title: capstoneTitle,
-            instructor_role: instructorRole,
-            project_level: normalizeDefenseLevel(projectLevel),
-            members: Array.isArray(members) && members.length ? members : [name],
-        })
+        .update(
+            diff.hasChanges
+                ? { ...coreUpdate, updated_at: nowIso, change_history: nextHistory }
+                : coreUpdate
+        )
         .eq('id', studentId)
         .select('*')
         .single();
+
+    // Fallback if updated_at / change_history columns haven't been added via schema.sql yet
+    if (error && ['42703', 'PGRST204'].includes(error.code)) {
+        const retryRes = await db()
+            .from(STUDENTS_TABLE)
+            .update(coreUpdate)
+            .eq('id', studentId)
+            .select('*')
+            .single();
+        updated = retryRes.data;
+        error = retryRes.error;
+    }
 
     if (error) {
         if (error.code === '23505') {
             throw httpError(409, 'This email is already registered to another account.', { field: 'profileEmail' });
         }
         throw error;
+    }
+
+    // Record a permanent audit row in student_update_logs if any field changed
+    if (logEntry) {
+        const { error: logErr } = await db()
+            .from(STUDENT_LOGS_TABLE)
+            .insert([{
+                id: logEntry.id,
+                student_id: studentId,
+                student_name: name,
+                student_email: email,
+                changed_fields: diff.changedFields,
+                previous_values: diff.previousValues,
+                new_values: diff.newValues,
+                changes_summary: diff.changesSummary,
+                verified_via_otp: Boolean(verifiedViaOtp),
+                created_at: nowIso,
+            }]);
+        if (logErr && !['42P01', 'PGRST205', '42703', 'PGRST204'].includes(logErr.code)) {
+            console.error('Could not insert student_update_logs row:', logErr);
+        }
     }
 
     // Keep the student's appointments in sync with their updated email and group details
@@ -1140,7 +1322,7 @@ async function applyStudentProfileUpdate(studentId, { name, email, capstoneTitle
             capstone_title: capstoneTitle,
             team_name: capstoneTitle,
             instructor_role: instructorRole,
-            members: Array.isArray(members) && members.length ? members : [name],
+            members: normalizedMembers,
         })
         .eq('student_id', studentId);
 
@@ -1185,14 +1367,18 @@ async function handleStudentProfileUpdate(req, res) {
         });
     }
 
-    const updated = await applyStudentProfileUpdate(student.id, {
-        name,
-        email: student.email,
-        capstoneTitle,
-        instructorRole,
-        projectLevel,
-        members,
-    });
+    const updated = await applyStudentProfileUpdate(
+        student,
+        {
+            name,
+            email: student.email,
+            capstoneTitle,
+            instructorRole,
+            projectLevel,
+            members,
+        },
+        { verifiedViaOtp: false }
+    );
     setSession(res, updated);
     return res.json({
         ok: true,
@@ -1222,16 +1408,20 @@ app.post('/api/profile/email/verify', requireStudent, async (req, res) => {
         return res.status(400).json({ error: 'Verification session does not match your account. Please try again.' });
     }
 
-    const updated = await applyStudentProfileUpdate(student.id, {
-        name: payload.name || student.full_name,
-        email,
-        capstoneTitle: payload.capstoneTitle || student.capstone_title,
-        instructorRole: payload.instructorRole || student.instructor_role,
-        projectLevel: payload.projectLevel || student.project_level,
-        members: Array.isArray(payload.members) && payload.members.length
-            ? payload.members
-            : (Array.isArray(student.members) && student.members.length ? student.members : [student.full_name]),
-    });
+    const updated = await applyStudentProfileUpdate(
+        student,
+        {
+            name: payload.name || student.full_name,
+            email,
+            capstoneTitle: payload.capstoneTitle || student.capstone_title,
+            instructorRole: payload.instructorRole || student.instructor_role,
+            projectLevel: payload.projectLevel || student.project_level,
+            members: Array.isArray(payload.members) && payload.members.length
+                ? payload.members
+                : (Array.isArray(student.members) && student.members.length ? student.members : [student.full_name]),
+        },
+        { verifiedViaOtp: true }
+    );
 
     setSession(res, updated);
     res.json({ ok: true, student: publicStudent(updated) });
@@ -1852,8 +2042,22 @@ app.get('/admin', (req, res) => res.redirect('/admin.html'));
 
 app.post('/api/admin/login', requireAdmin, (req, res) => res.json({ ok: true }));
 
+async function fetchStudentUpdateLogs() {
+    const { data, error } = await db()
+        .from(STUDENT_LOGS_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) return [];
+        console.error('Could not fetch student_update_logs:', error);
+        return [];
+    }
+    return data || [];
+}
+
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
-    const [{ data, error }, blockedRows, studentsRes] = await Promise.all([
+    const [{ data, error }, blockedRows, studentsRes, rawUpdateLogs] = await Promise.all([
         db()
             .from(TABLE)
             .select('*')
@@ -1862,8 +2066,9 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         fetchBlockedByDateRange('1970-01-01', '9999-12-31'),
         db()
             .from(STUDENTS_TABLE)
-            .select('id, email, full_name, capstone_title, instructor_role, project_level, members, last_login_at, created_at')
+            .select('*')
             .order('created_at', { ascending: false }),
+        fetchStudentUpdateLogs(),
     ]);
     if (error) return res.status(500).json({ error: error.message });
 
@@ -1877,6 +2082,44 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         if (s.email) studentLookup.byEmail.set(s.email.toLowerCase(), s);
     });
 
+    const logsByStudentId = new Map();
+    const serializedLogs = [];
+    const seenLogIds = new Set();
+
+    for (const r of rawUpdateLogs) {
+        const entry = {
+            id: r.id,
+            studentId: r.student_id,
+            studentName: r.student_name,
+            studentEmail: r.student_email,
+            changedFields: Array.isArray(r.changed_fields) ? r.changed_fields : [],
+            previousValues: r.previous_values || {},
+            newValues: r.new_values || {},
+            changesSummary: r.changes_summary || '',
+            verifiedViaOtp: Boolean(r.verified_via_otp),
+            createdAt: r.created_at,
+        };
+        seenLogIds.add(entry.id);
+        serializedLogs.push(entry);
+        if (entry.studentId) {
+            if (!logsByStudentId.has(entry.studentId)) logsByStudentId.set(entry.studentId, []);
+            logsByStudentId.get(entry.studentId).push(entry);
+        }
+    }
+
+    // Merge any logs stored in students.change_history that aren't already in serializedLogs
+    for (const s of studentRows) {
+        if (!Array.isArray(s.change_history)) continue;
+        for (const h of s.change_history) {
+            if (!h || (h.id && seenLogIds.has(h.id))) continue;
+            if (h.id) seenLogIds.add(h.id);
+            serializedLogs.push(h);
+            if (!logsByStudentId.has(s.id)) logsByStudentId.set(s.id, []);
+            logsByStudentId.get(s.id).push(h);
+        }
+    }
+    serializedLogs.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
     const now = nowInTz();
     const bookings = data.map((r) => toBooking(r, now, studentLookup)).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
@@ -1886,6 +2129,9 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     );
     const students = studentRows.map((s) => {
         const level = normalizeDefenseLevel(s.project_level);
+        const history = (logsByStudentId.get(s.id) || []).sort(
+            (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+        );
         return {
             id: s.id,
             name: s.full_name,
@@ -1896,7 +2142,9 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
             projectLevelLabel: level ? DEFENSE_LEVELS[level].label : null,
             members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
             lastLoginAt: s.last_login_at || null,
+            updatedAt: s.updated_at || history[0]?.createdAt || null,
             createdAt: s.created_at || null,
+            changeHistory: history,
         };
     });
     res.json({
@@ -1906,6 +2154,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         bookings,
         blockedSchedules,
         students,
+        studentUpdateLogs: serializedLogs,
     });
 });
 
