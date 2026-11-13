@@ -16,6 +16,7 @@ create table if not exists public.appointments (
     cancellation_reason text        check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500),
     cancelled_at        timestamptz,
     notified_at         timestamptz,
+    reminder_sent_at    timestamptz,
     created_at          timestamptz not null default now()
 );
 
@@ -54,6 +55,7 @@ alter table public.appointments add constraint appointments_cancellation_reason_
     check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500);
 alter table public.appointments add column if not exists cancelled_at timestamptz;
 alter table public.appointments add column if not exists notified_at timestamptz;
+alter table public.appointments add column if not exists reminder_sent_at timestamptz;
 alter table public.appointments drop constraint if exists appointments_slot_unique;
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
 alter table public.appointments drop constraint if exists appointments_duration_minutes_check;

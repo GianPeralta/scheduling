@@ -10,11 +10,28 @@ app.use(express.json({ limit: '20kb' }));
 // Serve the frontend (on Vercel, files in /public are served by the CDN automatically)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Opportunistic background reminder check on API traffic (throttled to once every 30s)
+let lastApiReminderSweepAt = 0;
+app.use('/api', (req, res, next) => {
+    if (req.path !== '/cron/reminders') {
+        const nowMs = Date.now();
+        if (nowMs - lastApiReminderSweepAt >= 30 * 1000) {
+            lastApiReminderSweepAt = nowMs;
+            checkAndSendAppointmentReminders().catch((err) => {
+                console.error('Background reminder check failed:', err.message || err);
+            });
+        }
+    }
+    next();
+});
+
 /* ------------------------------------------------------------------ */
 /* Configuration & Schedule                                            */
 /* ------------------------------------------------------------------ */
 // This site is only for one teacher: Arnemie Gayyed.
 const TEACHER_NAME = 'Arnemie Gayyed';
+const TEACHER_EMAIL = String(process.env.TEACHER_EMAIL || 'nemie07gayyed@gmail.com').trim().toLowerCase();
+const REMINDER_MINUTES_BEFORE = 10; // Send reminder to teacher 10 minutes before every appointment
 
 const hm = (h, m) => h * 60 + m;
 
@@ -820,6 +837,8 @@ app.get('/api/config', (req, res) => {
     const now = nowInTz();
     res.json({
         teacherName: TEACHER_NAME,
+        teacherEmail: TEACHER_EMAIL,
+        reminderMinutesBefore: REMINDER_MINUTES_BEFORE,
         location: CONFIG.location,
         timezone: CONFIG.timezone,
         consultationTypes: CONSULTATION_TYPES,
@@ -1685,6 +1704,7 @@ function toBooking(r, now, studentLookup = null) {
         cancellationReason: r.cancellation_reason || null,
         cancelledAt: r.cancelled_at || null,
         notifiedAt: r.notified_at || null,
+        reminderSentAt: r.reminder_sent_at || (r.consultation_type !== 'dropoff' ? r.notified_at : null) || null,
         createdAt: r.created_at,
     };
 }
@@ -2399,6 +2419,175 @@ app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* 10-Minute Appointment Reminders (to Instructor Email)               */
+/* ------------------------------------------------------------------ */
+function formatLongDateStr(dateStr) {
+    const dt = parseDate(dateStr);
+    if (!dt) return String(dateStr || '');
+    return dt.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC',
+    });
+}
+
+async function sendTeacherReminderEmail(booking, minsUntil) {
+    if (!TEACHER_EMAIL) {
+        throw httpError(500, 'Server is missing TEACHER_EMAIL.');
+    }
+    const timeText = minsUntil <= 0
+        ? 'less than a minute'
+        : `${minsUntil} minute${minsUntil === 1 ? '' : 's'}`;
+    const projectOrStudent = booking.capstoneTitle || booking.teamName || booking.name || 'Student Group';
+    const dateLabel = formatLongDateStr(booking.date);
+    const courseLabel = booking.projectLevelLabel || booking.defenseLevelLabel || '—';
+    const roleLabel = formatRoleLabel(booking.instructorRole);
+    const membersList = Array.isArray(booking.members) && booking.members.length
+        ? booking.members.join(', ')
+        : (booking.name || '—');
+
+    const subject = `Reminder: ${booking.consultationTitle} in ${timeText} (${booking.label}) — ${projectOrStudent}`;
+
+    const textLines = [
+        `Hi ${TEACHER_NAME},`,
+        '',
+        `This is a reminder that you have an upcoming appointment in ${timeText}:`,
+        '',
+        `Type: ${booking.consultationTitle} (${booking.durationLabel})`,
+        `Date: ${dateLabel}`,
+        `Time: ${booking.label}`,
+        `Location: ${CONFIG.location}`,
+        `Capstone / Thesis Title: ${projectOrStudent}`,
+        `Course: ${courseLabel}`,
+        `Your Role: ${roleLabel}`,
+        `Group Members: ${membersList}`,
+        `Student Email: ${booking.studentEmail || '—'}`,
+        `Details: ${booking.reason || '—'}`,
+        `Reference: #${booking.reference}`,
+    ];
+
+    const html = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>Hi ${escapeHtml(TEACHER_NAME)},</p>
+            <p>This is a reminder that you have an upcoming appointment in <strong>${escapeHtml(timeText)}</strong>.</p>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin:16px 0">
+                <div style="font-size:17px;font-weight:700;color:#0f766e;margin-bottom:4px">
+                    ${escapeHtml(booking.consultationTitle)} · ${escapeHtml(booking.durationLabel)}
+                </div>
+                <div style="font-size:14px;color:#334155;margin-bottom:12px">
+                    <strong>${escapeHtml(dateLabel)}</strong> · ${escapeHtml(booking.label)}
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:14px">
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top;width:155px">Location</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(CONFIG.location)}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Capstone / Thesis</td>
+                        <td style="padding:4px 0;color:#0f172a"><strong>${escapeHtml(projectOrStudent)}</strong></td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Course &amp; Role</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(courseLabel)} · ${escapeHtml(roleLabel)}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Group Members</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(membersList)}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Student Email</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(booking.studentEmail || '—')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Details</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(booking.reason || '—')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Reference</td>
+                        <td style="padding:4px 0;color:#0f172a"><code>#${escapeHtml(booking.reference)}</code></td>
+                    </tr>
+                </table>
+            </div>
+        </div>`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: TEACHER_EMAIL,
+        subject,
+        text: textLines.join('\n'),
+        html,
+    });
+}
+
+const remindedAppointmentIds = new Set();
+let reminderCheckInFlight = false;
+
+async function checkAndSendAppointmentReminders() {
+    const checkedAt = new Date().toISOString();
+    if (reminderCheckInFlight) {
+        return { checkedAt, sentCount: 0, sentIds: [] };
+    }
+    reminderCheckInFlight = true;
+    const sentIds = [];
+
+    try {
+        const now = nowInTz();
+        const { data, error } = await db()
+            .from(TABLE)
+            .select('*')
+            .eq('appointment_date', now.date)
+            .neq('status', 'cancelled');
+        if (error) throw error;
+
+        for (const r of data || []) {
+            if (!isActiveRow(r)) continue;
+            if (r.reminder_sent_at || remindedAppointmentIds.has(r.id)) continue;
+            if (r.consultation_type !== 'dropoff' && r.notified_at) continue;
+
+            const [startMinute] = rowInterval(r);
+            const minsUntil = minutesUntilBooking(r.appointment_date, startMinute, now);
+            if (minsUntil < 0 || minsUntil > REMINDER_MINUTES_BEFORE) continue;
+
+            remindedAppointmentIds.add(r.id);
+            try {
+                const booking = toBooking(r, now);
+                await sendTeacherReminderEmail(booking, minsUntil);
+
+                const sentAt = new Date().toISOString();
+                const { error: updateErr } = await db()
+                    .from(TABLE)
+                    .update({ reminder_sent_at: sentAt })
+                    .eq('id', r.id);
+
+                if (updateErr && ['42703', 'PGRST204'].includes(updateErr.code) && r.consultation_type !== 'dropoff') {
+                    await db().from(TABLE).update({ notified_at: sentAt }).eq('id', r.id);
+                } else if (updateErr) {
+                    console.error(`Could not record reminder_sent_at for appointment ${r.id}:`, updateErr);
+                }
+                sentIds.push(r.id);
+            } catch (err) {
+                remindedAppointmentIds.delete(r.id);
+                console.error(`Failed to send 10-minute reminder for appointment ${r.id}:`, err);
+            }
+        }
+
+        return { checkedAt, sentCount: sentIds.length, sentIds };
+    } finally {
+        reminderCheckInFlight = false;
+    }
+}
+
+async function handleReminderCron(req, res) {
+    const result = await checkAndSendAppointmentReminders();
+    res.json({ ok: true, ...result });
+}
+
+app.get('/api/cron/reminders', handleReminderCron);
+app.post('/api/cron/reminders', handleReminderCron);
+
+/* ------------------------------------------------------------------ */
 /* Errors                                                              */
 /* ------------------------------------------------------------------ */
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
@@ -2416,6 +2605,14 @@ app.use((err, req, res, next) => {
     res.status(err.status || 500).json({ error: err.message || 'Something went wrong.' });
 });
 
+// Background 30-second reminder poller (runs continuously in long-lived Node servers)
+const reminderInterval = setInterval(() => {
+    checkAndSendAppointmentReminders().catch((err) => {
+        console.error('Scheduled reminder check failed:', err.message || err);
+    });
+}, 30 * 1000);
+if (reminderInterval.unref) reminderInterval.unref();
+
 // Export the Express API for Vercel
 module.exports = app;
 
@@ -2424,5 +2621,8 @@ if (require.main === module) {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`Server is running on http://localhost:${PORT}`);
+        checkAndSendAppointmentReminders().catch((err) => {
+            console.error('Startup reminder check failed:', err.message || err);
+        });
     });
 }

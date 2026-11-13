@@ -33,6 +33,7 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 - Summary stats: today, next 7 days, all upcoming
 - Upcoming / Past / Cancelled tabs grouped by date, showing consultation badges (`System · 15m`, `Drop-off · 0m`, `Retrieval · 5m`, `Comm. Letter · 5m`), `Adviser` / `Panel Member` role badges, Capstone/Thesis titles, and member chips
 - One‑click **"Notify Checked"** button on Drop-off Manuscript cards to automatically email the group's registered university address when their manuscript is ready for retrieval
+- **10-minute appointment reminders**: automatically emails the instructor (`TEACHER_EMAIL`, defaulting to `nemie07gayyed@gmail.com`) 10 minutes before every scheduled appointment (also triggerable via `/api/cron/reminders`)
 - Instant search across student names, emails, Capstone/Thesis titles, group members, reasons, cancellation reasons, and reference codes
 - **Cancel with reason**: cancelling an appointment frees up the time slot immediately and saves the instructor's cancellation reason directly to the student's profile
 
@@ -51,6 +52,7 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
    | `SESSION_SECRET` | ✅ | 32+ random characters used to sign logins |
    | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | ✅ | SMTP account used to email verification codes |
    | `SMTP_FROM` | | Sender name/address (defaults to `SMTP_USER`) |
+   | `TEACHER_EMAIL` | | Instructor email receiving 10-minute appointment reminders (defaults to `nemie07gayyed@gmail.com`) |
    | `MAX_ACTIVE_BOOKINGS_PER_STUDENT` | | Default `2` (`0` = unlimited) |
    | `SESSION_DAYS` | | Default `7` |
    | `MEETING_LOCATION` | | Default `Faculty Office` |

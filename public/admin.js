@@ -891,8 +891,11 @@
                     };
                 header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
 
-                if (b.notifiedAt) {
+                if (b.notifiedAt && (b.isDropoff || b.consultationType === 'dropoff')) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
+                }
+                if (b.reminderSentAt) {
+                    header.appendChild(el('span', 'badge sky', 'Reminder sent ✓'));
                 }
                 body.appendChild(header);
 
@@ -1028,4 +1031,20 @@
     } else {
         showLogin();
     }
+
+    // Periodically trigger the 10-minute appointment reminder sweep while the dashboard is open
+    setInterval(async () => {
+        if (!state.password) return;
+        try {
+            const res = await fetch('/api/cron/reminders', { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json().catch(() => null);
+                if (data && data.sentCount > 0) {
+                    loadBookings();
+                }
+            }
+        } catch {
+            // Ignore transient network errors during background polling
+        }
+    }, 60 * 1000);
 })();
