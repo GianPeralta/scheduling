@@ -10,10 +10,12 @@ app.use(express.json({ limit: '20kb' }));
 // Serve the frontend (on Vercel, files in /public are served by the CDN automatically)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Opportunistic background reminder check on API traffic (throttled to once every 30s)
+// Opportunistic background reminder check on API traffic (throttled to once every 30s).
+// Disabled on Vercel: serverless functions freeze after responding, which would leave the
+// check half-finished. On Vercel the external cron (/api/cron/reminders) does the work.
 let lastApiReminderSweepAt = 0;
 app.use('/api', (req, res, next) => {
-    if (req.path !== '/cron/reminders') {
+    if (!process.env.VERCEL && req.path !== '/cron/reminders') {
         const nowMs = Date.now();
         if (nowMs - lastApiReminderSweepAt >= 30 * 1000) {
             lastApiReminderSweepAt = nowMs;
@@ -2522,15 +2524,18 @@ async function sendTeacherReminderEmail(booking, minsUntil) {
 }
 
 const remindedAppointmentIds = new Set();
-let reminderCheckInFlight = false;
+let reminderCheckStartedAt = 0; // 0 = no check running
 
 async function checkAndSendAppointmentReminders() {
     const checkedAt = new Date().toISOString();
-    if (reminderCheckInFlight) {
-        return { checkedAt, sentCount: 0, sentIds: [] };
+    // Skip only if another check is genuinely running right now. A flag older than 60s is
+    // stale (e.g. a serverless instance was frozen mid-check) and is ignored.
+    if (reminderCheckStartedAt && Date.now() - reminderCheckStartedAt < 60 * 1000) {
+        return { checkedAt, skipped: 'another check is already running', sentCount: 0, sentIds: [] };
     }
-    reminderCheckInFlight = true;
+    reminderCheckStartedAt = Date.now();
     const sentIds = [];
+    const appointments = [];
 
     try {
         const now = nowInTz();
@@ -2542,13 +2547,17 @@ async function checkAndSendAppointmentReminders() {
         if (error) throw error;
 
         for (const r of data || []) {
-            if (!isActiveRow(r)) continue;
-            if (r.reminder_sent_at || remindedAppointmentIds.has(r.id)) continue;
-            if (r.consultation_type !== 'dropoff' && r.notified_at) continue;
-
             const [startMinute] = rowInterval(r);
             const minsUntil = minutesUntilBooking(r.appointment_date, startMinute, now);
-            if (minsUntil < 0 || minsUntil > REMINDER_MINUTES_BEFORE) continue;
+            const info = { ref: String(r.id).slice(0, 8), type: r.consultation_type, time: formatMinute(startMinute), minsUntil };
+            appointments.push(info);
+
+            if (!isActiveRow(r)) { info.result = 'cancelled'; continue; }
+            if (r.reminder_sent_at) { info.result = 'already sent'; continue; }
+            if (r.consultation_type !== 'dropoff' && r.notified_at) { info.result = 'already sent'; continue; }
+            if (minsUntil < 0) { info.result = 'already started'; continue; }
+            if (minsUntil > REMINDER_MINUTES_BEFORE) { info.result = 'not yet'; continue; }
+            if (remindedAppointmentIds.has(r.id)) { info.result = 'sending'; continue; }
 
             remindedAppointmentIds.add(r.id);
             try {
@@ -2567,21 +2576,48 @@ async function checkAndSendAppointmentReminders() {
                     console.error(`Could not record reminder_sent_at for appointment ${r.id}:`, updateErr);
                 }
                 sentIds.push(r.id);
+                info.result = 'sent';
             } catch (err) {
                 remindedAppointmentIds.delete(r.id);
+                info.result = `send failed: ${err.message || err}`;
                 console.error(`Failed to send 10-minute reminder for appointment ${r.id}:`, err);
             }
         }
 
-        return { checkedAt, sentCount: sentIds.length, sentIds };
+        return {
+            checkedAt,
+            today: now.date,
+            nowTime: formatMinute(now.minuteOfDay),
+            sentCount: sentIds.length,
+            sentIds,
+            appointments,
+        };
     } finally {
-        reminderCheckInFlight = false;
+        reminderCheckStartedAt = 0;
     }
 }
 
+// Called every minute by an external scheduler (e.g. cron-job.org).
+// If CRON_SECRET is set, callers must send "Authorization: Bearer <CRON_SECRET>" (or ?secret=...).
 async function handleReminderCron(req, res) {
-    const result = await checkAndSendAppointmentReminders();
-    res.json({ ok: true, ...result });
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+        const auth = String(req.headers.authorization || '');
+        const given = auth.startsWith('Bearer ') ? auth.slice(7) : String(req.query.secret || '');
+        const a = Buffer.from(given);
+        const b = Buffer.from(secret);
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+            return res.status(401).json({ ok: false, error: 'Unauthorized' });
+        }
+    }
+    res.set('Cache-Control', 'no-store');
+    try {
+        const result = await checkAndSendAppointmentReminders();
+        res.json({ ok: true, ...result });
+    } catch (err) {
+        console.error('Reminder cron failed:', err);
+        res.status(500).json({ ok: false, error: err.message || String(err), code: err.code || null });
+    }
 }
 
 app.get('/api/cron/reminders', handleReminderCron);
@@ -2605,13 +2641,15 @@ app.use((err, req, res, next) => {
     res.status(err.status || 500).json({ error: err.message || 'Something went wrong.' });
 });
 
-// Background 30-second reminder poller (runs continuously in long-lived Node servers)
-const reminderInterval = setInterval(() => {
-    checkAndSendAppointmentReminders().catch((err) => {
-        console.error('Scheduled reminder check failed:', err.message || err);
-    });
-}, 30 * 1000);
-if (reminderInterval.unref) reminderInterval.unref();
+// Background 30-second reminder poller (only for long-lived Node servers, not Vercel)
+if (!process.env.VERCEL) {
+    const reminderInterval = setInterval(() => {
+        checkAndSendAppointmentReminders().catch((err) => {
+            console.error('Scheduled reminder check failed:', err.message || err);
+        });
+    }, 30 * 1000);
+    if (reminderInterval.unref) reminderInterval.unref();
+}
 
 // Export the Express API for Vercel
 module.exports = app;
