@@ -1792,13 +1792,26 @@ function buildBookingIcs(booking, { method = 'PUBLISH', status = 'CONFIRMED', se
     return `${lines.map(foldIcsLine).join('\r\n')}\r\n`;
 }
 
+function formatOutlookLocalDateTime(dateStr, minuteOfDay) {
+    const totalMinutes = Math.max(0, Math.floor(Number(minuteOfDay) || 0));
+    const dayOffset = Math.floor(totalMinutes / 1440);
+    const remMinutes = totalMinutes % 1440;
+    const hh = String(Math.floor(remMinutes / 60)).padStart(2, '0');
+    const mm = String(remMinutes % 60).padStart(2, '0');
+    const targetDate = dayOffset > 0 ? addDays(dateStr, dayOffset) : dateStr;
+    return `${targetDate}T${hh}:${mm}:00`;
+}
+
 function buildOutlookCalendarUrl(booking) {
-    const { startUtc, endUtc } = bookingUtcInterval(booking);
+    const startMin = Number.isFinite(booking.startMinute) ? booking.startMinute : (Number(booking.hour) || 0) * 60;
+    const endMin = Number.isFinite(booking.endMinute) && booking.endMinute > startMin
+        ? booking.endMinute
+        : startMin + (Number(booking.durationMinutes) > 0 ? Number(booking.durationMinutes) : 15);
     const params = new URLSearchParams({
         path: '/calendar/action/compose',
         rru: 'addevent',
-        startdt: startUtc.toISOString(),
-        enddt: endUtc.toISOString(),
+        startdt: formatOutlookLocalDateTime(booking.date, startMin),
+        enddt: formatOutlookLocalDateTime(booking.date, endMin),
         subject: `${booking.consultationTitle || 'Consultation'} — ${TEACHER_NAME}`,
         body: buildBookingCalendarDescription(booking),
         location: CONFIG.location,
