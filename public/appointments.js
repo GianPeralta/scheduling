@@ -250,33 +250,13 @@
                 const actionRow = document.createElement('div');
                 actionRow.className = 'my-booking-actions';
 
-                if (b.googleCalendarUrl) {
-                    const gcalLink = document.createElement('a');
-                    gcalLink.href = b.googleCalendarUrl;
-                    gcalLink.target = '_blank';
-                    gcalLink.rel = 'noopener noreferrer';
-                    gcalLink.className = 'btn btn-ghost btn-sm';
-                    gcalLink.textContent = 'Google Calendar';
-                    actionRow.appendChild(gcalLink);
-                }
-
-                if (b.outlookCalendarUrl) {
-                    const outlookLink = document.createElement('a');
-                    outlookLink.href = b.outlookCalendarUrl;
-                    outlookLink.target = '_blank';
-                    outlookLink.rel = 'noopener noreferrer';
-                    outlookLink.className = 'btn btn-ghost btn-sm';
-                    outlookLink.textContent = 'Outlook Calendar';
-                    actionRow.appendChild(outlookLink);
-                }
-
                 const icsHref = b.icsUrl || (b.id ? `/api/bookings/${b.id}/ics` : '');
                 if (icsHref) {
                     const icsLink = document.createElement('a');
                     icsLink.href = icsHref;
                     icsLink.download = `consultation-${String(b.reference || 'invite').toLowerCase()}.ics`;
                     icsLink.className = 'btn btn-ghost btn-sm';
-                    icsLink.textContent = 'Apple / Other Calendar (.ics)';
+                    icsLink.textContent = 'Add to Calendar';
                     actionRow.appendChild(icsLink);
                 }
 
