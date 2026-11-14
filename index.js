@@ -34,6 +34,7 @@ app.use('/api', (req, res, next) => {
 const TEACHER_NAME = 'Arnemie Gayyed';
 const TEACHER_EMAIL = String(process.env.TEACHER_EMAIL || 'nemie07gayyed@gmail.com').trim().toLowerCase();
 const REMINDER_MINUTES_BEFORE = 10; // Send reminder to teacher 10 minutes before every appointment
+const STUDENT_REMINDER_MINUTES_BEFORE = intEnv('STUDENT_REMINDER_MINUTES_BEFORE', 60) || 60; // Send reminder to student before every appointment
 
 const hm = (h, m) => h * 60 + m;
 
@@ -1652,6 +1653,181 @@ function formatConsultationTitle(consultationType, defenseLevel = null) {
     return 'Consultation';
 }
 
+/* ---------- Calendar (.ics & Google Calendar) helpers ---------- */
+function localDateMinuteToUtc(dateStr, minuteOfDay, timeZone = CONFIG.timezone) {
+    const dt = parseDate(dateStr);
+    if (!dt) return new Date();
+    const totalMinutes = Number.isFinite(minuteOfDay) ? minuteOfDay : 0;
+    const hour = Math.floor(totalMinutes / 60);
+    const min = ((totalMinutes % 60) + 60) % 60;
+    const y = dt.getUTCFullYear();
+    const m = dt.getUTCMonth();
+    const d = dt.getUTCDate();
+    const utcGuessMs = Date.UTC(y, m, d, hour, min, 0);
+
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+    });
+
+    const tzWallAsUtcMs = (ms) => {
+        const parts = fmt.formatToParts(new Date(ms));
+        const get = (type) => parseInt(parts.find((p) => p.type === type).value, 10);
+        return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'));
+    };
+
+    const offset1 = tzWallAsUtcMs(utcGuessMs) - utcGuessMs;
+    const pass1 = utcGuessMs - offset1;
+    const offset2 = tzWallAsUtcMs(pass1) - pass1;
+    return new Date(utcGuessMs - offset2);
+}
+
+function formatIcsUtcDate(date) {
+    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function escapeIcsText(value) {
+    return String(value ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\r\n|\r|\n/g, '\\n')
+        .replace(/;/g, '\\;')
+        .replace(/,/g, '\\,');
+}
+
+function foldIcsLine(line) {
+    if (Buffer.byteLength(line, 'utf8') <= 75) return line;
+    const parts = [];
+    let current = '';
+    let currentBytes = 0;
+    for (const ch of line) {
+        const chBytes = Buffer.byteLength(ch, 'utf8');
+        if (currentBytes + chBytes > 75 && current) {
+            parts.push(current);
+            current = ` ${ch}`;
+            currentBytes = 1 + chBytes;
+        } else {
+            current += ch;
+            currentBytes += chBytes;
+        }
+    }
+    if (current) parts.push(current);
+    return parts.join('\r\n');
+}
+
+function bookingUtcInterval(booking) {
+    const startMin = Number.isFinite(booking.startMinute) ? booking.startMinute : (Number(booking.hour) || 0) * 60;
+    const endMin = Number.isFinite(booking.endMinute) && booking.endMinute > startMin
+        ? booking.endMinute
+        : startMin + (Number(booking.durationMinutes) > 0 ? Number(booking.durationMinutes) : 15);
+    return {
+        startUtc: localDateMinuteToUtc(booking.date, startMin),
+        endUtc: localDateMinuteToUtc(booking.date, endMin),
+    };
+}
+
+function buildBookingCalendarDescription(booking) {
+    const projectOrStudent = booking.capstoneTitle || booking.teamName || booking.name || 'Student Group';
+    const courseLabel = booking.projectLevelLabel || booking.defenseLevelLabel || '—';
+    const roleLabel = formatRoleLabel(booking.instructorRole);
+    const membersList = Array.isArray(booking.members) && booking.members.length
+        ? booking.members.join(', ')
+        : (booking.name || '—');
+    const lines = [
+        `Consultation: ${booking.consultationTitle || 'Consultation'} (${booking.durationLabel || '—'})`,
+        `Capstone / Thesis: ${projectOrStudent}`,
+        `Course & Role: ${courseLabel} · ${roleLabel}`,
+        `Group Members: ${membersList}`,
+    ];
+    if (booking.reason) lines.push(`Agenda / Notes: ${booking.reason}`);
+    if (booking.status === 'cancelled' && booking.cancellationReason) {
+        lines.push(`Cancellation Reason: ${booking.cancellationReason}`);
+    }
+    lines.push(`Reference: #${booking.reference}`);
+    return lines.join('\n');
+}
+
+function buildBookingIcs(booking, { method = 'REQUEST', status = 'CONFIRMED', sequence = 0 } = {}) {
+    const { startUtc, endUtc } = bookingUtcInterval(booking);
+    const dtStart = formatIcsUtcDate(startUtc);
+    const dtEnd = formatIcsUtcDate(endUtc);
+    const dtStamp = formatIcsUtcDate(new Date());
+    const sanitizeCn = (s) => String(s ?? '').replace(/["\r\n]/g, '').trim();
+    const summary = `${booking.consultationTitle || 'Consultation'} — ${TEACHER_NAME}`;
+    const description = buildBookingCalendarDescription(booking);
+
+    const lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Arnemie Gayyed//Consultation Scheduler//EN',
+        'CALSCALE:GREGORIAN',
+        `METHOD:${method}`,
+        'BEGIN:VEVENT',
+        `UID:booking-${booking.id}@arnemie-consultation-scheduler`,
+        `DTSTAMP:${dtStamp}`,
+        `DTSTART:${dtStart}`,
+        `DTEND:${dtEnd}`,
+        `SUMMARY:${escapeIcsText(summary)}`,
+        `LOCATION:${escapeIcsText(CONFIG.location)}`,
+        `DESCRIPTION:${escapeIcsText(description)}`,
+        `ORGANIZER;CN="${sanitizeCn(TEACHER_NAME)}":mailto:${TEACHER_EMAIL}`,
+    ];
+
+    if (booking.studentEmail) {
+        lines.push(
+            `ATTENDEE;CN="${sanitizeCn(booking.name || 'Student')}";ROLE=REQ-PARTICIPANT;RSVP=FALSE:mailto:${booking.studentEmail}`
+        );
+    }
+
+    lines.push(`STATUS:${status}`, `SEQUENCE:${sequence}`);
+
+    if (method === 'REQUEST') {
+        lines.push(
+            'BEGIN:VALARM',
+            'ACTION:DISPLAY',
+            `DESCRIPTION:${escapeIcsText(`Upcoming ${booking.consultationTitle || 'Consultation'} with ${TEACHER_NAME}`)}`,
+            'TRIGGER:-PT30M',
+            'END:VALARM'
+        );
+    }
+
+    lines.push('END:VEVENT', 'END:VCALENDAR');
+    return `${lines.map(foldIcsLine).join('\r\n')}\r\n`;
+}
+
+function buildGoogleCalendarUrl(booking) {
+    const { startUtc, endUtc } = bookingUtcInterval(booking);
+    const dates = `${formatIcsUtcDate(startUtc)}/${formatIcsUtcDate(endUtc)}`;
+    const params = new URLSearchParams({
+        action: 'TEMPLATE',
+        text: `${booking.consultationTitle || 'Consultation'} — ${TEACHER_NAME}`,
+        dates,
+        details: buildBookingCalendarDescription(booking),
+        location: CONFIG.location,
+        ctz: CONFIG.timezone,
+    });
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+function buildOutlookCalendarUrl(booking) {
+    const { startUtc, endUtc } = bookingUtcInterval(booking);
+    const params = new URLSearchParams({
+        path: '/calendar/action/compose',
+        rru: 'addevent',
+        startdt: startUtc.toISOString(),
+        enddt: endUtc.toISOString(),
+        subject: `${booking.consultationTitle || 'Consultation'} — ${TEACHER_NAME}`,
+        body: buildBookingCalendarDescription(booking),
+        location: CONFIG.location,
+    });
+    return `https://outlook.office.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
+
 /** Shape a database row for the frontend. */
 function toBooking(r, now, studentLookup = null) {
     const current = (now && typeof now === 'object' && now.date) ? now : nowInTz();
@@ -1675,7 +1851,7 @@ function toBooking(r, now, studentLookup = null) {
         || normalizeDefenseLevel(matchedStudent?.project_level)
         || null;
     const defenseLevel = consultationType === 'defense' ? projectLevel : null;
-    return {
+    const booking = {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
         type: r.team_name || members.length >= 2 ? 'group' : 'individual',
@@ -1707,8 +1883,13 @@ function toBooking(r, now, studentLookup = null) {
         cancelledAt: r.cancelled_at || null,
         notifiedAt: r.notified_at || null,
         reminderSentAt: r.reminder_sent_at || (r.consultation_type !== 'dropoff' ? r.notified_at : null) || null,
+        studentReminderSentAt: r.student_reminder_sent_at || null,
         createdAt: r.created_at,
     };
+    booking.googleCalendarUrl = buildGoogleCalendarUrl(booking);
+    booking.outlookCalendarUrl = buildOutlookCalendarUrl(booking);
+    booking.icsUrl = `/api/bookings/${r.id}/ics`;
+    return booking;
 }
 
 // Logged-in student's bookings (upcoming, cancelled with instructor reason, and past)
@@ -1727,6 +1908,34 @@ app.get('/api/my-bookings', requireStudent, async (req, res) => {
         currentMinute: now.minuteOfDay,
         bookings: data.map((r) => toBooking(r, now)),
     });
+});
+
+// Download an .ics calendar invite for a logged-in student's appointment
+app.get('/api/bookings/:id/ics', requireStudent, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) {
+        return res.status(400).json({ error: 'Invalid appointment ID.' });
+    }
+
+    const { data: row, error } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('id', req.params.id)
+        .eq('student_id', req.student.id)
+        .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row) return res.status(404).json({ error: 'Appointment not found.' });
+
+    const booking = toBooking(row);
+    const isCancelled = booking.status === 'cancelled';
+    const ics = buildBookingIcs(booking, {
+        method: isCancelled ? 'CANCEL' : 'REQUEST',
+        status: isCancelled ? 'CANCELLED' : 'CONFIRMED',
+        sequence: isCancelled ? 1 : 0,
+    });
+
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="consultation-${booking.reference.toLowerCase()}.ics"`);
+    res.send(ics);
 });
 
 // Allow a logged-in student to cancel their own appointment (only at least 2 hours before the schedule)
@@ -2039,7 +2248,13 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         else if (s) updatedStudent = publicStudent(s);
     }
 
-    res.status(201).json({ booking: toBooking(data), student: updatedStudent });
+    const booking = toBooking(data);
+    const emailPromise = sendStudentBookingConfirmationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
+        console.error('Failed to send student booking confirmation email:', err.message || err);
+    });
+    if (process.env.VERCEL) await emailPromise;
+
+    res.status(201).json({ booking, student: updatedStudent });
 });
 
 /* ------------------------------------------------------------------ */
@@ -2282,6 +2497,15 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
                     .select('*');
                 if (Array.isArray(updatedRows)) {
                     cancelledBookings = updatedRows.map((r) => toBooking(r, now));
+                    const siteOrigin = resolveSiteOrigin(req);
+                    const cancelEmailsPromise = Promise.allSettled(
+                        cancelledBookings.map((b) =>
+                            sendStudentCancellationEmail(b, siteOrigin).catch((err) => {
+                                console.error(`Failed to send block cancellation email for ${b.id}:`, err.message || err);
+                            })
+                        )
+                    );
+                    if (process.env.VERCEL) await cancelEmailsPromise;
                 }
             }
         }
@@ -2410,7 +2634,13 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
     }
     if (!data) return res.status(404).json({ error: 'Booking not found.' });
 
-    res.json({ ok: true, booking: toBooking(data) });
+    const booking = toBooking(data);
+    const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
+        console.error('Failed to send student cancellation email:', err.message || err);
+    });
+    if (process.env.VERCEL) await emailPromise;
+
+    res.json({ ok: true, booking });
 });
 
 app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
@@ -2435,47 +2665,78 @@ function formatLongDateStr(dateStr) {
     });
 }
 
-async function sendTeacherReminderEmail(booking, minsUntil) {
-    if (!TEACHER_EMAIL) {
-        throw httpError(500, 'Server is missing TEACHER_EMAIL.');
+function resolveSiteOrigin(req = null) {
+    const configured = String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+    if (configured) return configured;
+    if (req && typeof req.get === 'function') {
+        const host = req.get('host');
+        if (host) {
+            const proto = req.headers['x-forwarded-proto']
+                ? String(req.headers['x-forwarded-proto']).split(',')[0].trim()
+                : req.protocol;
+            return `${proto}://${host}`;
+        }
     }
-    const timeText = minsUntil <= 0
-        ? 'less than a minute'
-        : `${minsUntil} minute${minsUntil === 1 ? '' : 's'}`;
-    const projectOrStudent = booking.capstoneTitle || booking.teamName || booking.name || 'Student Group';
-    const dateLabel = formatLongDateStr(booking.date);
-    const courseLabel = booking.projectLevelLabel || booking.defenseLevelLabel || '—';
-    const roleLabel = formatRoleLabel(booking.instructorRole);
-    const membersList = Array.isArray(booking.members) && booking.members.length
-        ? booking.members.join(', ')
-        : (booking.name || '—');
+    if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+        return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+    }
+    if (process.env.VERCEL_URL) {
+        return `https://${process.env.VERCEL_URL}`;
+    }
+    return '';
+}
 
-    const subject = `Reminder: ${booking.consultationTitle} in ${timeText} (${booking.label}) — ${projectOrStudent}`;
+function formatTimeUntilLabel(minsUntil) {
+    if (minsUntil <= 0) return 'less than a minute';
+    if (minsUntil === 60) return '1 hour';
+    return `${minsUntil} minute${minsUntil === 1 ? '' : 's'}`;
+}
 
-    const textLines = [
-        `Hi ${TEACHER_NAME},`,
-        '',
-        `This is a reminder that you have an upcoming appointment in ${timeText}:`,
-        '',
+function buildBookingSummaryData(booking) {
+    return {
+        projectOrStudent: booking.capstoneTitle || booking.teamName || booking.name || 'Student Group',
+        dateLabel: formatLongDateStr(booking.date),
+        courseLabel: booking.projectLevelLabel || booking.defenseLevelLabel || '—',
+        roleLabel: formatRoleLabel(booking.instructorRole),
+        membersList: Array.isArray(booking.members) && booking.members.length
+            ? booking.members.join(', ')
+            : (booking.name || '—'),
+    };
+}
+
+function buildBookingSummaryTextLines(booking, { includeStudentEmail = true } = {}) {
+    const { projectOrStudent, dateLabel, courseLabel, roleLabel, membersList } = buildBookingSummaryData(booking);
+    const lines = [
         `Type: ${booking.consultationTitle} (${booking.durationLabel})`,
         `Date: ${dateLabel}`,
         `Time: ${booking.label}`,
         `Location: ${CONFIG.location}`,
         `Capstone / Thesis Title: ${projectOrStudent}`,
         `Course: ${courseLabel}`,
-        `Your Role: ${roleLabel}`,
+        `Instructor (${TEACHER_NAME}): ${roleLabel}`,
         `Group Members: ${membersList}`,
-        `Student Email: ${booking.studentEmail || '—'}`,
-        `Details: ${booking.reason || '—'}`,
-        `Reference: #${booking.reference}`,
     ];
+    if (includeStudentEmail) {
+        lines.push(`Student Email: ${booking.studentEmail || '—'}`);
+    }
+    lines.push(`Details: ${booking.reason || '—'}`);
+    lines.push(`Reference: #${booking.reference}`);
+    return lines;
+}
 
-    const html = `
-        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
-            <p>Hi ${escapeHtml(TEACHER_NAME)},</p>
-            <p>This is a reminder that you have an upcoming appointment in <strong>${escapeHtml(timeText)}</strong>.</p>
+function buildBookingSummaryHtmlCard(booking, { includeStudentEmail = true, accentColor = '#0f766e' } = {}) {
+    const { projectOrStudent, dateLabel, courseLabel, roleLabel, membersList } = buildBookingSummaryData(booking);
+    const studentEmailRow = includeStudentEmail
+        ? `
+                    <tr>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Student Email</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(booking.studentEmail || '—')}</td>
+                    </tr>`
+        : '';
+
+    return `
             <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin:16px 0">
-                <div style="font-size:17px;font-weight:700;color:#0f766e;margin-bottom:4px">
+                <div style="font-size:17px;font-weight:700;color:${escapeHtml(accentColor)};margin-bottom:4px">
                     ${escapeHtml(booking.consultationTitle)} · ${escapeHtml(booking.durationLabel)}
                 </div>
                 <div style="font-size:14px;color:#334155;margin-bottom:12px">
@@ -2497,11 +2758,7 @@ async function sendTeacherReminderEmail(booking, minsUntil) {
                     <tr>
                         <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Group Members</td>
                         <td style="padding:4px 0;color:#0f172a">${escapeHtml(membersList)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Student Email</td>
-                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(booking.studentEmail || '—')}</td>
-                    </tr>
+                    </tr>${studentEmailRow}
                     <tr>
                         <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Details</td>
                         <td style="padding:4px 0;color:#0f172a">${escapeHtml(booking.reason || '—')}</td>
@@ -2511,7 +2768,221 @@ async function sendTeacherReminderEmail(booking, minsUntil) {
                         <td style="padding:4px 0;color:#0f172a"><code>#${escapeHtml(booking.reference)}</code></td>
                     </tr>
                 </table>
+            </div>`;
+}
+
+function studentPolicyReminderText(booking) {
+    const rules = [];
+    if (['system', 'retrieval', 'defense'].includes(booking.consultationType)) {
+        rules.push('All group members must be present during this schedule.');
+    } else if (booking.consultationType === 'letter') {
+        rules.push("Please bring your printed communication letter that already bears Ma'am Melinda Beninsig's initial.");
+    } else if (booking.isDropoff) {
+        rules.push('Once your manuscript is checked, you will receive an email notification to schedule your 5-minute Retrieval of Manuscript.');
+    }
+    rules.push('If you need to cancel, please do so in My Appointments at least 2 hours before the scheduled time.');
+    return rules;
+}
+
+function buildEmailActionButtonsHtml(googleCalUrl, outlookCalUrl, appointmentsUrl = '') {
+    const appointmentsBtnHtml = appointmentsUrl
+        ? `<a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#ffffff;color:#0f172a;border:1px solid #cbd5e1;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:8px;margin-bottom:8px">View My Appointments</a>`
+        : '';
+    return `
+            <div style="margin:18px 0">
+                <a href="${escapeHtml(googleCalUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px;margin-right:8px;margin-bottom:8px">Add to Google Calendar</a>
+                <a href="${escapeHtml(outlookCalUrl)}" style="display:inline-block;background:#0369a1;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px;margin-right:8px;margin-bottom:8px">Add to Outlook Calendar</a>
+                ${appointmentsBtnHtml}
+            </div>`;
+}
+
+async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
+    if (!booking?.studentEmail) return;
+    const { dateLabel } = buildBookingSummaryData(booking);
+    const greeting = `Hi ${booking.name || 'Student'},`;
+    const subject = `Confirmed: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
+    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
+    const googleCalUrl = booking.googleCalendarUrl || buildGoogleCalendarUrl(booking);
+    const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
+    const rules = studentPolicyReminderText(booking);
+
+    const textLines = [
+        greeting,
+        '',
+        `Your ${booking.consultationTitle} with ${TEACHER_NAME} has been scheduled.`,
+        '',
+        ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
+        '',
+        'Reminders:',
+        ...rules.map((r) => `• ${r}`),
+        '',
+        `Add to Google Calendar: ${googleCalUrl}`,
+        `Add to Outlook Calendar: ${outlookCalUrl}`,
+        ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
+        '',
+        'A calendar invite (.ics) is attached to this email.',
+    ];
+
+    const html = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> is confirmed.</p>
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
+            ${buildEmailActionButtonsHtml(googleCalUrl, outlookCalUrl, appointmentsUrl)}
+            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
+                <strong>Reminders:</strong>
+                <ul style="margin:6px 0 0;padding-left:18px">
+                    ${rules.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}
+                </ul>
             </div>
+            <p style="margin-top:16px;color:#64748b;font-size:13px">A calendar invite (<code>.ics</code>) is attached so you can add this appointment directly to Google, Apple, or Outlook Calendar.</p>
+        </div>`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: booking.studentEmail,
+        subject,
+        text: textLines.join('\n'),
+        html,
+        attachments: [
+            {
+                filename: `consultation-${booking.reference.toLowerCase()}.ics`,
+                content: buildBookingIcs(booking, { method: 'REQUEST', status: 'CONFIRMED', sequence: 0 }),
+                contentType: 'text/calendar; charset=utf-8; method=REQUEST',
+            },
+        ],
+    });
+}
+
+async function sendStudentCancellationEmail(booking, siteOrigin = '') {
+    if (!booking?.studentEmail) return;
+    const { dateLabel } = buildBookingSummaryData(booking);
+    const greeting = `Hi ${booking.name || 'Student'},`;
+    const reason = booking.cancellationReason || 'Instructor unavailable.';
+    const subject = `Cancelled: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
+    const bookingUrl = siteOrigin ? `${siteOrigin}/` : '';
+
+    const textLines = [
+        greeting,
+        '',
+        `Your scheduled ${booking.consultationTitle} with ${TEACHER_NAME} has been cancelled.`,
+        '',
+        `Reason for Cancellation: ${reason}`,
+        '',
+        'Original Appointment Details:',
+        ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
+        ...(bookingUrl ? ['', `Book a new consultation: ${bookingUrl}`] : []),
+    ];
+
+    const rebookBtnHtml = bookingUrl
+        ? `<p style="margin:18px 0"><a href="${escapeHtml(bookingUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px">Book a New Consultation</a></p>`
+        : '';
+
+    const html = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Your scheduled <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> has been cancelled.</p>
+            <div style="background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:14px 16px;border-radius:10px;margin:16px 0">
+                <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Reason for Cancellation</div>
+                <div style="font-size:14px;font-weight:600">${escapeHtml(reason)}</div>
+            </div>
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false, accentColor: '#be123c' })}
+            ${rebookBtnHtml}
+            <p style="color:#64748b;font-size:13px">An updated calendar cancellation (<code>.ics</code>) is attached so it is removed from your calendar if you added it previously.</p>
+        </div>`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: booking.studentEmail,
+        subject,
+        text: textLines.join('\n'),
+        html,
+        attachments: [
+            {
+                filename: `consultation-${booking.reference.toLowerCase()}-cancelled.ics`,
+                content: buildBookingIcs(booking, { method: 'CANCEL', status: 'CANCELLED', sequence: 1 }),
+                contentType: 'text/calendar; charset=utf-8; method=CANCEL',
+            },
+        ],
+    });
+}
+
+async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
+    if (!booking?.studentEmail) return;
+    const timeText = formatTimeUntilLabel(minsUntil);
+    const googleCalUrl = booking.googleCalendarUrl || buildGoogleCalendarUrl(booking);
+    const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
+    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
+    const greeting = `Hi ${booking.name || 'Student'},`;
+    const subject = `Reminder: Your ${booking.consultationTitle} is in ${timeText} (${booking.label}) — #${booking.reference}`;
+    const rules = studentPolicyReminderText(booking);
+
+    const textLines = [
+        greeting,
+        '',
+        `This is a reminder that your ${booking.consultationTitle} with ${TEACHER_NAME} starts in ${timeText} at ${CONFIG.location}.`,
+        '',
+        ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
+        '',
+        'Reminders:',
+        ...rules.map((r) => `• ${r}`),
+        '',
+        `Add to Google Calendar: ${googleCalUrl}`,
+        `Add to Outlook Calendar: ${outlookCalUrl}`,
+        ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
+    ];
+
+    const html = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>${escapeHtml(greeting)}</p>
+            <p>This is a reminder that your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> starts in <strong>${escapeHtml(timeText)}</strong> at <strong>${escapeHtml(CONFIG.location)}</strong>.</p>
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
+            ${buildEmailActionButtonsHtml(googleCalUrl, outlookCalUrl, appointmentsUrl)}
+            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
+                <strong>Reminders:</strong>
+                <ul style="margin:6px 0 0;padding-left:18px">
+                    ${rules.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}
+                </ul>
+            </div>
+        </div>`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: booking.studentEmail,
+        subject,
+        text: textLines.join('\n'),
+        html,
+        attachments: [
+            {
+                filename: `consultation-${booking.reference.toLowerCase()}.ics`,
+                content: buildBookingIcs(booking, { method: 'REQUEST', status: 'CONFIRMED', sequence: 0 }),
+                contentType: 'text/calendar; charset=utf-8; method=REQUEST',
+            },
+        ],
+    });
+}
+
+async function sendTeacherReminderEmail(booking, minsUntil) {
+    if (!TEACHER_EMAIL) {
+        throw httpError(500, 'Server is missing TEACHER_EMAIL.');
+    }
+    const timeText = formatTimeUntilLabel(minsUntil);
+    const { projectOrStudent } = buildBookingSummaryData(booking);
+    const subject = `Reminder: ${booking.consultationTitle} in ${timeText} (${booking.label}) — ${projectOrStudent}`;
+
+    const textLines = [
+        `Hi ${TEACHER_NAME},`,
+        '',
+        `This is a reminder that you have an upcoming appointment in ${timeText}:`,
+        '',
+        ...buildBookingSummaryTextLines(booking, { includeStudentEmail: true }),
+    ];
+
+    const html = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>Hi ${escapeHtml(TEACHER_NAME)},</p>
+            <p>This is a reminder that you have an upcoming appointment in <strong>${escapeHtml(timeText)}</strong>.</p>
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: true })}
         </div>`;
 
     await mailer().sendMail({
@@ -2524,17 +2995,19 @@ async function sendTeacherReminderEmail(booking, minsUntil) {
 }
 
 const remindedAppointmentIds = new Set();
+const remindedStudentAppointmentIds = new Set();
 let reminderCheckStartedAt = 0; // 0 = no check running
 
-async function checkAndSendAppointmentReminders() {
+async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()) {
     const checkedAt = new Date().toISOString();
     // Skip only if another check is genuinely running right now. A flag older than 60s is
     // stale (e.g. a serverless instance was frozen mid-check) and is ignored.
     if (reminderCheckStartedAt && Date.now() - reminderCheckStartedAt < 60 * 1000) {
-        return { checkedAt, skipped: 'another check is already running', sentCount: 0, sentIds: [] };
+        return { checkedAt, skipped: 'another check is already running', sentCount: 0, sentIds: [], studentSentCount: 0, studentSentIds: [] };
     }
     reminderCheckStartedAt = Date.now();
     const sentIds = [];
+    const studentSentIds = [];
     const appointments = [];
 
     try {
@@ -2553,34 +3026,80 @@ async function checkAndSendAppointmentReminders() {
             appointments.push(info);
 
             if (!isActiveRow(r)) { info.result = 'cancelled'; continue; }
-            if (r.reminder_sent_at) { info.result = 'already sent'; continue; }
-            if (r.consultation_type !== 'dropoff' && r.notified_at) { info.result = 'already sent'; continue; }
             if (minsUntil < 0) { info.result = 'already started'; continue; }
-            if (minsUntil > REMINDER_MINUTES_BEFORE) { info.result = 'not yet'; continue; }
-            if (remindedAppointmentIds.has(r.id)) { info.result = 'sending'; continue; }
 
-            remindedAppointmentIds.add(r.id);
-            try {
-                const booking = toBooking(r, now);
-                await sendTeacherReminderEmail(booking, minsUntil);
+            const booking = toBooking(r, now);
+            const alreadyNotifiedTeacher = Boolean(r.reminder_sent_at || (r.consultation_type !== 'dropoff' && r.notified_at));
 
-                const sentAt = new Date().toISOString();
-                const { error: updateErr } = await db()
-                    .from(TABLE)
-                    .update({ reminder_sent_at: sentAt })
-                    .eq('id', r.id);
+            // 1. Teacher reminder (10 minutes before)
+            if (alreadyNotifiedTeacher) {
+                info.result = 'already sent';
+            } else if (minsUntil > REMINDER_MINUTES_BEFORE) {
+                info.result = 'not yet';
+            } else if (remindedAppointmentIds.has(r.id)) {
+                info.result = 'sending';
+            } else {
+                remindedAppointmentIds.add(r.id);
+                try {
+                    await sendTeacherReminderEmail(booking, minsUntil);
 
-                if (updateErr && ['42703', 'PGRST204'].includes(updateErr.code) && r.consultation_type !== 'dropoff') {
-                    await db().from(TABLE).update({ notified_at: sentAt }).eq('id', r.id);
-                } else if (updateErr) {
-                    console.error(`Could not record reminder_sent_at for appointment ${r.id}:`, updateErr);
+                    const sentAt = new Date().toISOString();
+                    const { error: updateErr } = await db()
+                        .from(TABLE)
+                        .update({ reminder_sent_at: sentAt })
+                        .eq('id', r.id);
+
+                    if (updateErr && ['42703', 'PGRST204'].includes(updateErr.code) && r.consultation_type !== 'dropoff') {
+                        await db().from(TABLE).update({ notified_at: sentAt }).eq('id', r.id);
+                    } else if (updateErr) {
+                        console.error(`Could not record reminder_sent_at for appointment ${r.id}:`, updateErr);
+                    }
+                    sentIds.push(r.id);
+                    info.result = 'sent';
+                } catch (err) {
+                    remindedAppointmentIds.delete(r.id);
+                    info.result = `send failed: ${err.message || err}`;
+                    console.error(`Failed to send 10-minute reminder for appointment ${r.id}:`, err);
                 }
-                sentIds.push(r.id);
-                info.result = 'sent';
-            } catch (err) {
-                remindedAppointmentIds.delete(r.id);
-                info.result = `send failed: ${err.message || err}`;
-                console.error(`Failed to send 10-minute reminder for appointment ${r.id}:`, err);
+            }
+
+            // 2. Student reminder (STUDENT_REMINDER_MINUTES_BEFORE, fallback to 10-min window if column not migrated yet)
+            if (r.student_email) {
+                const hasStudentReminderCol = Object.prototype.hasOwnProperty.call(r, 'student_reminder_sent_at');
+                const studentWindow = hasStudentReminderCol ? STUDENT_REMINDER_MINUTES_BEFORE : REMINDER_MINUTES_BEFORE;
+                const alreadySentStudent = hasStudentReminderCol
+                    ? Boolean(r.student_reminder_sent_at)
+                    : alreadyNotifiedTeacher;
+
+                if (alreadySentStudent) {
+                    info.studentResult = 'already sent';
+                } else if (minsUntil > studentWindow) {
+                    info.studentResult = 'not yet';
+                } else if (remindedStudentAppointmentIds.has(r.id)) {
+                    info.studentResult = 'sending';
+                } else {
+                    remindedStudentAppointmentIds.add(r.id);
+                    try {
+                        await sendStudentReminderEmail(booking, minsUntil, siteOrigin);
+
+                        if (hasStudentReminderCol) {
+                            const sentAt = new Date().toISOString();
+                            const { error: stuUpdateErr } = await db()
+                                .from(TABLE)
+                                .update({ student_reminder_sent_at: sentAt })
+                                .eq('id', r.id);
+                            if (stuUpdateErr) {
+                                console.error(`Could not record student_reminder_sent_at for appointment ${r.id}:`, stuUpdateErr);
+                            }
+                        }
+                        studentSentIds.push(r.id);
+                        info.studentResult = 'sent';
+                    } catch (err) {
+                        remindedStudentAppointmentIds.delete(r.id);
+                        info.studentResult = `send failed: ${err.message || err}`;
+                        console.error(`Failed to send student reminder for appointment ${r.id}:`, err);
+                    }
+                }
             }
         }
 
@@ -2590,6 +3109,8 @@ async function checkAndSendAppointmentReminders() {
             nowTime: formatMinute(now.minuteOfDay),
             sentCount: sentIds.length,
             sentIds,
+            studentSentCount: studentSentIds.length,
+            studentSentIds,
             appointments,
         };
     } finally {
@@ -2612,7 +3133,7 @@ async function handleReminderCron(req, res) {
     }
     res.set('Cache-Control', 'no-store');
     try {
-        const result = await checkAndSendAppointmentReminders();
+        const result = await checkAndSendAppointmentReminders(resolveSiteOrigin(req));
         res.json({ ok: true, ...result });
     } catch (err) {
         console.error('Reminder cron failed:', err);

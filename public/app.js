@@ -1419,6 +1419,34 @@
         setText('#cLocation', state.config?.location || 'Faculty Office');
         setText('#cReason', b.reason);
         setText('#cRef', b.reference);
+
+        const emailAddr = b.studentEmail || state.student?.email || '';
+        setText(
+            '#cEmailNotice',
+            emailAddr
+                ? `Confirmation & calendar invite sent to ${emailAddr}.`
+                : 'Confirmation & calendar invite sent to your school email.'
+        );
+        const googleCalBtn = $('#cGoogleCalBtn');
+        if (googleCalBtn) {
+            googleCalBtn.href = b.googleCalendarUrl || '#';
+            googleCalBtn.classList.toggle('hidden', !b.googleCalendarUrl);
+        }
+        const outlookCalBtn = $('#cOutlookCalBtn');
+        if (outlookCalBtn) {
+            outlookCalBtn.href = b.outlookCalendarUrl || '#';
+            outlookCalBtn.classList.toggle('hidden', !b.outlookCalendarUrl);
+        }
+        const downloadIcsBtn = $('#cDownloadIcsBtn');
+        if (downloadIcsBtn) {
+            const icsHref = b.icsUrl || (b.id ? `/api/bookings/${b.id}/ics` : '');
+            downloadIcsBtn.href = icsHref || '#';
+            if (b.reference) {
+                downloadIcsBtn.download = `consultation-${String(b.reference).toLowerCase()}.ics`;
+            }
+            downloadIcsBtn.classList.toggle('hidden', !icsHref);
+        }
+
         goToStep(4);
     }
 

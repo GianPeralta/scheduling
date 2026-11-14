@@ -2060,6 +2060,21 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     line-height: 1.45;
 }
 
+.email-confirm-note {
+    max-width: 440px;
+    color: var(--primary);
+    font-weight: 500;
+    line-height: 1.45;
+}
+
+.calendar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+}
+
 .my-booking-actions {
     margin-top: 8px;
     padding-top: 8px;
@@ -2835,11 +2850,13 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     .success h3 { font-size: 1.45rem; }
     .ticket { padding: 15px; gap: 10px; }
     .ticket-row { font-size: 0.88rem; gap: 12px; }
-    .step4-actions {
+    .step4-actions,
+    .calendar-actions {
         flex-direction: column;
         width: 100%;
     }
-    .step4-actions .btn {
+    .step4-actions .btn,
+    .calendar-actions .btn {
         width: 100%;
     }
 
