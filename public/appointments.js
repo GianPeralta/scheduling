@@ -308,9 +308,20 @@
         });
     }
 
+    async function loadLiveQueue() {
+        const container = $('#appointmentsQueueBoard');
+        if (!container || !state.student) return;
+        try {
+            const queue = await api('/api/queue');
+            window.SchedulerRealtime?.renderStudentQueueBoard(container, queue, {
+                location: state.config?.location,
+            });
+        } catch {
+            /* ignore queue background errors */
+        }
+    }
+
     async function loadBookings(showToastOnRefresh = false) {
-        const refreshBtn = $('#refreshBtn');
-        if (refreshBtn) refreshBtn.disabled = true;
         try {
             const data = await api('/api/my-bookings');
             state.bookings = data.bookings || [];
@@ -324,8 +335,6 @@
             } else {
                 toast(err.message, 'error');
             }
-        } finally {
-            if (refreshBtn) refreshBtn.disabled = false;
         }
     }
 
@@ -381,7 +390,13 @@
             state.cancelling = false;
             closeCancelConfirmModal();
             toast('Appointment cancelled.', 'success');
-            await loadBookings();
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'booking_cancelled',
+                bookingId: b.id,
+                date: b.date,
+                by: 'student',
+            });
+            await Promise.all([loadBookings(), loadLiveQueue()]);
         } catch (err) {
             state.cancelling = false;
             closeCancelConfirmModal();
@@ -420,7 +435,6 @@
             });
         });
 
-        $('#refreshBtn')?.addEventListener('click', () => loadBookings(true));
         $('#logoutBtn')?.addEventListener('click', logout);
 
         $('#closeCancelConfirmBtn')?.addEventListener('click', closeCancelConfirmModal);
@@ -449,7 +463,13 @@
             $('#accountBox')?.classList.remove('hidden');
             $('#appointmentsView')?.classList.remove('hidden');
             renderStudentHeader();
-            await loadBookings();
+            window.SchedulerRealtime?.init(state.config);
+            window.SchedulerRealtime?.subscribe(() => {
+                if (!state.student) return;
+                loadBookings(false);
+                loadLiveQueue();
+            });
+            await Promise.all([loadBookings(), loadLiveQueue()]);
         } catch {
             showAuthGate();
         }

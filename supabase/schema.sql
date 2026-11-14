@@ -18,6 +18,8 @@ create table if not exists public.appointments (
     notified_at             timestamptz,
     reminder_sent_at        timestamptz,
     student_reminder_sent_at timestamptz,
+    queue_status            text check (queue_status is null or queue_status in ('waiting', 'serving', 'completed')),
+    queue_updated_at        timestamptz,
     created_at              timestamptz not null default now()
 );
 
@@ -58,6 +60,11 @@ alter table public.appointments add column if not exists cancelled_at timestampt
 alter table public.appointments add column if not exists notified_at timestamptz;
 alter table public.appointments add column if not exists reminder_sent_at timestamptz;
 alter table public.appointments add column if not exists student_reminder_sent_at timestamptz;
+alter table public.appointments add column if not exists queue_status text;
+alter table public.appointments drop constraint if exists appointments_queue_status_check;
+alter table public.appointments add constraint appointments_queue_status_check
+    check (queue_status is null or queue_status in ('waiting', 'serving', 'completed'));
+alter table public.appointments add column if not exists queue_updated_at timestamptz;
 alter table public.appointments drop constraint if exists appointments_slot_unique;
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
 alter table public.appointments drop constraint if exists appointments_duration_minutes_check;
@@ -246,3 +253,24 @@ alter table public.blocked_schedules enable row level security;
 -- create policy "anon can read appointments"   on public.appointments for select to anon using (true);
 -- create policy "anon can insert appointments" on public.appointments for insert to anon with check (true);
 -- create policy "anon can delete appointments" on public.appointments for delete to anon using (true);
+
+-- Enable Supabase Realtime Postgres Changes on appointments and blocked_schedules (safe to re-run)
+do $$
+begin
+    if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+        if not exists (
+            select 1 from pg_publication_tables
+            where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'appointments'
+        ) then
+            alter publication supabase_realtime add table public.appointments;
+        end if;
+        if not exists (
+            select 1 from pg_publication_tables
+            where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'blocked_schedules'
+        ) then
+            alter publication supabase_realtime add table public.blocked_schedules;
+        end if;
+    end if;
+exception when others then
+    raise notice 'Skipped supabase_realtime publication setup: %', sqlerrm;
+end $$;

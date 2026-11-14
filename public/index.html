@@ -256,6 +256,7 @@
             <div class="panel step-panel hidden" id="step1">
                 <div class="type-step">
                     <div class="cancelled-alert hidden" id="cancelledAlertBanner" role="alert"></div>
+                    <div class="queue-board-wrap hidden" id="homeQueueBoard"></div>
 
                     <div class="type-step-header">
                         <h3>Select a consultation or defense</h3>
@@ -408,7 +409,10 @@
 
                 <div class="slots">
                     <div class="slots-head">
-                        <h3 id="slotsTitle">Select a date</h3>
+                        <div class="slots-title-row">
+                            <h3 id="slotsTitle">Select a date</h3>
+                            <span class="live-inline-badge is-live" id="slotsLiveBadge" title="Time slots update automatically in real time"><span class="live-dot"></span>Live</span>
+                        </div>
                         <p class="muted small" id="slotsSubtitle">Pick an available day on the calendar.</p>
                     </div>
                     <div class="window-tabs hidden" id="windowTabs"></div>
@@ -677,6 +681,8 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <script src="/vendor/supabase.js"></script>
+    <script src="/realtime.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

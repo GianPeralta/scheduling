@@ -67,10 +67,10 @@
                     <h1>My Appointments</h1>
                 </div>
                 <div class="dash-actions">
-                    <button type="button" class="btn btn-ghost" id="refreshBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
-                        Refresh
-                    </button>
+                    <span class="live-status-pill is-live" id="realtimeStatusPill" title="Appointments update automatically in real time">
+                        <span class="live-dot"></span>
+                        <span class="live-status-text">Live</span>
+                    </span>
                     <a class="btn btn-primary" href="/">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
                         Book new
@@ -81,6 +81,8 @@
             <div class="cancel-policy-banner appointments-policy-banner">
                 <strong>Note:</strong> You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time.
             </div>
+
+            <div class="queue-board-wrap hidden" id="appointmentsQueueBoard"></div>
 
             <div class="card bookings-card">
                 <div class="toolbar">
@@ -125,6 +127,8 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <script src="/vendor/supabase.js"></script>
+    <script src="/realtime.js"></script>
     <script src="/appointments.js"></script>
 </body>
 </html>

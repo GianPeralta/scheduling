@@ -10,6 +10,11 @@ app.use(express.json({ limit: '20kb' }));
 // Serve the frontend (on Vercel, files in /public are served by the CDN automatically)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Serve @supabase/supabase-js UMD bundle for browser WebSockets without an external CDN
+app.get('/vendor/supabase.js', (req, res) => {
+    res.sendFile(path.join(__dirname, 'node_modules', '@supabase', 'supabase-js', 'dist', 'umd', 'supabase.js'));
+});
+
 // Opportunistic background reminder check on API traffic (throttled to once every 30s).
 // Disabled on Vercel: serverless functions freeze after responding, which would leave the
 // check half-finished. On Vercel the external cron (/api/cron/reminders) does the work.
@@ -173,6 +178,141 @@ function db() {
     }
     supabase = createClient(url, key, { auth: { persistSession: false } });
     return supabase;
+}
+
+/* ------------------------------------------------------------------ */
+/* Live Realtime Hub (Supabase WebSockets + SSE + Serverless Pulse)    */
+/* ------------------------------------------------------------------ */
+const REALTIME_CHANNEL = 'scheduler-live';
+let realtimeVersion = Date.now();
+let lastRealtimeEvent = {
+    version: realtimeVersion,
+    type: 'init',
+    timestamp: new Date().toISOString(),
+};
+const sseClients = new Set();
+const queueStatusOverrides = new Map();
+let serverRealtimeChannel = null;
+
+function getEffectiveQueueStateForRow(r) {
+    const override = r?.id ? queueStatusOverrides.get(r.id) : null;
+    if (override) return override;
+    const raw = r?.queue_status;
+    const queueStatus = raw === 'waiting' || raw === 'serving' || raw === 'completed' ? raw : null;
+    return {
+        queueStatus,
+        queueUpdatedAt: r?.queue_updated_at || null,
+    };
+}
+
+function sendSseKeepalive() {
+    for (const res of sseClients) {
+        try {
+            res.write(': keepalive\n\n');
+        } catch {
+            sseClients.delete(res);
+        }
+    }
+}
+
+if (!process.env.VERCEL) {
+    const keepaliveTimer = setInterval(sendSseKeepalive, 20 * 1000);
+    if (keepaliveTimer.unref) keepaliveTimer.unref();
+}
+
+function notifyRealtimeListeners(event = {}, { fromSupabaseWs = false } = {}) {
+    realtimeVersion = Date.now();
+    lastRealtimeEvent = {
+        version: realtimeVersion,
+        timestamp: new Date().toISOString(),
+        ...event,
+    };
+    const frame = `data: ${JSON.stringify(lastRealtimeEvent)}\n\n`;
+    for (const res of sseClients) {
+        try {
+            res.write(frame);
+        } catch {
+            sseClients.delete(res);
+        }
+    }
+    if (!fromSupabaseWs && process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)) {
+        try {
+            if (serverRealtimeChannel && typeof serverRealtimeChannel.send === 'function') {
+                const res = serverRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'schedule_change',
+                    payload: lastRealtimeEvent,
+                });
+                if (res && typeof res.catch === 'function') res.catch(() => {});
+                return res;
+            }
+            if (process.env.VERCEL) {
+                const tmpClient = db();
+                const tmpChannel = tmpClient.channel(REALTIME_CHANNEL);
+                if (typeof tmpChannel.httpSend === 'function') {
+                    return tmpChannel
+                        .httpSend('schedule_change', lastRealtimeEvent)
+                        .catch(() => {})
+                        .finally(() => {
+                            if (typeof tmpClient.removeChannel === 'function') {
+                                Promise.resolve(tmpClient.removeChannel(tmpChannel)).catch(() => {});
+                            }
+                        });
+                }
+            }
+        } catch (err) {
+            console.error('Supabase Realtime broadcast error:', err.message || err);
+        }
+    }
+    return Promise.resolve();
+}
+
+function startServerRealtimeSubscription() {
+    if (process.env.VERCEL || serverRealtimeChannel) return;
+    if (!process.env.SUPABASE_URL || !(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)) {
+        return;
+    }
+    try {
+        const client = db();
+        serverRealtimeChannel = client
+            .channel(REALTIME_CHANNEL, { config: { broadcast: { self: false } } })
+            .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, (payload) => {
+                const row = payload?.new || payload?.old || {};
+                notifyRealtimeListeners(
+                    {
+                        type: `db_${String(payload?.eventType || 'change').toLowerCase()}`,
+                        table: TABLE,
+                        date: row.appointment_date || null,
+                        bookingId: row.id || null,
+                    },
+                    { fromSupabaseWs: true }
+                );
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: BLOCKED_TABLE }, (payload) => {
+                const row = payload?.new || payload?.old || {};
+                notifyRealtimeListeners(
+                    {
+                        type: `block_${String(payload?.eventType || 'change').toLowerCase()}`,
+                        table: BLOCKED_TABLE,
+                        date: row.blocked_date || null,
+                    },
+                    { fromSupabaseWs: true }
+                );
+            })
+            .on('broadcast', { event: 'schedule_change' }, ({ payload }) => {
+                notifyRealtimeListeners(payload || { type: 'broadcast' }, { fromSupabaseWs: true });
+            });
+
+        serverRealtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log(`Supabase Realtime subscribed on channel "${REALTIME_CHANNEL}"`);
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                console.warn(`Supabase Realtime channel status: ${status}`);
+            }
+        });
+    } catch (err) {
+        console.warn('Could not start Supabase Realtime WebSocket subscription:', err.message || err);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -868,6 +1008,37 @@ app.get('/api/config', (req, res) => {
                 wins.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
             ])
         ),
+        realtime: {
+            supabaseUrl: process.env.SUPABASE_URL || null,
+            supabaseAnonKey: process.env.SUPABASE_ANON_KEY || null,
+            channel: REALTIME_CHANNEL,
+        },
+    });
+});
+
+app.get('/api/realtime/pulse', (req, res) => {
+    const now = nowInTz();
+    res.set('Cache-Control', 'no-store');
+    res.json({
+        version: realtimeVersion,
+        lastEvent: lastRealtimeEvent,
+        today: now.date,
+        currentMinute: now.minuteOfDay,
+    });
+});
+
+app.get('/api/realtime/stream', (req, res) => {
+    res.set({
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+    });
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    res.write(`data: ${JSON.stringify({ type: 'connected', version: realtimeVersion, lastEvent: lastRealtimeEvent })}\n\n`);
+    sseClients.add(res);
+    req.on('close', () => {
+        sseClients.delete(res);
     });
 });
 
@@ -967,6 +1138,8 @@ app.post('/api/auth/register/verify', async (req, res) => {
     }
 
     setSession(res, student);
+    const rtPromise = notifyRealtimeListeners({ type: 'student_registered', studentId: student.id });
+    if (process.env.VERCEL) await rtPromise;
     res.status(201).json({ student: publicStudent(student) });
 });
 
@@ -1402,6 +1575,8 @@ async function handleStudentProfileUpdate(req, res) {
         { verifiedViaOtp: false }
     );
     setSession(res, updated);
+    const rtPromise = notifyRealtimeListeners({ type: 'student_updated', studentId: updated.id });
+    if (process.env.VERCEL) await rtPromise;
     return res.json({
         ok: true,
         otpRequired: false,
@@ -1446,6 +1621,8 @@ app.post('/api/profile/email/verify', requireStudent, async (req, res) => {
     );
 
     setSession(res, updated);
+    const rtPromise = notifyRealtimeListeners({ type: 'student_updated', studentId: updated.id });
+    if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true, student: publicStudent(updated) });
 });
 
@@ -1842,6 +2019,7 @@ function toBooking(r, now, studentLookup = null) {
         || normalizeDefenseLevel(matchedStudent?.project_level)
         || null;
     const defenseLevel = consultationType === 'defense' ? projectLevel : null;
+    const effQueue = getEffectiveQueueStateForRow(r);
     const booking = {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
@@ -1875,6 +2053,8 @@ function toBooking(r, now, studentLookup = null) {
         notifiedAt: r.notified_at || null,
         reminderSentAt: r.reminder_sent_at || (r.consultation_type !== 'dropoff' ? r.notified_at : null) || null,
         studentReminderSentAt: r.student_reminder_sent_at || null,
+        queueStatus: effQueue.queueStatus,
+        queueUpdatedAt: effQueue.queueUpdatedAt,
         createdAt: r.created_at,
     };
     booking.outlookCalendarUrl = buildOutlookCalendarUrl(booking);
@@ -1980,6 +2160,15 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
     if (!data) return res.status(404).json({ error: 'Appointment not found.' });
+
+    queueStatusOverrides.delete(row.id);
+    const rtPromise = notifyRealtimeListeners({
+        type: 'booking_cancelled',
+        date: data.appointment_date,
+        bookingId: data.id,
+        by: 'student',
+    });
+    if (process.env.VERCEL) await rtPromise;
 
     res.json({ ok: true, booking: toBooking(data, now) });
 });
@@ -2242,7 +2431,14 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     const emailPromise = sendStudentBookingConfirmationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
         console.error('Failed to send student booking confirmation email:', err.message || err);
     });
-    if (process.env.VERCEL) await emailPromise;
+    const rtPromise = notifyRealtimeListeners({
+        type: 'booking_created',
+        date: booking.date,
+        bookingId: booking.id,
+    });
+    if (process.env.VERCEL) {
+        await Promise.all([emailPromise, rtPromise]);
+    }
 
     res.status(201).json({ booking, student: updatedStudent });
 });
@@ -2501,6 +2697,13 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
         }
     }
 
+    const rtPromise = notifyRealtimeListeners({
+        type: 'schedule_blocked',
+        date,
+        cancelledCount: cancelledBookings.length,
+    });
+    if (process.env.VERCEL) await rtPromise;
+
     res.status(201).json({
         ok: true,
         blocks: (inserted || []).map(toBlockedSchedule),
@@ -2520,6 +2723,8 @@ app.delete('/api/admin/blocks/:id', requireAdmin, async (req, res) => {
         }
         return res.status(500).json({ error: error.message });
     }
+    const rtPromise = notifyRealtimeListeners({ type: 'schedule_unblocked', blockId: req.params.id });
+    if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true });
 });
 
@@ -2587,6 +2792,8 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
 
     const notifiedAt = new Date().toISOString();
     await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
+    const rtPromise = notifyRealtimeListeners({ type: 'dropoff_notified', bookingId: row.id, date: row.appointment_date });
+    if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true, notifiedAt });
 });
 
@@ -2625,10 +2832,19 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
     if (!data) return res.status(404).json({ error: 'Booking not found.' });
 
     const booking = toBooking(data);
+    queueStatusOverrides.delete(booking.id);
     const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
         console.error('Failed to send student cancellation email:', err.message || err);
     });
-    if (process.env.VERCEL) await emailPromise;
+    const rtPromise = notifyRealtimeListeners({
+        type: 'booking_cancelled',
+        date: booking.date,
+        bookingId: booking.id,
+        by: 'admin',
+    });
+    if (process.env.VERCEL) {
+        await Promise.all([emailPromise, rtPromise]);
+    }
 
     res.json({ ok: true, booking });
 });
@@ -2637,7 +2853,250 @@ app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
     const { error } = await db().from(TABLE).delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
+    queueStatusOverrides.delete(req.params.id);
+    const rtPromise = notifyRealtimeListeners({ type: 'booking_deleted', bookingId: req.params.id });
+    if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------------ */
+/* Live "Now Serving / Queue" Board                                    */
+/* ------------------------------------------------------------------ */
+async function buildQueuePayload({ requestedDate = '', studentId = null, isAdmin = false } = {}) {
+    const now = nowInTz();
+    const { data, error } = await db()
+        .from(TABLE)
+        .select('*')
+        .gte('appointment_date', now.date)
+        .neq('status', 'cancelled')
+        .order('appointment_date', { ascending: true })
+        .order('start_minute', { ascending: true });
+    if (error) throw error;
+
+    const allActiveRows = (data || [])
+        .filter((r) => isActiveRow(r))
+        .sort((a, b) => a.appointment_date.localeCompare(b.appointment_date) || rowInterval(a)[0] - rowInterval(b)[0]);
+
+    const availableDates = [...new Set(allActiveRows.map((r) => r.appointment_date))].sort();
+    const servingRowAnyDate = allActiveRows.find((r) => getEffectiveQueueStateForRow(r).queueStatus === 'serving');
+
+    let queueDate = now.date;
+    if (requestedDate && parseDate(requestedDate)) {
+        queueDate = requestedDate;
+    } else if (allActiveRows.some((r) => r.appointment_date === now.date)) {
+        queueDate = now.date;
+    } else if (servingRowAnyDate) {
+        queueDate = servingRowAnyDate.appointment_date;
+    } else if (availableDates.length > 0) {
+        queueDate = availableDates[0];
+    }
+
+    const dayRows = allActiveRows.filter((r) => r.appointment_date === queueDate);
+    const timedRows = dayRows.filter((r) => isTimedRow(r));
+    const dropoffRows = dayRows.filter((r) => !isTimedRow(r));
+    const isToday = queueDate === now.date;
+    const hasExplicitServing = timedRows.some((r) => getEffectiveQueueStateForRow(r).queueStatus === 'serving');
+
+    const rawItems = timedRows.map((r, idx) => {
+        const [startMinute, endMinute] = rowInterval(r);
+        const effQueue = getEffectiveQueueStateForRow(r);
+        let queueState = 'waiting';
+        if (effQueue.queueStatus === 'completed') {
+            queueState = 'completed';
+        } else if (effQueue.queueStatus === 'serving') {
+            queueState = 'serving';
+        } else if (!hasExplicitServing && isToday) {
+            if (startMinute <= now.minuteOfDay && now.minuteOfDay < endMinute && effQueue.queueStatus !== 'waiting') {
+                queueState = 'serving';
+            } else if (endMinute <= now.minuteOfDay && effQueue.queueStatus !== 'waiting') {
+                queueState = 'completed';
+            }
+        }
+
+        const consultationType = r.consultation_type || 'system';
+        const projectLevel = normalizeDefenseLevel(r.defense_level) || null;
+        const defenseLevel = consultationType === 'defense' ? projectLevel : null;
+        const durationMinutes = Math.max(0, endMinute - startMinute);
+        const members = Array.isArray(r.members) && r.members.length ? r.members : [r.student_name];
+
+        const item = {
+            id: r.id,
+            reference: String(r.id || '').slice(0, 8).toUpperCase(),
+            queueNumber: idx + 1,
+            date: r.appointment_date,
+            startMinute,
+            endMinute,
+            label: `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`,
+            durationMinutes,
+            durationLabel: formatDurationLabel(consultationType, durationMinutes),
+            consultationType,
+            consultationTitle: formatConsultationTitle(consultationType, defenseLevel),
+            capstoneTitle: r.capstone_title || r.team_name || r.student_name || 'Student Group',
+            instructorRole: r.instructor_role || null,
+            projectLevelLabel: projectLevel ? DEFENSE_LEVELS[projectLevel].label : null,
+            queueState,
+            manualQueueStatus: effQueue.queueStatus,
+            isMine: Boolean(studentId && r.student_id === studentId),
+        };
+        if (isAdmin) {
+            item.studentName = r.student_name;
+            item.members = members;
+            item.studentEmail = r.student_email || null;
+        }
+        return item;
+    });
+
+    const firstWaiting = rawItems.find((item) => item.queueState === 'waiting');
+    if (firstWaiting) firstWaiting.queueState = 'next';
+
+    const nowServing = rawItems.find((item) => item.queueState === 'serving') || null;
+    const upNext = rawItems.find((item) => item.queueState === 'next') || null;
+    const waitingCount = rawItems.filter((item) => item.queueState === 'waiting' || item.queueState === 'next').length;
+    const completedCount = rawItems.filter((item) => item.queueState === 'completed').length;
+    const myActiveItem = rawItems.find((item) => item.isMine && item.queueState !== 'completed')
+        || rawItems.find((item) => item.isMine)
+        || null;
+
+    return {
+        today: now.date,
+        currentMinute: now.minuteOfDay,
+        currentTimeLabel: formatMinute(now.minuteOfDay),
+        queueDate,
+        queueDateLabel: formatLongDateStr(queueDate),
+        isToday,
+        availableDates,
+        nowServing,
+        upNext,
+        waitingCount,
+        completedCount,
+        dropoffCount: dropoffRows.length,
+        totalTimedCount: rawItems.length,
+        myActiveItem,
+        items: rawItems,
+    };
+}
+
+async function setRowQueueStatus(id, status) {
+    const updatedAt = status ? new Date().toISOString() : null;
+    if (status === null) {
+        queueStatusOverrides.delete(id);
+    } else {
+        queueStatusOverrides.set(id, { queueStatus: status, queueUpdatedAt: updatedAt });
+    }
+    const { error } = await db()
+        .from(TABLE)
+        .update({ queue_status: status, queue_updated_at: updatedAt })
+        .eq('id', id);
+    if (error && !['42703', 'PGRST204'].includes(error.code)) {
+        throw error;
+    }
+}
+
+app.get('/api/queue', async (req, res) => {
+    const student = await currentStudent(req).catch(() => null);
+    const requestedDate = String(req.query.date || '').trim();
+    const payload = await buildQueuePayload({
+        requestedDate: parseDate(requestedDate) ? requestedDate : '',
+        studentId: student?.id || null,
+        isAdmin: false,
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(payload);
+});
+
+app.get('/api/admin/queue', requireAdmin, async (req, res) => {
+    const requestedDate = String(req.query.date || '').trim();
+    const payload = await buildQueuePayload({
+        requestedDate: parseDate(requestedDate) ? requestedDate : '',
+        studentId: null,
+        isAdmin: true,
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(payload);
+});
+
+app.post('/api/admin/queue', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const action = String(body.action || '').trim();
+    const bookingId = body.bookingId ? String(body.bookingId).trim() : '';
+    const rawDate = body.date ? String(body.date).trim() : '';
+
+    if (!['serve', 'complete', 'waiting', 'next', 'reset'].includes(action)) {
+        return res.status(400).json({ error: 'Invalid queue action.' });
+    }
+
+    let targetDate = parseDate(rawDate) ? rawDate : '';
+
+    if (action === 'serve' || action === 'complete' || action === 'waiting') {
+        if (!/^[0-9a-f-]{36}$/i.test(bookingId)) {
+            return res.status(400).json({ error: 'Invalid appointment ID.' });
+        }
+        const { data: row, error: fetchErr } = await db()
+            .from(TABLE)
+            .select('*')
+            .eq('id', bookingId)
+            .maybeSingle();
+        if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+        if (!row || !isActiveRow(row)) {
+            return res.status(404).json({ error: 'Active appointment not found.' });
+        }
+        targetDate = row.appointment_date;
+
+        if (action === 'serve') {
+            const currentQueue = await buildQueuePayload({ requestedDate: targetDate, isAdmin: true });
+            if (currentQueue.nowServing && currentQueue.nowServing.id !== bookingId) {
+                await setRowQueueStatus(currentQueue.nowServing.id, 'completed');
+            }
+            await setRowQueueStatus(bookingId, 'serving');
+        } else if (action === 'complete') {
+            await setRowQueueStatus(bookingId, 'completed');
+        } else {
+            await setRowQueueStatus(bookingId, 'waiting');
+        }
+    } else if (action === 'next') {
+        const currentQueue = await buildQueuePayload({ requestedDate: targetDate, isAdmin: true });
+        targetDate = currentQueue.queueDate;
+        if (currentQueue.nowServing) {
+            await setRowQueueStatus(currentQueue.nowServing.id, 'completed');
+        }
+        const nextCandidate = currentQueue.items.find(
+            (item) => item.id !== currentQueue.nowServing?.id && (item.queueState === 'next' || item.queueState === 'waiting')
+        );
+        if (nextCandidate) {
+            await setRowQueueStatus(nextCandidate.id, 'serving');
+        }
+    } else if (action === 'reset') {
+        if (!targetDate) {
+            const currentQueue = await buildQueuePayload({ isAdmin: true });
+            targetDate = currentQueue.queueDate;
+        }
+        const { data: dayRows, error: dayErr } = await db()
+            .from(TABLE)
+            .select('id')
+            .eq('appointment_date', targetDate);
+        if (dayErr) return res.status(500).json({ error: dayErr.message });
+        for (const r of dayRows || []) {
+            queueStatusOverrides.delete(r.id);
+        }
+        const { error: resetErr } = await db()
+            .from(TABLE)
+            .update({ queue_status: null, queue_updated_at: null })
+            .eq('appointment_date', targetDate);
+        if (resetErr && !['42703', 'PGRST204'].includes(resetErr.code)) {
+            return res.status(500).json({ error: resetErr.message });
+        }
+    }
+
+    const updatedQueue = await buildQueuePayload({ requestedDate: targetDate, isAdmin: true });
+    const rtPromise = notifyRealtimeListeners({
+        type: 'queue_updated',
+        date: targetDate,
+        bookingId: bookingId || null,
+        action,
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.json({ ok: true, queue: updatedQueue });
 });
 
 /* ------------------------------------------------------------------ */
@@ -3165,6 +3624,7 @@ if (require.main === module) {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`Server is running on http://localhost:${PORT}`);
+        startServerRealtimeSubscription();
         checkAndSendAppointmentReminders().catch((err) => {
             console.error('Startup reminder check failed:', err.message || err);
         });

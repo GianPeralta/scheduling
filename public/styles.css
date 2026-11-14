@@ -1249,7 +1249,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     animation: rise 0.5s var(--ease) both;
 }
 .dash-head h1 { font-size: clamp(1.65rem, 3.4vw, 2.2rem); font-weight: 800; }
-.dash-actions { display: flex; gap: 10px; }
+.dash-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .dash-actions .btn { padding: 9px 15px; font-size: 0.875rem; }
 
 .stats {
@@ -2507,6 +2507,398 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     font-weight: 600;
 }
 
+/* ---------- Live Realtime Indicators & Slots Row ---------- */
+.slots-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.live-status-pill,
+.live-inline-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 999px;
+    font-weight: 700;
+    white-space: nowrap;
+    user-select: none;
+    transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+.live-status-pill {
+    padding: 8px 13px;
+    font-size: 0.84rem;
+    background-color: var(--primary-soft);
+    border: 1px solid var(--primary-border);
+    color: var(--primary);
+    box-shadow: var(--shadow-xs);
+}
+.live-inline-badge {
+    padding: 3px 9px;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    background-color: var(--primary-soft);
+    border: 1px solid var(--primary-border);
+    color: var(--primary);
+}
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--success);
+    box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.5);
+    animation: livePulse 2s infinite;
+    flex-shrink: 0;
+}
+.live-status-pill.is-reconnecting,
+.live-inline-badge.is-reconnecting {
+    background-color: var(--amber-soft);
+    border-color: var(--amber-border);
+    color: var(--amber-text);
+}
+.live-status-pill.is-reconnecting .live-dot,
+.live-inline-badge.is-reconnecting .live-dot {
+    background-color: var(--amber-text);
+    animation: none;
+    box-shadow: none;
+}
+@keyframes livePulse {
+    0% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.45); }
+    70% { box-shadow: 0 0 0 6px rgba(5, 150, 105, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0); }
+}
+
+/* ---------- Live "Now Serving / Queue" Board (Student & Admin) ---------- */
+.queue-board-wrap {
+    width: 100%;
+}
+.queue-board-card {
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background-color: var(--surface-subtle);
+    display: grid;
+    gap: 12px;
+}
+.queue-board-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+}
+.queue-board-title-wrap {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+}
+.queue-board-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.queue-board-meta {
+    font-weight: 500;
+}
+
+.queue-my-banner {
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 0.88rem;
+    line-height: 1.4;
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    color: var(--text);
+}
+.queue-my-banner.is-serving {
+    background-color: var(--primary-soft);
+    border-color: var(--primary-border);
+    border-left: 4px solid var(--primary);
+    color: var(--primary-hover);
+}
+.queue-my-banner.is-next {
+    background-color: var(--sky-soft);
+    border-color: var(--sky-border);
+    border-left: 4px solid var(--sky-text);
+    color: var(--sky-text);
+}
+.queue-my-banner.is-completed {
+    background-color: var(--surface-muted);
+    color: var(--muted);
+}
+.queue-my-banner.is-waiting {
+    background-color: var(--amber-soft);
+    border-color: var(--amber-border);
+    color: var(--amber-text);
+}
+
+.queue-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+.queue-slot-card {
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    display: grid;
+    gap: 6px;
+    align-content: start;
+}
+.queue-slot-card.now-serving-box {
+    border-color: var(--primary-border);
+    background-color: var(--primary-soft);
+}
+.queue-slot-card.up-next-box {
+    border-color: var(--sky-border);
+    background-color: var(--sky-soft);
+}
+.queue-slot-eyebrow {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+.now-serving-box .queue-slot-eyebrow {
+    color: var(--primary);
+}
+.up-next-box .queue-slot-eyebrow {
+    color: var(--sky-text);
+}
+.queue-slot-top {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.queue-num-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    background-color: var(--ink);
+    color: #ffffff;
+}
+.now-serving-box .queue-num-badge {
+    background-color: var(--primary);
+}
+.up-next-box .queue-num-badge {
+    background-color: var(--sky-text);
+}
+.queue-slot-time {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: var(--text-soft);
+}
+.queue-slot-title,
+.queue-slot-empty-title {
+    font-size: 0.98rem;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.35;
+}
+.queue-slot-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.queue-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+}
+.queue-chip {
+    flex: 0 0 auto;
+    min-width: 175px;
+    max-width: 240px;
+    padding: 9px 11px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    display: grid;
+    gap: 4px;
+}
+.queue-chip.is-serving {
+    border-color: var(--primary-border);
+    background-color: var(--primary-soft);
+}
+.queue-chip.is-next {
+    border-color: var(--sky-border);
+    background-color: var(--sky-soft);
+}
+.queue-chip.is-completed {
+    opacity: 0.65;
+    background-color: var(--surface-muted);
+}
+.queue-chip.is-mine {
+    box-shadow: 0 0 0 2px var(--primary-border);
+}
+.queue-chip-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.76rem;
+}
+.queue-chip-state {
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    background-color: var(--surface-muted);
+    color: var(--text-soft);
+}
+.queue-chip-state.is-serving {
+    background-color: var(--primary);
+    color: #ffffff;
+}
+.queue-chip-state.is-next {
+    background-color: var(--sky-text);
+    color: #ffffff;
+}
+.queue-chip-state.is-waiting {
+    background-color: var(--amber-soft);
+    color: var(--amber-text);
+}
+.queue-chip-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.queue-dropoff-note {
+    margin-top: -2px;
+}
+
+/* ---------- Admin Live Queue Card ---------- */
+.admin-queue-card {
+    padding: 18px 20px;
+    margin-bottom: 20px;
+    display: grid;
+    gap: 14px;
+}
+.admin-queue-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+.admin-queue-title-block {
+    display: grid;
+    gap: 4px;
+}
+.admin-queue-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.admin-queue-sub {
+    margin: 0;
+}
+.admin-queue-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.admin-queue-dates {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.admin-queue-date-btn {
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background-color: var(--surface-subtle);
+    color: var(--text-soft);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+.admin-queue-date-btn:hover:not(:disabled) {
+    border-color: var(--primary-border);
+    background-color: var(--primary-soft);
+    color: var(--primary);
+}
+.admin-queue-date-btn.active {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: #ffffff;
+}
+.admin-queue-list {
+    display: grid;
+    gap: 8px;
+}
+.admin-queue-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background-color: var(--surface-subtle);
+}
+.admin-queue-item.is-serving {
+    border-color: var(--primary-border);
+    background-color: var(--primary-soft);
+}
+.admin-queue-item.is-next {
+    border-color: var(--sky-border);
+    background-color: var(--sky-soft);
+}
+.admin-queue-item.is-completed {
+    opacity: 0.72;
+    background-color: var(--surface);
+}
+.admin-queue-item-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.admin-queue-item-info {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+.admin-queue-item-title {
+    font-size: 0.92rem;
+    color: var(--text);
+}
+.admin-queue-item-meta {
+    line-height: 1.35;
+}
+.admin-queue-item-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 /* ==========================================================================
    Responsive Design: Tablet, Portrait Tablet, Mobile & Small Phones
    ========================================================================== */
@@ -2668,6 +3060,37 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         padding-top: 10px;
         border-top: 1px dashed var(--border);
         width: 100%;
+    }
+}
+
+/* ---------- Live Queue & Realtime Pill Responsive (up to 720px) ---------- */
+@media (max-width: 720px) {
+    .queue-grid {
+        grid-template-columns: 1fr;
+    }
+    .admin-queue-card {
+        padding: 14px;
+    }
+    .admin-queue-actions {
+        width: 100%;
+    }
+    .admin-queue-actions .btn {
+        flex: 1 1 auto;
+    }
+    .admin-queue-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .admin-queue-item-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+    .admin-queue-item-actions .btn {
+        flex: 1 1 auto;
+    }
+    .live-status-pill {
+        justify-content: center;
     }
 }
 

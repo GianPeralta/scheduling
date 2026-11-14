@@ -60,10 +60,10 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></svg>
                         Block Date / Time
                     </button>
-                    <button class="btn btn-ghost" id="refreshBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
-                        Refresh
-                    </button>
+                    <span class="live-status-pill is-live" id="realtimeStatusPill" title="Dashboard updates automatically in real time">
+                        <span class="live-dot"></span>
+                        <span class="live-status-text">Live</span>
+                    </span>
                     <button class="btn btn-ghost" id="logoutBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
                         Sign out
@@ -100,6 +100,8 @@
                     </div>
                 </div>
             </div>
+
+            <div class="card admin-queue-card" id="adminQueueCard"></div>
 
             <div class="card bookings-card">
                 <div class="toolbar">
@@ -239,6 +241,8 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <script src="/vendor/supabase.js"></script>
+    <script src="/realtime.js"></script>
     <script src="/admin.js"></script>
 </body>
 </html>

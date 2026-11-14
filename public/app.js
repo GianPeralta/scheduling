@@ -1356,6 +1356,12 @@
                 updateRoleVisibility();
             }
             loadMyBookings();
+            loadLiveQueue();
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'booking_created',
+                date: booking.date,
+                bookingId: booking.id,
+            });
             showConfirmation(booking);
         } catch (err) {
             if (err.status === 401) {
@@ -1615,6 +1621,24 @@
         }
     }
 
+    async function loadLiveQueue() {
+        const container = $('#homeQueueBoard');
+        if (!container) return;
+        if (!state.student) {
+            container.innerHTML = '';
+            container.classList.add('hidden');
+            return;
+        }
+        try {
+            const queue = await api('/api/queue');
+            window.SchedulerRealtime?.renderStudentQueueBoard(container, queue, {
+                location: state.config?.location,
+            });
+        } catch {
+            /* ignore queue background errors */
+        }
+    }
+
     async function loadMyBookings() {
         if (!state.student) {
             state.myBookings = [];
@@ -1622,10 +1646,12 @@
             $('#myBookingsBtn')?.classList.add('hidden');
             $('#profileCancelDot')?.classList.add('hidden');
             $('#cancelledAlertBanner')?.classList.add('hidden');
+            $('#homeQueueBoard')?.classList.add('hidden');
             return;
         }
         $('#myAppointmentsLink')?.classList.remove('hidden');
         $('#myBookingsBtn')?.classList.remove('hidden');
+        loadLiveQueue();
         try {
             const data = await api('/api/my-bookings');
             state.myBookings = data.bookings || [];
@@ -2620,12 +2646,81 @@
         initAuth();
         loadCurrentStudent();
 
+        window.SchedulerRealtime?.subscribe(() => {
+            if (!state.student) return;
+            loadMyBookings();
+            refreshLiveAvailability();
+        });
+
         try {
             const config = await ensureConfig();
             applyEmailHints(config);
+            window.SchedulerRealtime?.init(config);
         } catch {
             toast('Could not connect to the server. Please refresh the page.', 'error');
         }
+    }
+
+    async function refreshLiveAvailability() {
+        if (!state.student || (state.currentStep !== 2 && state.currentStep !== 3)) return;
+        const purpose = state.consultationPurpose || 'system';
+        const level = purpose === 'defense' ? (state.defenseLevel || state.student?.projectLevel || 'capstone1') : '';
+        const mKey = monthKey(state.viewYear, state.viewMonth);
+        const monthQuery = purpose === 'defense'
+            ? `/api/month?month=${mKey}&purpose=defense&level=${encodeURIComponent(level)}`
+            : `/api/month?month=${mKey}&purpose=${purpose}`;
+
+        try {
+            const mData = await api(monthQuery);
+            state.monthDays = mData.days || {};
+            state.loadedMonthKey = monthLoadKey(state.viewYear, state.viewMonth, purpose);
+            renderCalendar(false);
+        } catch { /* ignore transient refresh errors */ }
+
+        if (!state.selectedDate) return;
+        const ds = state.selectedDate;
+        const slotsQuery = purpose === 'defense'
+            ? `/api/slots?date=${ds}&purpose=defense&level=${encodeURIComponent(level)}`
+            : `/api/slots?date=${ds}&purpose=${purpose}`;
+
+        try {
+            const data = await api(slotsQuery);
+            if (state.selectedDate !== ds) return;
+
+            if (purpose === 'defense') {
+                state.defenseDay = data;
+                if (state.selectedSlot) {
+                    const check = validateDefenseStartMinute(state.selectedSlot.startMinute, data);
+                    if (!check.ok) {
+                        state.selectedSlot = null;
+                        updateSelectionBox();
+                        toast(check.error || 'That defense time was just booked by another group. Please choose another time.', 'error');
+                        if (state.currentStep === 3) goToStep(2);
+                    }
+                }
+                const prevRaw = $('#defenseStartInput')?.value;
+                const wasFocused = document.activeElement?.id === 'defenseStartInput';
+                renderDefenseSlots(data);
+                if (!state.selectedSlot && prevRaw && $('#defenseStartInput')) {
+                    $('#defenseStartInput').value = prevRaw;
+                    if (wasFocused) $('#defenseStartInput').focus();
+                }
+            } else {
+                const slots = data.slots || [];
+                if (state.selectedSlot) {
+                    const match = slots.find((s) => s.startMinute === state.selectedSlot.startMinute);
+                    if (!match || !match.available) {
+                        state.selectedSlot = null;
+                        updateSelectionBox();
+                        toast('That time slot was just booked by another group. Please pick another time.', 'error');
+                        if (state.currentStep === 3) goToStep(2);
+                    } else {
+                        state.selectedSlot = match;
+                    }
+                }
+                renderSlots(slots, data);
+            }
+        } catch { /* ignore transient refresh errors */ }
     }
 
     init();
