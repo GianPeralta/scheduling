@@ -1427,6 +1427,11 @@
                 ? `Confirmation & calendar invite sent to ${emailAddr}.`
                 : 'Confirmation & calendar invite sent to your school email.'
         );
+        const outlookCalBtn = $('#cOutlookCalBtn');
+        if (outlookCalBtn) {
+            outlookCalBtn.href = b.outlookCalendarUrl || '#';
+            outlookCalBtn.classList.toggle('hidden', !b.outlookCalendarUrl);
+        }
         const downloadIcsBtn = $('#cDownloadIcsBtn');
         if (downloadIcsBtn) {
             const icsHref = b.icsUrl || (b.id ? `/api/bookings/${b.id}/ics` : '');

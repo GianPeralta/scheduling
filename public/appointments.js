@@ -250,6 +250,16 @@
                 const actionRow = document.createElement('div');
                 actionRow.className = 'my-booking-actions';
 
+                if (b.outlookCalendarUrl) {
+                    const outlookLink = document.createElement('a');
+                    outlookLink.href = b.outlookCalendarUrl;
+                    outlookLink.target = '_blank';
+                    outlookLink.rel = 'noopener noreferrer';
+                    outlookLink.className = 'btn btn-ghost btn-sm';
+                    outlookLink.textContent = 'Add to Outlook Calendar';
+                    actionRow.appendChild(outlookLink);
+                }
+
                 const icsHref = b.icsUrl || (b.id ? `/api/bookings/${b.id}/ics` : '');
                 if (icsHref) {
                     const icsLink = document.createElement('a');

@@ -1792,6 +1792,20 @@ function buildBookingIcs(booking, { method = 'PUBLISH', status = 'CONFIRMED', se
     return `${lines.map(foldIcsLine).join('\r\n')}\r\n`;
 }
 
+function buildOutlookCalendarUrl(booking) {
+    const { startUtc, endUtc } = bookingUtcInterval(booking);
+    const params = new URLSearchParams({
+        path: '/calendar/action/compose',
+        rru: 'addevent',
+        startdt: startUtc.toISOString(),
+        enddt: endUtc.toISOString(),
+        subject: `${booking.consultationTitle || 'Consultation'} — ${TEACHER_NAME}`,
+        body: buildBookingCalendarDescription(booking),
+        location: CONFIG.location,
+    });
+    return `https://outlook.office.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
+
 /** Shape a database row for the frontend. */
 function toBooking(r, now, studentLookup = null) {
     const current = (now && typeof now === 'object' && now.date) ? now : nowInTz();
@@ -1850,6 +1864,7 @@ function toBooking(r, now, studentLookup = null) {
         studentReminderSentAt: r.student_reminder_sent_at || null,
         createdAt: r.created_at,
     };
+    booking.outlookCalendarUrl = buildOutlookCalendarUrl(booking);
     booking.icsUrl = `/api/bookings/${r.id}/ics`;
     return booking;
 }
@@ -2746,11 +2761,14 @@ function studentPolicyReminderText(booking) {
     return rules;
 }
 
-function buildAppointmentsButtonHtml(appointmentsUrl = '') {
-    if (!appointmentsUrl) return '';
+function buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl = '') {
+    const appointmentsBtnHtml = appointmentsUrl
+        ? `<a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#ffffff;color:#0f172a;border:1px solid #cbd5e1;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:8px;margin-bottom:8px">View My Appointments</a>`
+        : '';
     return `
             <div style="margin:18px 0">
-                <a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px">View My Appointments</a>
+                <a href="${escapeHtml(outlookCalUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px;margin-right:8px;margin-bottom:8px">Add to Outlook Calendar</a>
+                ${appointmentsBtnHtml}
             </div>`;
 }
 
@@ -2760,6 +2778,7 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
     const greeting = `Hi ${booking.name || 'Student'},`;
     const subject = `Confirmed: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
+    const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
     const rules = studentPolicyReminderText(booking);
 
     const textLines = [
@@ -2771,7 +2790,9 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
         '',
         'Reminders:',
         ...rules.map((r) => `• ${r}`),
-        ...(appointmentsUrl ? ['', `View My Appointments: ${appointmentsUrl}`] : []),
+        '',
+        `Add to Outlook Calendar: ${outlookCalUrl}`,
+        ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
         '',
         'A calendar file (.ics) is attached so you can save this event to your calendar app.',
     ];
@@ -2781,7 +2802,7 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
             <p>${escapeHtml(greeting)}</p>
             <p>Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> is confirmed.</p>
             ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
-            ${buildAppointmentsButtonHtml(appointmentsUrl)}
+            ${buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl)}
             <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
                 <strong>Reminders:</strong>
                 <ul style="margin:6px 0 0;padding-left:18px">
@@ -2863,6 +2884,7 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '') {
 async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
     if (!booking?.studentEmail) return;
     const timeText = formatTimeUntilLabel(minsUntil);
+    const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
     const greeting = `Hi ${booking.name || 'Student'},`;
     const subject = `Reminder: Your ${booking.consultationTitle} is in ${timeText} (${booking.label}) — #${booking.reference}`;
@@ -2877,7 +2899,9 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
         '',
         'Reminders:',
         ...rules.map((r) => `• ${r}`),
-        ...(appointmentsUrl ? ['', `View My Appointments: ${appointmentsUrl}`] : []),
+        '',
+        `Add to Outlook Calendar: ${outlookCalUrl}`,
+        ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
     ];
 
     const html = `
@@ -2885,7 +2909,7 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
             <p>${escapeHtml(greeting)}</p>
             <p>This is a reminder that your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> starts in <strong>${escapeHtml(timeText)}</strong> at <strong>${escapeHtml(CONFIG.location)}</strong>.</p>
             ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
-            ${buildAppointmentsButtonHtml(appointmentsUrl)}
+            ${buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl)}
             <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
                 <strong>Reminders:</strong>
                 <ul style="margin:6px 0 0;padding-left:18px">
