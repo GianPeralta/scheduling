@@ -402,6 +402,25 @@
             state.bookings = data.bookings || [];
             if (data.today) state.serverToday = data.today;
             if (typeof data.currentMinute === 'number') state.serverCurrentMinute = data.currentMinute;
+
+            if (state.rescheduleTarget && !state.rescheduleSubmitting) {
+                const updatedResched = state.bookings.find((x) => x.id === state.rescheduleTarget.id);
+                if (!updatedResched || updatedResched.status === 'cancelled') {
+                    closeRescheduleModal();
+                    toast('This appointment was cancelled.', 'error');
+                } else {
+                    state.rescheduleTarget = updatedResched;
+                }
+            }
+            if (state.cancelTarget && !state.cancelling) {
+                const updatedCancel = state.bookings.find((x) => x.id === state.cancelTarget.id);
+                if (!updatedCancel || updatedCancel.status === 'cancelled') {
+                    closeCancelConfirmModal();
+                } else {
+                    state.cancelTarget = updatedCancel;
+                }
+            }
+
             renderAppointments();
             if (showToastOnRefresh) toast('Appointments refreshed.');
         } catch (err) {
@@ -498,7 +517,10 @@
     }
 
     function getReschedDefenseLevel() {
-        return state.rescheduleTarget?.defenseLevel || state.student?.defenseLevel || 'capstone1';
+        return state.rescheduleTarget?.defenseLevel
+            || state.rescheduleTarget?.projectLevel
+            || state.student?.projectLevel
+            || 'capstone1';
     }
 
     function updateReschedSelectionPreview() {
@@ -637,10 +659,22 @@
             state.reschedMonthDays = data.days || {};
             renderRescheduleCalendar(false);
 
-            if (initialDateToSelect && initialDateToSelect.slice(0, 7) === key) {
-                const info = state.reschedMonthDays[initialDateToSelect];
-                if (info?.bookable && !info.blocked && (info.open > 0 || initialDateToSelect === b.date)) {
+            if (initialDateToSelect) {
+                const initInfo = initialDateToSelect.slice(0, 7) === key ? state.reschedMonthDays[initialDateToSelect] : null;
+                if (initInfo?.bookable && !initInfo.blocked && initInfo.open > 0) {
                     await selectRescheduleDate(initialDateToSelect, false);
+                } else {
+                    const firstOpen = Object.keys(state.reschedMonthDays)
+                        .sort()
+                        .find((d) => {
+                            const info = state.reschedMonthDays[d];
+                            return info?.bookable && !info.blocked && info.open > 0;
+                        });
+                    if (firstOpen) {
+                        await selectRescheduleDate(firstOpen, false);
+                    } else if (initInfo?.bookable && !initInfo.blocked && initialDateToSelect === b.date) {
+                        await selectRescheduleDate(initialDateToSelect, false);
+                    }
                 }
             }
         } catch (err) {
@@ -758,15 +792,28 @@
     }
 
     function changeRescheduleMonth(delta) {
-        state.reschedViewMonth += delta;
-        if (state.reschedViewMonth < 0) {
-            state.reschedViewMonth = 11;
-            state.reschedViewYear -= 1;
+        let m = state.reschedViewMonth + delta;
+        let y = state.reschedViewYear;
+        if (m < 0) {
+            m = 11;
+            y -= 1;
         }
-        if (state.reschedViewMonth > 11) {
-            state.reschedViewMonth = 0;
-            state.reschedViewYear += 1;
+        if (m > 11) {
+            m = 0;
+            y += 1;
         }
+        const config = state.config || {
+            today: state.serverToday || '2026-11-14',
+            firstBookableDate: '2026-11-01',
+            lastBookableDate: '2026-11-30',
+        };
+        const minMonthKey = (config.firstBookableDate || config.today || '2026-11-01').slice(0, 7);
+        const lastKey = `${(config.lastBookableDate || '2026-12-31').slice(0, 4)}-12`;
+        const targetKey = monthKey(y, m);
+        if (targetKey < minMonthKey || targetKey > lastKey) return;
+
+        state.reschedViewMonth = m;
+        state.reschedViewYear = y;
         loadRescheduleMonth();
     }
 
@@ -842,7 +889,15 @@
                         state.reschedSelectedSlot = previousSlot;
                     }
                 }
+                const prevRaw = $('#reschedDefenseStartInput')?.value;
+                const wasFocused = document.activeElement?.id === 'reschedDefenseStartInput';
                 renderRescheduleDefenseSlots(data);
+                if (!userInitiated && !state.reschedSelectedSlot && prevRaw && $('#reschedDefenseStartInput')) {
+                    $('#reschedDefenseStartInput').value = prevRaw;
+                }
+                if (!userInitiated && wasFocused && $('#reschedDefenseStartInput')) {
+                    $('#reschedDefenseStartInput').focus();
+                }
                 updateReschedSelectionPreview();
             } else {
                 const slots = data.slots || [];
@@ -1076,7 +1131,9 @@
                 ok: false,
                 startMinute,
                 endMinute,
-                error: `${formatMinute(startMinute)} is outside the defense schedule on this day (${winLabels}).`,
+                error: winLabels
+                    ? `${formatMinute(startMinute)} is outside the defense schedule on this day (${winLabels}).`
+                    : 'No defense windows are available on this day.',
             };
         }
 
@@ -1399,6 +1456,7 @@
 
     async function logout() {
         try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+        window.SchedulerRealtime?.notifyLocal({ type: 'auth_changed' });
         window.location.href = '/';
     }
 
@@ -1455,8 +1513,27 @@
             $('#appointmentsView')?.classList.remove('hidden');
             renderStudentHeader();
             window.SchedulerRealtime?.init(state.config);
-            window.SchedulerRealtime?.subscribe((event) => {
+            window.SchedulerRealtime?.subscribe(async (event) => {
                 if (!state.student) return;
+                if (event?.type === 'student_updated') {
+                    try {
+                        const { student: fresh } = await api('/api/auth/me');
+                        if (!fresh) {
+                            showAuthGate();
+                            return;
+                        }
+                        state.student = fresh;
+                        renderStudentHeader();
+                    } catch { /* ignore */ }
+                } else if (event?.type === 'auth_changed' && event?.fromLocalTab) {
+                    try {
+                        const { student: fresh } = await api('/api/auth/me');
+                        if (!fresh) {
+                            showAuthGate();
+                            return;
+                        }
+                    } catch { /* ignore */ }
+                }
                 loadBookings(false);
                 if (event?.bookingId && state.lastRescheduledId && event.bookingId === state.lastRescheduledId) {
                     return;

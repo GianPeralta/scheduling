@@ -26,11 +26,10 @@
             const textEl = pill.querySelector('.live-status-text');
             if (textEl) textEl.textContent = isOnline ? 'Live' : 'Syncing…';
         }
-        const badge = document.getElementById('slotsLiveBadge');
-        if (badge) {
+        document.querySelectorAll('#slotsLiveBadge, #reschedLiveBadge').forEach((badge) => {
             badge.classList.toggle('is-live', isOnline);
             badge.classList.toggle('is-reconnecting', !isOnline);
-        }
+        });
     }
 
     let pendingEvent = null;

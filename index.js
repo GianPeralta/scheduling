@@ -1509,6 +1509,12 @@ async function applyStudentProfileUpdate(
         })
         .eq('student_id', studentId);
 
+    await db()
+        .from(TABLE)
+        .update({ defense_level: normalizedLevel })
+        .eq('student_id', studentId)
+        .neq('consultation_type', 'defense');
+
     return updated;
 }
 
@@ -1628,11 +1634,10 @@ app.get('/api/month', async (req, res) => {
 
     const rawExcludeId = String(req.query.excludeBookingId || '').trim();
     let excludeBookingId = /^[0-9a-f-]{36}$/i.test(rawExcludeId) ? rawExcludeId : null;
-    let excludeRequesterId = null;
-    if (excludeBookingId) {
-        const requester = await currentStudent(req).catch(() => null);
-        if (requester) excludeRequesterId = requester.id;
-        else excludeBookingId = null;
+    const requester = await currentStudent(req).catch(() => null);
+    const requesterId = requester?.id || null;
+    if (excludeBookingId && !requesterId) {
+        excludeBookingId = null;
     }
 
     const first = `${month}-01`;
@@ -1650,13 +1655,18 @@ app.get('/api/month', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const excludedRow = excludeBookingId
-        ? (data.find((r) => r.id === excludeBookingId && r.student_id === excludeRequesterId && isActiveRow(r)) || null)
+        ? (data.find((r) => r.id === excludeBookingId && r.student_id === requesterId && isActiveRow(r)) || null)
         : null;
 
     const intervalsByDate = new Map();
+    const studentDropoffDates = new Set();
     for (const r of data) {
-        if (!isActiveRow(r) || !isTimedRow(r)) continue; // Cancelled & Drop-offs take 0 minutes off schedule
+        if (!isActiveRow(r)) continue;
         if (excludedRow && r.id === excludedRow.id) continue;
+        if (requesterId && r.student_id === requesterId && !isTimedRow(r)) {
+            studentDropoffDates.add(r.appointment_date);
+        }
+        if (!isTimedRow(r)) continue; // Cancelled & Drop-offs take 0 minutes off schedule
         const d = r.appointment_date;
         if (!intervalsByDate.has(d)) intervalsByDate.set(d, []);
         intervalsByDate.get(d).push(rowInterval(r));
@@ -1717,13 +1727,14 @@ app.get('/api/month', async (req, res) => {
         const excludedStart = (excludedRow && excludedRow.appointment_date === d)
             ? Number(excludedRow.start_minute)
             : null;
+        const hasOtherStudentDropoff = studentDropoffDates.has(d);
         const open = hasFullDayBlock
             ? 0
             : daySlots.filter(
                 (s) => isFutureSlot(d, s.startMinute, now)
                     && !(excludedStart !== null && s.startMinute === excludedStart)
                     && (s.isDropoff
-                        ? !isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals)
+                        ? (!hasOtherStudentDropoff && !isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals))
                         : !hasOverlap(s.startMinute, s.endMinute, allBusyIntervals))
             ).length;
         const blocked = Boolean(hasFullDayBlock || (open === 0 && dayBlocks.length > 0));
@@ -1749,11 +1760,10 @@ app.get('/api/slots', async (req, res) => {
 
     const rawExcludeId = String(req.query.excludeBookingId || '').trim();
     let excludeBookingId = /^[0-9a-f-]{36}$/i.test(rawExcludeId) ? rawExcludeId : null;
-    let excludeRequesterId = null;
-    if (excludeBookingId) {
-        const requester = await currentStudent(req).catch(() => null);
-        if (requester) excludeRequesterId = requester.id;
-        else excludeBookingId = null;
+    const requester = await currentStudent(req).catch(() => null);
+    const requesterId = requester?.id || null;
+    if (excludeBookingId && !requesterId) {
+        excludeBookingId = null;
     }
 
     const isDefense = purpose === 'defense';
@@ -1770,8 +1780,11 @@ app.get('/api/slots', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const excludedRow = excludeBookingId
-        ? (data.find((r) => r.id === excludeBookingId && r.student_id === excludeRequesterId && isActiveRow(r)) || null)
+        ? (data.find((r) => r.id === excludeBookingId && r.student_id === requesterId && isActiveRow(r)) || null)
         : null;
+    const hasOtherStudentDropoff = Boolean(
+        requesterId && data.some((r) => r.student_id === requesterId && (!excludedRow || r.id !== excludedRow.id) && isActiveRow(r) && !isTimedRow(r))
+    );
     const bookedIntervals = data
         .filter((r) => isActiveRow(r) && isTimedRow(r) && (!excludedRow || r.id !== excludedRow.id))
         .map(rowInterval);
@@ -1838,7 +1851,7 @@ app.get('/api/slots', async (req, res) => {
             available: isFutureSlot(date, s.startMinute, now)
                 && !blockedByAdmin
                 && !isCurrentBooking
-                && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
+                && (s.isDropoff ? !hasOtherStudentDropoff : !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
         };
     });
 
@@ -2044,11 +2057,25 @@ function buildOutlookCalendarUrl(booking) {
 }
 
 /** Shape a database row for the frontend. */
-function toBooking(r, now, studentLookup = null) {
+function toBooking(r, now, studentOrLookup = null) {
     const current = (now && typeof now === 'object' && now.date) ? now : nowInTz();
-    const matchedStudent = studentLookup
-        ? (studentLookup.byId.get(r.student_id) || studentLookup.byEmail.get(String(r.student_email || '').toLowerCase()) || null)
-        : null;
+    let matchedStudent = null;
+    if (studentOrLookup) {
+        if (studentOrLookup.byId && studentOrLookup.byEmail) {
+            matchedStudent = studentOrLookup.byId.get(r.student_id)
+                || studentOrLookup.byEmail.get(String(r.student_email || '').toLowerCase())
+                || null;
+        } else if (studentOrLookup.id) {
+            const matchesId = !r.student_id || r.student_id === studentOrLookup.id;
+            const matchesEmail = Boolean(
+                r.student_email && studentOrLookup.email
+                && String(r.student_email).toLowerCase() === String(studentOrLookup.email).toLowerCase()
+            );
+            if (matchesId || matchesEmail) {
+                matchedStudent = studentOrLookup;
+            }
+        }
+    }
     const members = Array.isArray(r.members) && r.members.length
         ? r.members
         : (Array.isArray(matchedStudent?.members) && matchedStudent.members.length
@@ -2078,9 +2105,9 @@ function toBooking(r, now, studentLookup = null) {
         const prevRange = `${formatMinute(prevStart)} – ${formatMinute(prevEnd)}`;
         previousLabel = timed ? prevRange : `${prevRange} (Drop-off)`;
     }
-    const projectLevel = normalizeDefenseLevel(r.defense_level)
-        || normalizeDefenseLevel(matchedStudent?.project_level)
-        || null;
+    const projectLevel = consultationType === 'defense'
+        ? (normalizeDefenseLevel(r.defense_level) || normalizeDefenseLevel(matchedStudent?.project_level) || null)
+        : (normalizeDefenseLevel(matchedStudent?.project_level) || normalizeDefenseLevel(r.defense_level) || null);
     const defenseLevel = consultationType === 'defense' ? projectLevel : null;
     const booking = {
         id: r.id,
@@ -2142,7 +2169,7 @@ app.get('/api/my-bookings', requireStudent, async (req, res) => {
     res.json({
         today: now.date,
         currentMinute: now.minuteOfDay,
-        bookings: data.map((r) => toBooking(r, now)),
+        bookings: data.map((r) => toBooking(r, now, req.student)),
     });
 });
 
@@ -2161,7 +2188,7 @@ app.get('/api/bookings/:id/ics', requireStudent, async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
     if (!row) return res.status(404).json({ error: 'Appointment not found.' });
 
-    const booking = toBooking(row);
+    const booking = toBooking(row, null, req.student);
     const isCancelled = booking.status === 'cancelled';
     const sequence = isCancelled
         ? (booking.rescheduledCount || 0) + 1
@@ -2238,7 +2265,7 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
     });
     if (process.env.VERCEL) await rtPromise;
 
-    res.json({ ok: true, booking: toBooking(data, now) });
+    res.json({ ok: true, booking: toBooking(data, now, req.student) });
 });
 
 // Atomically swap a logged-in student's existing appointment to a new date/time in one transaction
@@ -2393,7 +2420,7 @@ async function handleStudentReschedule(req, res) {
         }
     }
 
-    const previousBooking = toBooking(row, now);
+    const previousBooking = toBooking(row, now, student);
     const rescheduledAt = new Date().toISOString();
     const nextRescheduledCount = (Number(row.rescheduled_count) || 0) + 1;
 
@@ -2491,7 +2518,7 @@ async function handleStudentReschedule(req, res) {
     remindedAppointmentIds.delete(row.id);
     remindedStudentAppointmentIds.delete(row.id);
 
-    const booking = toBooking(updatedRow, now);
+    const booking = toBooking(updatedRow, now, student);
     const emailPromise = sendStudentRescheduleEmail(booking, previousBooking, resolveSiteOrigin(req)).catch((err) => {
         console.error('Failed to send student reschedule email:', err.message || err);
     });
@@ -2618,7 +2645,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         slotEnd = startMinute + durationMinutes;
     } else {
         const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
-        if (!isBookableDate(date, now) || !validSlot || !isFutureSlot(date, startMinute, now)) {
+        if (!isBookableDate(date, now, consultationType) || !validSlot || !isFutureSlot(date, startMinute, now)) {
             return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
         }
         slotStart = validSlot.startMinute;
@@ -2765,7 +2792,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         else if (s) updatedStudent = publicStudent(s);
     }
 
-    const booking = toBooking(data);
+    const booking = toBooking(data, now, student);
     const emailPromise = sendStudentBookingConfirmationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
         console.error('Failed to send student booking confirmation email:', err.message || err);
     });
@@ -2988,21 +3015,33 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
     const now = nowInTz();
     let cancelledBookings = [];
     if (cancelExisting) {
-        const { data: activeRows, error: activeErr } = await db()
-            .from(TABLE)
-            .select('*')
-            .gte('appointment_date', date)
-            .lte('appointment_date', endDate)
-            .neq('status', 'cancelled');
+        const [{ data: activeRows, error: activeErr }, allBlocksInRange] = await Promise.all([
+            db()
+                .from(TABLE)
+                .select('*')
+                .gte('appointment_date', date)
+                .lte('appointment_date', endDate)
+                .neq('status', 'cancelled'),
+            isFullDay ? Promise.resolve([]) : fetchBlockedByDateRange(date, endDate),
+        ]);
         if (!activeErr && Array.isArray(activeRows) && activeRows.length) {
             const bStart = isFullDay ? 0 : startMinute;
             const bEnd = isFullDay ? 1440 : endMinute;
+            const blocksByDate = new Map();
+            for (const blk of allBlocksInRange) {
+                const d = blk.blocked_date;
+                if (!blocksByDate.has(d)) blocksByDate.set(d, []);
+                blocksByDate.get(d).push(blockInterval(blk));
+            }
             const toCancelIds = activeRows
                 .filter((r) => {
                     if (!isActiveRow(r)) return false;
                     if (isFullDay) return true;
                     const [rs, re] = rowInterval(r);
-                    return rs < bEnd && re > bStart;
+                    if (!(rs < bEnd && re > bStart)) return false;
+                    if (isTimedRow(r)) return true;
+                    const intervalsForDay = blocksByDate.get(r.appointment_date) || [[bStart, bEnd]];
+                    return isWindowFullyBlocked(rs, re, intervalsForDay);
                 })
                 .map((r) => r.id);
 
@@ -3083,7 +3122,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
 
     const title = row.capstone_title || row.team_name || 'your Capstone / Thesis manuscript';
     const greeting = `Dear ${row.student_name},`;
-    const siteOrigin = `${req.protocol}://${req.get('host')}`;
+    const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
     const subject = `Manuscript Ready for Pickup — Please Schedule Your Retrieval`;
     const bodyText = [
         greeting,
@@ -3120,16 +3159,23 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
             <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
         </div>`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: row.student_email,
-        subject,
-        text: bodyText,
-        html: bodyHtml,
-    });
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: row.student_email,
+            subject,
+            text: bodyText,
+            html: bodyHtml,
+        });
+    } catch (err) {
+        console.error('Failed to send manuscript checked notification email:', err);
+        if (err.status) throw err;
+        throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
+    }
 
     const notifiedAt = new Date().toISOString();
-    await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
+    const { error: updateErr } = await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
+    if (updateErr) throw updateErr;
     const rtPromise = notifyRealtimeListeners({ type: 'dropoff_notified', bookingId: row.id, date: row.appointment_date });
     if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true, notifiedAt });
@@ -3713,6 +3759,15 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
             }
         }
 
+        if (sentIds.length > 0 || studentSentIds.length > 0) {
+            const rtPromise = notifyRealtimeListeners({
+                type: 'reminder_sent',
+                sentIds,
+                studentSentIds,
+            });
+            if (process.env.VERCEL) await rtPromise;
+        }
+
         return {
             checkedAt,
             today: now.date,
@@ -3729,7 +3784,8 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
 }
 
 // Called every minute by an external scheduler (e.g. cron-job.org).
-// If CRON_SECRET is set, callers must send "Authorization: Bearer <CRON_SECRET>" (or ?secret=...).
+// If CRON_SECRET is set, callers must send "Authorization: Bearer <CRON_SECRET>" (or ?secret=...)
+// or a valid admin dashboard password header ("x-admin-password").
 async function handleReminderCron(req, res) {
     const secret = process.env.CRON_SECRET;
     if (secret) {
@@ -3737,7 +3793,19 @@ async function handleReminderCron(req, res) {
         const given = auth.startsWith('Bearer ') ? auth.slice(7) : String(req.query.secret || '');
         const a = Buffer.from(given);
         const b = Buffer.from(secret);
-        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        const matchesCronSecret = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+        const adminPw = process.env.ADMIN_PASSWORD;
+        const givenAdminPw = String(req.get('x-admin-password') || '');
+        const matchesAdminPw = Boolean(
+            adminPw && givenAdminPw
+            && crypto.timingSafeEqual(
+                crypto.createHash('sha256').update(givenAdminPw).digest(),
+                crypto.createHash('sha256').update(adminPw).digest()
+            )
+        );
+
+        if (!matchesCronSecret && !matchesAdminPw) {
             return res.status(401).json({ ok: false, error: 'Unauthorized' });
         }
     }

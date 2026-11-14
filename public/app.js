@@ -869,7 +869,9 @@
                 ok: false,
                 startMinute,
                 endMinute,
-                error: `${formatMinute(startMinute)} is outside the defense schedule on this day (${winLabels}).`,
+                error: winLabels
+                    ? `${formatMinute(startMinute)} is outside the defense schedule on this day (${winLabels}).`
+                    : 'No defense windows are available on this day.',
             };
         }
 
@@ -1480,6 +1482,8 @@
         state.selectedDate = null;
         state.loadingSlotsKey = null;
         state.loadedSlotsKey = null;
+        document.querySelectorAll('#days .day.selected').forEach((el) => el.classList.remove('selected'));
+        updateSelectionBox();
         hideCalendarDayNotice();
         const tabsEl = $('#windowTabs');
         if (tabsEl) {
@@ -1927,6 +1931,7 @@
                 toast('Verification code sent to your new university email.', 'success');
             } else {
                 applyUpdatedStudentState(data.student);
+                window.SchedulerRealtime?.notifyLocal({ type: 'student_updated', studentId: data.student?.id });
                 setProfileModalView('summary');
                 toast('Your registration info has been updated.', 'success');
             }
@@ -1971,6 +1976,7 @@
             });
             clearInterval(state.profileResendTimer);
             applyUpdatedStudentState(data.student);
+            window.SchedulerRealtime?.notifyLocal({ type: 'student_updated', studentId: data.student?.id });
             setProfileModalView('summary');
             toast('Email verified and registration info updated!', 'success');
         } catch (err) {
@@ -2436,6 +2442,7 @@
 
     async function logout() {
         try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+        window.SchedulerRealtime?.notifyLocal({ type: 'auth_changed' });
         setStudent(null);
         setAuthMode('login');
         toast('You have been logged out.');
@@ -2630,7 +2637,18 @@
         loadCurrentStudent();
 
         window.SchedulerRealtime?.subscribe((event) => {
+            if (event?.type === 'auth_changed' && event?.fromLocalTab) {
+                loadCurrentStudent();
+                return;
+            }
             if (!state.student) return;
+            if (event?.type === 'student_updated' && event?.fromLocalTab) {
+                api('/api/auth/me').then(({ student }) => {
+                    if (student) applyUpdatedStudentState(student);
+                    else setStudent(null);
+                }).catch(() => {});
+                return;
+            }
             loadMyBookings();
             if (event?.bookingId && state.lastBookedId && event.bookingId === state.lastBookedId) {
                 return;
@@ -2690,7 +2708,9 @@
                 renderDefenseSlots(data);
                 if (!state.selectedSlot && prevRaw && $('#defenseStartInput')) {
                     $('#defenseStartInput').value = prevRaw;
-                    if (wasFocused) $('#defenseStartInput').focus();
+                }
+                if (wasFocused && $('#defenseStartInput')) {
+                    $('#defenseStartInput').focus();
                 }
             } else {
                 const slots = data.slots || [];

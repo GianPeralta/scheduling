@@ -207,6 +207,9 @@ alter table public.email_otps add column if not exists instructor_role text;
 alter table public.email_otps add column if not exists members text[];
 alter table public.email_otps add column if not exists otp_code text;
 alter table public.email_otps add column if not exists status text not null default 'pending';
+alter table public.email_otps drop constraint if exists email_otps_status_check;
+alter table public.email_otps add constraint email_otps_status_check
+    check (status in ('pending', 'verified', 'expired', 'failed', 'superseded', 'send_failed'));
 alter table public.email_otps add column if not exists verified_at timestamptz;
 alter table public.email_otps drop constraint if exists email_otps_purpose_check;
 alter table public.email_otps add constraint email_otps_purpose_check
@@ -332,6 +335,18 @@ begin
         end if;
     else
         perform pg_advisory_xact_lock(hashtext('appointments:' || p_new_date::text));
+        if exists (
+            select 1
+              from public.blocked_schedules
+             where blocked_date = p_new_date
+               and (
+                   is_full_day
+                   or int4range(start_minute::int, end_minute::int)
+                       && int4range(p_new_start_minute::int, (p_new_start_minute + v_duration)::int)
+               )
+        ) then
+            raise exception 'The instructor is unavailable during that date/time.' using errcode = '23P01';
+        end if;
         if exists (
             select 1
               from public.appointments

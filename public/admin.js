@@ -1046,10 +1046,13 @@
     setInterval(async () => {
         if (!state.password) return;
         try {
-            const res = await fetch('/api/cron/reminders', { method: 'POST' });
+            const res = await fetch('/api/cron/reminders', {
+                method: 'POST',
+                headers: { 'x-admin-password': state.password },
+            });
             if (res.ok) {
                 const data = await res.json().catch(() => null);
-                if (data && data.sentCount > 0) {
+                if (data && (data.sentCount > 0 || data.studentSentCount > 0)) {
                     loadBookings();
                 }
             }
