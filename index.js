@@ -1626,6 +1626,15 @@ app.get('/api/month', async (req, res) => {
         return res.status(400).json({ error: 'Invalid month. Use YYYY-MM.' });
     }
 
+    const rawExcludeId = String(req.query.excludeBookingId || '').trim();
+    let excludeBookingId = /^[0-9a-f-]{36}$/i.test(rawExcludeId) ? rawExcludeId : null;
+    let excludeRequesterId = null;
+    if (excludeBookingId) {
+        const requester = await currentStudent(req).catch(() => null);
+        if (requester) excludeRequesterId = requester.id;
+        else excludeBookingId = null;
+    }
+
     const first = `${month}-01`;
     const firstDt = parseDate(first);
     const last = toDateStr(new Date(Date.UTC(firstDt.getUTCFullYear(), firstDt.getUTCMonth() + 1, 0)));
@@ -1640,9 +1649,14 @@ app.get('/api/month', async (req, res) => {
     ]);
     if (error) return res.status(500).json({ error: error.message });
 
+    const excludedRow = excludeBookingId
+        ? (data.find((r) => r.id === excludeBookingId && r.student_id === excludeRequesterId && isActiveRow(r)) || null)
+        : null;
+
     const intervalsByDate = new Map();
     for (const r of data) {
         if (!isActiveRow(r) || !isTimedRow(r)) continue; // Cancelled & Drop-offs take 0 minutes off schedule
+        if (excludedRow && r.id === excludedRow.id) continue;
         const d = r.appointment_date;
         if (!intervalsByDate.has(d)) intervalsByDate.set(d, []);
         intervalsByDate.get(d).push(rowInterval(r));
@@ -1674,7 +1688,20 @@ app.get('/api/month', async (req, res) => {
         const serializedBlocks = dayBlocks.map(toBlockedSchedule);
 
         if (isDefense) {
-            const open = hasFullDayBlock ? 0 : countOpenDefenseRanges(d, defenseDuration, allBusyIntervals);
+            let open = 0;
+            if (!hasFullDayBlock) {
+                if (excludedRow && excludedRow.appointment_date === d) {
+                    const excludedStart = Number(excludedRow.start_minute);
+                    open = defenseDayAvailability(d, defenseDuration, allBusyIntervals).reduce(
+                        (n, w) => n + w.free.filter(
+                            (f) => f.fits && (f.latestStartMinute > f.earliestStartMinute || f.earliestStartMinute !== excludedStart)
+                        ).length,
+                        0
+                    );
+                } else {
+                    open = countOpenDefenseRanges(d, defenseDuration, allBusyIntervals);
+                }
+            }
             const blocked = Boolean(hasFullDayBlock || (open === 0 && dayBlocks.length > 0));
             days[d] = {
                 bookable: true,
@@ -1687,10 +1714,14 @@ app.get('/api/month', async (req, res) => {
             continue;
         }
         const daySlots = generateDaySlots(d, purpose);
+        const excludedStart = (excludedRow && excludedRow.appointment_date === d)
+            ? Number(excludedRow.start_minute)
+            : null;
         const open = hasFullDayBlock
             ? 0
             : daySlots.filter(
                 (s) => isFutureSlot(d, s.startMinute, now)
+                    && !(excludedStart !== null && s.startMinute === excludedStart)
                     && (s.isDropoff
                         ? !isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals)
                         : !hasOverlap(s.startMinute, s.endMinute, allBusyIntervals))
@@ -1716,6 +1747,15 @@ app.get('/api/slots', async (req, res) => {
     const purpose = normalizePurpose(req.query.purpose);
     if (!parseDate(date)) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
 
+    const rawExcludeId = String(req.query.excludeBookingId || '').trim();
+    let excludeBookingId = /^[0-9a-f-]{36}$/i.test(rawExcludeId) ? rawExcludeId : null;
+    let excludeRequesterId = null;
+    if (excludeBookingId) {
+        const requester = await currentStudent(req).catch(() => null);
+        if (requester) excludeRequesterId = requester.id;
+        else excludeBookingId = null;
+    }
+
     const isDefense = purpose === 'defense';
     const level = isDefense ? (normalizeDefenseLevel(req.query.level) || 'capstone1') : null;
     const now = nowInTz();
@@ -1729,7 +1769,12 @@ app.get('/api/slots', async (req, res) => {
     ]);
     if (error) return res.status(500).json({ error: error.message });
 
-    const bookedIntervals = data.filter((r) => isActiveRow(r) && isTimedRow(r)).map(rowInterval);
+    const excludedRow = excludeBookingId
+        ? (data.find((r) => r.id === excludeBookingId && r.student_id === excludeRequesterId && isActiveRow(r)) || null)
+        : null;
+    const bookedIntervals = data
+        .filter((r) => isActiveRow(r) && isTimedRow(r) && (!excludedRow || r.id !== excludedRow.id))
+        .map(rowInterval);
     const blockedIntervals = dayBlocks.map(blockInterval);
     const allBusyIntervals = [...bookedIntervals, ...blockedIntervals];
     const fullDayBlock = dayBlocks.find((b) => b.is_full_day) || null;
@@ -1738,7 +1783,15 @@ app.get('/api/slots', async (req, res) => {
     if (isDefense) {
         const durationMinutes = DEFENSE_LEVELS[level].durationMinutes;
         const windows = defenseDayAvailability(date, durationMinutes, allBusyIntervals);
-        const openRanges = windows.reduce((n, w) => n + w.free.filter((f) => f.fits).length, 0);
+        const currentStartMinute = (excludedRow && excludedRow.appointment_date === date)
+            ? Number(excludedRow.start_minute)
+            : null;
+        const openRanges = windows.reduce(
+            (n, w) => n + w.free.filter(
+                (f) => f.fits && (currentStartMinute === null || f.latestStartMinute > f.earliestStartMinute || f.earliestStartMinute !== currentStartMinute)
+            ).length,
+            0
+        );
         const isDayBlocked = Boolean(fullDayBlock) || (openRanges === 0 && dayBlocks.length > 0);
         return res.json({
             date,
@@ -1746,6 +1799,7 @@ app.get('/api/slots', async (req, res) => {
             level,
             durationMinutes,
             startStep: DEFENSE_START_STEP,
+            currentStartMinute,
             blocked: isDayBlocked,
             blockReason,
             blocks: dayBlocks.map(toBlockedSchedule),
@@ -1755,6 +1809,9 @@ app.get('/api/slots', async (req, res) => {
     }
 
     const slots = generateDaySlots(date, purpose).map((s) => {
+        const isCurrentBooking = Boolean(
+            excludedRow && excludedRow.appointment_date === date && Number(excludedRow.start_minute) === s.startMinute
+        );
         const blockedByAdmin = Boolean(fullDayBlock) || (
             s.isDropoff
                 ? isWindowFullyBlocked(s.startMinute, s.endMinute, blockedIntervals)
@@ -1772,6 +1829,7 @@ app.get('/api/slots', async (req, res) => {
             endMinute: s.endMinute,
             durationMinutes: s.durationMinutes,
             isDropoff: Boolean(s.isDropoff),
+            currentBooking: isCurrentBooking,
             label: s.label,
             endLabel: s.endLabel,
             windowLabel: s.windowLabel,
@@ -1779,6 +1837,7 @@ app.get('/api/slots', async (req, res) => {
             blockReason: matchedBlock?.reason || blockReason || null,
             available: isFutureSlot(date, s.startMinute, now)
                 && !blockedByAdmin
+                && !isCurrentBooking
                 && (s.isDropoff || !hasOverlap(s.startMinute, s.endMinute, bookedIntervals)),
         };
     });
@@ -2003,6 +2062,22 @@ function toBooking(r, now, studentLookup = null) {
     const status = r.status === 'cancelled' ? 'cancelled' : 'scheduled';
     const minutesUntilStart = minutesUntilBooking(r.appointment_date, startMinute, current);
     const canCancel = status === 'scheduled' && minutesUntilStart >= CANCEL_CUTOFF_MINUTES;
+    const canReschedule = canCancel;
+    const previousDate = r.previous_date || null;
+    const previousStartMinute = Number.isFinite(r.previous_start_minute)
+        ? Number(r.previous_start_minute)
+        : null;
+    let previousLabel = null;
+    if (previousDate && previousStartMinute !== null) {
+        const [prevStart, prevEnd] = rowInterval({
+            ...r,
+            appointment_date: previousDate,
+            start_minute: previousStartMinute,
+            start_hour: Math.floor(previousStartMinute / 60),
+        });
+        const prevRange = `${formatMinute(prevStart)} – ${formatMinute(prevEnd)}`;
+        previousLabel = timed ? prevRange : `${prevRange} (Drop-off)`;
+    }
     const projectLevel = normalizeDefenseLevel(r.defense_level)
         || normalizeDefenseLevel(matchedStudent?.project_level)
         || null;
@@ -2035,6 +2110,12 @@ function toBooking(r, now, studentLookup = null) {
         label: timed ? timeRange : `${timeRange} (Drop-off)`,
         status,
         canCancel,
+        canReschedule,
+        rescheduledAt: r.rescheduled_at || null,
+        rescheduledCount: Number(r.rescheduled_count) || 0,
+        previousDate,
+        previousStartMinute,
+        previousLabel,
         cancellationReason: r.cancellation_reason || null,
         cancelledAt: r.cancelled_at || null,
         notifiedAt: r.notified_at || null,
@@ -2082,10 +2163,13 @@ app.get('/api/bookings/:id/ics', requireStudent, async (req, res) => {
 
     const booking = toBooking(row);
     const isCancelled = booking.status === 'cancelled';
+    const sequence = isCancelled
+        ? (booking.rescheduledCount || 0) + 1
+        : (booking.rescheduledCount || 0);
     const ics = buildBookingIcs(booking, {
         method: isCancelled ? 'CANCEL' : 'PUBLISH',
         status: isCancelled ? 'CANCELLED' : 'CONFIRMED',
-        sequence: isCancelled ? 1 : 0,
+        sequence,
     });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
@@ -2156,6 +2240,276 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
 
     res.json({ ok: true, booking: toBooking(data, now) });
 });
+
+// Atomically swap a logged-in student's existing appointment to a new date/time in one transaction
+async function handleStudentReschedule(req, res) {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) {
+        return res.status(400).json({ error: 'Invalid appointment ID.' });
+    }
+
+    const student = req.student;
+    const { data: row, error: fetchErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('id', req.params.id)
+        .eq('student_id', student.id)
+        .maybeSingle();
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!row) return res.status(404).json({ error: 'Appointment not found.' });
+
+    if (row.status === 'cancelled') {
+        return res.status(400).json({ error: 'Cancelled appointments cannot be rescheduled.' });
+    }
+
+    const now = nowInTz();
+    const [currentStartMinute] = rowInterval(row);
+    const minsLeft = minutesUntilBooking(row.appointment_date, currentStartMinute, now);
+    if (minsLeft < CANCEL_CUTOFF_MINUTES) {
+        return res.status(400).json({
+            code: 'RESCHEDULE_WINDOW_PASSED',
+            error: 'Appointments can only be rescheduled at least 2 hours before the scheduled time.',
+        });
+    }
+
+    const consultationType = normalizePurpose(row.consultation_type);
+    const typeInfo = CONSULTATION_TYPES[consultationType];
+    const isDefense = consultationType === 'defense';
+    const isDropoff = consultationType === 'dropoff' || Number(row.duration_minutes) === 0;
+    const defenseLevel = isDefense
+        ? (normalizeDefenseLevel(row.defense_level) || normalizeDefenseLevel(student.project_level) || 'capstone1')
+        : null;
+    const durationMinutes = isDropoff
+        ? DROPOFF_DURATION
+        : isDefense
+            ? (Number.isFinite(row.duration_minutes) && row.duration_minutes > 0 ? Number(row.duration_minutes) : DEFENSE_LEVELS[defenseLevel].durationMinutes)
+            : (Number.isFinite(row.duration_minutes) && row.duration_minutes > 0 ? Number(row.duration_minutes) : typeInfo.durationMinutes);
+
+    const body = req.body || {};
+    const date = String(body.date ?? '').trim();
+    const startMinute = Number(body.startMinute);
+
+    if (!parseDate(date)) {
+        return res.status(400).json({ error: 'Please select a valid date.' });
+    }
+    if (!Number.isInteger(startMinute) || startMinute < 0 || startMinute >= 1440) {
+        return res.status(400).json({ error: 'Please select a valid start time.' });
+    }
+    if (date === row.appointment_date && startMinute === currentStartMinute) {
+        return res.status(400).json({
+            code: 'SAME_SLOT',
+            error: 'Please select a different date or time to reschedule your appointment.',
+        });
+    }
+    if (date <= now.date) {
+        return res.status(400).json({
+            error: isDefense
+                ? 'Defenses must be scheduled at least 1 day before the defense day.'
+                : 'Consultations must be scheduled at least 1 day before the consultation day.',
+        });
+    }
+
+    let nextReason = row.reason;
+    if (Object.prototype.hasOwnProperty.call(body, 'reason') && body.reason !== null && body.reason !== undefined) {
+        const trimmed = String(body.reason).trim();
+        if (trimmed.length > 0) {
+            if (trimmed.length < 5 || trimmed.length > 1000) {
+                return res.status(400).json({
+                    field: 'reason',
+                    error: 'Please provide brief details for this consultation (5–1000 characters).',
+                });
+            }
+            nextReason = trimmed;
+        }
+    }
+
+    let slotStart;
+    let slotEnd;
+    if (isDefense) {
+        if (!isBookableDate(date, now, 'defense') || !isValidDefenseStart(date, startMinute, durationMinutes, [])) {
+            return res.status(400).json({
+                error: `That start time is not within the defense schedule for this day, or a ${formatDurationLabel('defense', durationMinutes)} defense would not fit before the window ends. Please choose another time.`,
+            });
+        }
+        slotStart = startMinute;
+        slotEnd = startMinute + durationMinutes;
+    } else {
+        const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
+        if (!isBookableDate(date, now, consultationType) || !validSlot || !isFutureSlot(date, startMinute, now)) {
+            return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
+        }
+        slotStart = validSlot.startMinute;
+        slotEnd = validSlot.endMinute;
+    }
+
+    const dayBlocks = await fetchBlockedByDate(date);
+    if (dayBlocks.length) {
+        const blockedIntervals = dayBlocks.map(blockInterval);
+        const isBlocked = dayBlocks.some((b) => b.is_full_day) || (
+            isDropoff
+                ? isWindowFullyBlocked(slotStart, slotEnd, blockedIntervals)
+                : hasOverlap(slotStart, slotEnd, blockedIntervals)
+        );
+        if (isBlocked) {
+            const matchedBlock = dayBlocks.find((b) => {
+                const [bs, be] = blockInterval(b);
+                return slotStart < be && slotEnd > bs;
+            }) || dayBlocks[0];
+            return res.status(409).json({
+                code: 'SLOT_UNAVAILABLE',
+                error: matchedBlock?.reason
+                    ? `The instructor is unavailable during that date/time (${matchedBlock.reason}). Your original appointment is unchanged.`
+                    : 'The instructor is unavailable during that date/time. Your original appointment is unchanged.',
+            });
+        }
+    }
+
+    const { data: existingRows, error: existingErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('appointment_date', date);
+    if (existingErr) return res.status(500).json({ error: existingErr.message });
+
+    if (isDropoff) {
+        const duplicateDropoff = existingRows.some(
+            (r) => r.id !== row.id && r.student_id === student.id && isActiveRow(r) && !isTimedRow(r)
+        );
+        if (duplicateDropoff) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: 'Your group already has a Manuscript Drop-off scheduled on this date. Your original appointment is unchanged.',
+            });
+        }
+    } else {
+        const bookedIntervals = existingRows
+            .filter((r) => r.id !== row.id && isActiveRow(r) && isTimedRow(r))
+            .map(rowInterval);
+        if (hasOverlap(slotStart, slotEnd, bookedIntervals)) {
+            return res.status(409).json({
+                code: 'SLOT_UNAVAILABLE',
+                error: isDefense
+                    ? `${formatMinute(slotStart)} – ${formatMinute(slotEnd)} overlaps with a time that is already booked. Your original appointment is unchanged — please pick another time.`
+                    : 'Sorry, someone just booked a slot that overlaps with that time. Your original appointment is unchanged — please pick another time.',
+            });
+        }
+    }
+
+    const previousBooking = toBooking(row, now);
+    const rescheduledAt = new Date().toISOString();
+    const nextRescheduledCount = (Number(row.rescheduled_count) || 0) + 1;
+
+    let updatedRow = null;
+    let updateErr = null;
+
+    const rpcRes = await db()
+        .rpc('reschedule_appointment', {
+            p_appointment_id: row.id,
+            p_student_id: student.id,
+            p_new_date: date,
+            p_new_start_minute: slotStart,
+            p_new_duration_minutes: durationMinutes,
+            p_new_reason: nextReason,
+        });
+
+    if (!rpcRes.error && rpcRes.data) {
+        updatedRow = Array.isArray(rpcRes.data) ? rpcRes.data[0] : rpcRes.data;
+    } else if (rpcRes.error && ['42883', 'PGRST202', '42703', 'PGRST204'].includes(rpcRes.error.code)) {
+        const extRes = await db()
+            .from(TABLE)
+            .update({
+                appointment_date: date,
+                start_hour: Math.floor(slotStart / 60),
+                start_minute: slotStart,
+                duration_minutes: durationMinutes,
+                reason: nextReason,
+                previous_date: row.appointment_date,
+                previous_start_minute: currentStartMinute,
+                rescheduled_at: rescheduledAt,
+                rescheduled_count: nextRescheduledCount,
+                reminder_sent_at: null,
+                student_reminder_sent_at: null,
+            })
+            .eq('id', row.id)
+            .eq('student_id', student.id)
+            .eq('status', 'scheduled')
+            .select('*')
+            .maybeSingle();
+
+        if (!extRes.error) {
+            updatedRow = extRes.data;
+        } else if (['42703', 'PGRST204'].includes(extRes.error.code)) {
+            const coreRes = await db()
+                .from(TABLE)
+                .update({
+                    appointment_date: date,
+                    start_hour: Math.floor(slotStart / 60),
+                    start_minute: slotStart,
+                    duration_minutes: durationMinutes,
+                    reason: nextReason,
+                    reminder_sent_at: null,
+                    student_reminder_sent_at: null,
+                })
+                .eq('id', row.id)
+                .eq('student_id', student.id)
+                .eq('status', 'scheduled')
+                .select('*')
+                .maybeSingle();
+            updatedRow = coreRes.data;
+            updateErr = coreRes.error;
+        } else {
+            updateErr = extRes.error;
+        }
+    } else {
+        updateErr = rpcRes.error;
+    }
+
+    if (updateErr) {
+        if (updateErr.code === '23505' || updateErr.code === '23P01') {
+            return res.status(409).json({
+                code: 'SLOT_UNAVAILABLE',
+                error: 'Sorry, someone just booked that time. Your original appointment is still intact — please pick another time.',
+            });
+        }
+        if (updateErr.code === 'P0002') {
+            return res.status(404).json({ error: 'Appointment not found.' });
+        }
+        if (updateErr.code === 'P0001') {
+            return res.status(400).json({ error: updateErr.message || 'Could not reschedule this appointment.' });
+        }
+        if (['23514', '42703', 'PGRST204'].includes(updateErr.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: updateErr.message });
+    }
+    if (!updatedRow) {
+        return res.status(409).json({
+            error: 'This appointment could not be rescheduled because its status changed. Please refresh your appointments.',
+        });
+    }
+
+    remindedAppointmentIds.delete(row.id);
+    remindedStudentAppointmentIds.delete(row.id);
+
+    const booking = toBooking(updatedRow, now);
+    const emailPromise = sendStudentRescheduleEmail(booking, previousBooking, resolveSiteOrigin(req)).catch((err) => {
+        console.error('Failed to send student reschedule email:', err.message || err);
+    });
+    const rtPromise = notifyRealtimeListeners({
+        type: 'booking_rescheduled',
+        date: booking.date,
+        previousDate: previousBooking.date,
+        bookingId: booking.id,
+    });
+    if (process.env.VERCEL) {
+        await Promise.all([emailPromise, rtPromise]);
+    }
+
+    res.json({ ok: true, booking, previousBooking });
+}
+
+app.post('/api/bookings/:id/reschedule', requireStudent, handleStudentReschedule);
+app.put('/api/bookings/:id/reschedule', requireStudent, handleStudentReschedule);
 
 app.post('/api/bookings', requireStudent, async (req, res) => {
     const body = req.body || {};
@@ -2291,7 +2645,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         if (upcomingDefenses.length >= MAX_UPCOMING_DEFENSES) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
-                error: 'Your group already has an upcoming defense scheduled. You can cancel it in My Appointments (at least 2 hours before the schedule) if you need to move it.',
+                error: 'Your group already has an upcoming defense scheduled. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).',
             });
         }
     } else if (isDropoff) {
@@ -2313,8 +2667,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
                 error: AUTH.maxActiveBookings === 1
-                    ? 'You already have an upcoming timed consultation. You can book again after it is done (or cancel it in My Appointments at least 2 hours before the schedule).'
-                    : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can book again after one of them is done or cancelled.`,
+                    ? 'You already have an upcoming timed consultation. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).'
+                    : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can reschedule or cancel one in My Appointments at least 2 hours before the schedule.`,
             });
         }
     }
@@ -2971,7 +3325,7 @@ function studentPolicyReminderText(booking) {
     } else if (booking.isDropoff) {
         rules.push('Once your manuscript is checked, you will receive an email notification to schedule your 5-minute Retrieval of Manuscript.');
     }
-    rules.push('If you need to cancel, please do so in My Appointments at least 2 hours before the scheduled time.');
+    rules.push('If you need to reschedule or cancel, please do so in My Appointments at least 2 hours before the scheduled time.');
     return rules;
 }
 
@@ -3036,6 +3390,76 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
             {
                 filename: `consultation-${booking.reference.toLowerCase()}.ics`,
                 content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: 0 }),
+                contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
+            },
+        ],
+    });
+}
+
+async function sendStudentRescheduleEmail(booking, previousBooking = null, siteOrigin = '') {
+    if (!booking?.studentEmail) return;
+    const { dateLabel } = buildBookingSummaryData(booking);
+    const prevDateLabel = previousBooking?.date ? formatLongDateStr(previousBooking.date) : null;
+    const prevSummary = prevDateLabel && previousBooking?.label
+        ? `${prevDateLabel} (${previousBooking.label})`
+        : null;
+    const greeting = `Hi ${booking.name || 'Student'},`;
+    const subject = `Rescheduled: ${booking.consultationTitle} moved to ${dateLabel} (${booking.label}) — #${booking.reference}`;
+    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
+    const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
+    const rules = studentPolicyReminderText(booking);
+    const sequence = Math.max(1, booking.rescheduledCount || 1);
+
+    const textLines = [
+        greeting,
+        '',
+        `Your ${booking.consultationTitle} with ${TEACHER_NAME} has been rescheduled.`,
+        ...(prevSummary ? [`Moved from: ${prevSummary}`] : []),
+        '',
+        ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
+        '',
+        'Reminders:',
+        ...rules.map((r) => `• ${r}`),
+        '',
+        `Add to Outlook Calendar: ${outlookCalUrl}`,
+        ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
+        '',
+        'An updated calendar file (.ics) is attached so you can update this event in your calendar app.',
+    ];
+
+    const movedFromHtml = prevSummary
+        ? `
+            <div style="background:#f0fdfa;border:1px solid #99f6e4;color:#0f766e;padding:10px 14px;border-radius:8px;font-size:13px;margin:12px 0">
+                <strong>Moved from:</strong> ${escapeHtml(prevSummary)}
+            </div>`
+        : '';
+
+    const html = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> has been rescheduled.</p>
+            ${movedFromHtml}
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
+            ${buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl)}
+            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
+                <strong>Reminders:</strong>
+                <ul style="margin:6px 0 0;padding-left:18px">
+                    ${rules.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}
+                </ul>
+            </div>
+            <p style="margin-top:16px;color:#64748b;font-size:13px">An updated calendar file (<code>.ics</code>) is attached so you can update this event directly in your device’s calendar app.</p>
+        </div>`;
+
+    await mailer().sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: booking.studentEmail,
+        subject,
+        text: textLines.join('\n'),
+        html,
+        attachments: [
+            {
+                filename: `consultation-${booking.reference.toLowerCase()}.ics`,
+                content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence }),
                 contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
             },
         ],
@@ -3141,7 +3565,7 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
         attachments: [
             {
                 filename: `consultation-${booking.reference.toLowerCase()}.ics`,
-                content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: 0 }),
+                content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: booking.rescheduledCount || 0 }),
                 contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
             },
         ],

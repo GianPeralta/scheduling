@@ -18,6 +18,10 @@ create table if not exists public.appointments (
     notified_at             timestamptz,
     reminder_sent_at        timestamptz,
     student_reminder_sent_at timestamptz,
+    rescheduled_at          timestamptz,
+    rescheduled_count       smallint    not null default 0,
+    previous_date           date,
+    previous_start_minute   smallint,
     created_at              timestamptz not null default now()
 );
 
@@ -58,6 +62,10 @@ alter table public.appointments add column if not exists cancelled_at timestampt
 alter table public.appointments add column if not exists notified_at timestamptz;
 alter table public.appointments add column if not exists reminder_sent_at timestamptz;
 alter table public.appointments add column if not exists student_reminder_sent_at timestamptz;
+alter table public.appointments add column if not exists rescheduled_at timestamptz;
+alter table public.appointments add column if not exists rescheduled_count smallint not null default 0;
+alter table public.appointments add column if not exists previous_date date;
+alter table public.appointments add column if not exists previous_start_minute smallint;
 alter table public.appointments drop constraint if exists appointments_slot_unique;
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
 alter table public.appointments drop constraint if exists appointments_duration_minutes_check;
@@ -267,3 +275,93 @@ begin
 exception when others then
     raise notice 'Skipped supabase_realtime publication setup: %', sqlerrm;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Atomic Appointment Rescheduling (single database transaction)
+-- ---------------------------------------------------------------------------
+create or replace function public.reschedule_appointment(
+    p_appointment_id uuid,
+    p_student_id uuid,
+    p_new_date date,
+    p_new_start_minute smallint,
+    p_new_duration_minutes smallint,
+    p_new_reason text default null
+)
+returns setof public.appointments
+language plpgsql
+set search_path = public
+as $$
+declare
+    v_row public.appointments%rowtype;
+    v_duration smallint;
+    v_reason text;
+begin
+    select *
+      into v_row
+      from public.appointments
+     where id = p_appointment_id
+       and student_id = p_student_id
+       for update;
+
+    if not found then
+        raise exception 'Appointment not found.' using errcode = 'P0002';
+    end if;
+
+    if v_row.status = 'cancelled' then
+        raise exception 'Cancelled appointments cannot be rescheduled.' using errcode = 'P0001';
+    end if;
+
+    v_duration := coalesce(p_new_duration_minutes, v_row.duration_minutes);
+    if v_row.appointment_date = p_new_date and v_row.start_minute = p_new_start_minute then
+        raise exception 'Please select a different date or time to reschedule your appointment.' using errcode = 'P0001';
+    end if;
+
+    v_reason := coalesce(nullif(btrim(p_new_reason), ''), v_row.reason);
+
+    if v_duration = 0 then
+        if exists (
+            select 1
+              from public.appointments
+             where student_id = p_student_id
+               and id <> p_appointment_id
+               and status <> 'cancelled'
+               and duration_minutes = 0
+               and appointment_date = p_new_date
+        ) then
+            raise exception 'Your group already has a Manuscript Drop-off scheduled on this date.' using errcode = '23505';
+        end if;
+    else
+        perform pg_advisory_xact_lock(hashtext('appointments:' || p_new_date::text));
+        if exists (
+            select 1
+              from public.appointments
+             where appointment_date = p_new_date
+               and id <> p_appointment_id
+               and status <> 'cancelled'
+               and duration_minutes > 0
+               and int4range(start_minute::int, (start_minute + duration_minutes)::int)
+                   && int4range(p_new_start_minute::int, (p_new_start_minute + v_duration)::int)
+        ) then
+            raise exception 'That time slot overlaps with an existing booking.' using errcode = '23P01';
+        end if;
+    end if;
+
+    return query
+    update public.appointments
+       set appointment_date = p_new_date,
+           start_hour = floor(p_new_start_minute / 60)::smallint,
+           start_minute = p_new_start_minute,
+           duration_minutes = v_duration,
+           reason = v_reason,
+           previous_date = v_row.appointment_date,
+           previous_start_minute = v_row.start_minute,
+           rescheduled_at = now(),
+           rescheduled_count = coalesce(v_row.rescheduled_count, 0) + 1,
+           reminder_sent_at = null,
+           student_reminder_sent_at = null
+     where id = p_appointment_id
+       and student_id = p_student_id
+       and status = 'scheduled'
+    returning *;
+end;
+$$;

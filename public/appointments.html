@@ -50,7 +50,7 @@
             <div class="card login-card">
                 <div class="avatar">AG</div>
                 <h1>Sign in required</h1>
-                <p class="muted small">Please sign in with your university email to view or cancel your appointments.</p>
+                <p class="muted small">Please sign in with your university email to view, reschedule, or cancel your appointments.</p>
                 <a class="btn btn-primary btn-block" href="/">Go to sign in</a>
             </div>
         </section>
@@ -79,7 +79,7 @@
             </div>
 
             <div class="cancel-policy-banner appointments-policy-banner">
-                <strong>Note:</strong> You can only cancel an appointment at least <strong>2 hours before</strong> the scheduled time.
+                <strong>Note:</strong> You can reschedule or cancel an appointment at least <strong>2 hours before</strong> the scheduled time. Rescheduling swaps your slot in one step without losing your current spot.
             </div>
 
             <div class="card bookings-card">
@@ -112,6 +112,88 @@
                     <button type="button" class="btn btn-ghost" id="keepBookingBtn">Keep appointment</button>
                     <button type="button" class="btn btn-danger" id="confirmCancelBookingBtn">
                         <span class="btn-label">Yes, cancel</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Atomic Reschedule Appointment Modal -->
+    <div class="modal-backdrop hidden" id="rescheduleModal" role="dialog" aria-modal="true" aria-labelledby="rescheduleModalTitle">
+        <div class="modal-card modal-reschedule">
+            <div class="modal-head">
+                <div>
+                    <h3 id="rescheduleModalTitle">Reschedule Appointment</h3>
+                    <p class="muted small">Pick a new date and time. Your current slot stays reserved until the swap succeeds.</p>
+                </div>
+                <button type="button" class="icon-btn" id="closeRescheduleModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <div class="reschedule-current-banner">
+                <div class="reschedule-current-info">
+                    <span class="selection-label">Current booking (kept safe until swap)</span>
+                    <strong id="rescheduleCurrentSummary">—</strong>
+                </div>
+                <span class="badge teal" id="reschedulePurposeBadge">—</span>
+            </div>
+
+            <div class="form-error hidden" id="rescheduleError" role="alert"></div>
+
+            <div class="reschedule-grid">
+                <div class="calendar">
+                    <div class="calendar-head">
+                        <h3 id="reschedMonthLabel">—</h3>
+                        <div class="calendar-nav">
+                            <button type="button" class="icon-btn" id="reschedPrevMonth" aria-label="Previous month">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                            </button>
+                            <button type="button" class="icon-btn" id="reschedNextMonth" aria-label="Next month">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="weekdays">
+                        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                    </div>
+                    <div class="days" id="reschedDays"></div>
+                    <div class="legend">
+                        <span><i class="dot dot-open"></i> Available</span>
+                        <span><i class="dot dot-full"></i> Full</span>
+                        <span><i class="dot dot-blocked"></i> Blocked</span>
+                    </div>
+                    <p class="calendar-day-notice hidden" id="reschedCalendarDayNotice" role="status" aria-live="polite"></p>
+                </div>
+
+                <div class="slots">
+                    <div class="slots-head">
+                        <div class="slots-title-row">
+                            <h3 id="reschedSlotsTitle">Select a date</h3>
+                            <span class="live-inline-badge is-live" id="reschedLiveBadge" title="Time slots update automatically in real time"><span class="live-dot"></span>Live</span>
+                        </div>
+                        <p class="muted small" id="reschedSlotsSubtitle">Pick an available day on the calendar.</p>
+                    </div>
+                    <div class="window-tabs hidden" id="reschedWindowTabs"></div>
+                    <div class="slot-list" id="reschedSlotList">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                            <p>Pick a highlighted day on the calendar.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="reschedule-footer">
+                <div class="reschedule-selection-preview">
+                    <span class="selection-label">New schedule</span>
+                    <strong id="reschedSelectionText">Select a new date &amp; time above</strong>
+                </div>
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="keepCurrentTimeBtn">Keep current time</button>
+                    <button type="button" class="btn btn-primary" id="confirmRescheduleBtn" disabled>
+                        <span class="btn-label">Confirm reschedule</span>
                         <span class="spinner hidden"></span>
                     </button>
                 </div>

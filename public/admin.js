@@ -895,6 +895,13 @@
                 if (b.notifiedAt && (b.isDropoff || b.consultationType === 'dropoff')) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
                 }
+                if ((b.rescheduledCount > 0 || b.rescheduledAt) && !isCancelled(b)) {
+                    const reschedBadge = el('span', 'badge violet', 'Rescheduled');
+                    if (b.previousDate && b.previousLabel) {
+                        reschedBadge.title = `Moved from ${shortDate(b.previousDate)} · ${b.previousLabel}`;
+                    }
+                    header.appendChild(reschedBadge);
+                }
                 if (b.reminderSentAt) {
                     header.appendChild(el('span', 'badge sky', 'Reminder sent ✓'));
                 }
