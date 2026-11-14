@@ -146,6 +146,10 @@
     function logout() {
         sessionStorage.removeItem(STORAGE_KEY);
         state.password = '';
+        state.cancelling = false;
+        state.blocking = false;
+        closeCancelModal();
+        closeBlockModal();
         state.bookings = [];
         state.blockedSchedules = [];
         state.students = [];
@@ -185,6 +189,14 @@
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
+            if (state.cancelTarget && !state.cancelling) {
+                const updatedTarget = state.bookings.find((x) => x.id === state.cancelTarget.id);
+                if (!updatedTarget || isCancelled(updatedTarget)) {
+                    closeCancelModal();
+                } else {
+                    state.cancelTarget = updatedTarget;
+                }
+            }
             $('#todayLabel').textContent = `Today is ${longDate(data.today)}`;
             render();
             return true;

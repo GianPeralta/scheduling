@@ -34,7 +34,7 @@
 
     let pendingEvent = null;
     function scheduleEmit(event) {
-        if (event && typeof event.version === 'number' && event.version > lastVersion) {
+        if (event && !event.fromLocalTab && typeof event.version === 'number' && event.version > lastVersion) {
             lastVersion = event.version;
         }
         pendingEvent = { ...(pendingEvent || {}), ...(event || {}) };
@@ -184,8 +184,7 @@
     }
 
     function notifyLocal(event = {}) {
-        const payload = { version: Date.now(), timestamp: new Date().toISOString(), ...event };
-        lastVersion = Math.max(lastVersion, payload.version);
+        const payload = { timestamp: new Date().toISOString(), ...event };
         if (broadcastChannel) {
             try { broadcastChannel.postMessage(payload); } catch { /* ignore */ }
         }

@@ -2490,10 +2490,19 @@ async function handleStudentReschedule(req, res) {
     }
 
     if (updateErr) {
+        if (updateErr.code === '23505' && isDropoff) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: 'Your group already has a Manuscript Drop-off scheduled on this date. Your original appointment is unchanged.',
+            });
+        }
         if (updateErr.code === '23505' || updateErr.code === '23P01') {
+            const isUnavailableErr = String(updateErr.message || '').toLowerCase().includes('unavailable');
             return res.status(409).json({
                 code: 'SLOT_UNAVAILABLE',
-                error: 'Sorry, someone just booked that time. Your original appointment is still intact — please pick another time.',
+                error: isUnavailableErr
+                    ? 'The instructor is unavailable during that date/time. Your original appointment is unchanged.'
+                    : 'Sorry, someone just booked that time. Your original appointment is still intact — please pick another time.',
             });
         }
         if (updateErr.code === 'P0002') {

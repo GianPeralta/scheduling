@@ -324,6 +324,14 @@ begin
     if v_duration = 0 then
         if exists (
             select 1
+              from public.blocked_schedules
+             where blocked_date = p_new_date
+               and is_full_day
+        ) then
+            raise exception 'The instructor is unavailable during that date/time.' using errcode = '23P01';
+        end if;
+        if exists (
+            select 1
               from public.appointments
              where student_id = p_student_id
                and id <> p_appointment_id

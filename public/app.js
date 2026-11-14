@@ -2088,6 +2088,9 @@
                 goToStep(1, shouldScroll);
             }
         } else {
+            state.profileBusy = false;
+            closeMyBookingsModal();
+            closeBeninsigModal();
             $('#myAppointmentsLink')?.classList.add('hidden');
             $('#myBookingsBtn')?.classList.add('hidden');
             if ($('#teamInput')) $('#teamInput').value = '';
@@ -2208,6 +2211,7 @@
         clearInterval(state.resendTimer);
         setAuthMode('login');
         setStudent(student, true);
+        window.SchedulerRealtime?.notifyLocal({ type: 'auth_changed' });
         toast(message, 'success');
     }
 

@@ -1427,10 +1427,15 @@
             await loadBookings(false);
         } catch (err) {
             state.rescheduleSubmitting = false;
+            if (err.status === 401) {
+                showAuthGate();
+                toast('Your session has expired. Please sign in again.', 'error');
+                return;
+            }
             setRescheduleError(err.message || 'Could not reschedule appointment. Your current slot is still safe.');
             if (err.status === 409) {
                 await refreshRescheduleAvailability();
-            } else if (err.code === 'RESCHEDULE_WINDOW_PASSED') {
+            } else if (err.status === 404 || err.code === 'RESCHEDULE_WINDOW_PASSED') {
                 await loadBookings(false);
             }
         } finally {
@@ -1446,8 +1451,21 @@
         }
     }
 
+    function applyAuthenticatedStudent(student) {
+        state.student = student;
+        $('#bootView')?.classList.add('hidden');
+        $('#authGateView')?.classList.add('hidden');
+        $('#accountBox')?.classList.remove('hidden');
+        $('#appointmentsView')?.classList.remove('hidden');
+        renderStudentHeader();
+    }
+
     function showAuthGate() {
         state.student = null;
+        state.rescheduleSubmitting = false;
+        state.cancelling = false;
+        closeCancelConfirmModal();
+        closeRescheduleModal();
         $('#bootView')?.classList.add('hidden');
         $('#appointmentsView')?.classList.add('hidden');
         $('#accountBox')?.classList.add('hidden');
@@ -1502,18 +1520,25 @@
                 api('/api/config').catch(() => null),
             ]);
             state.config = config;
-            if (!student) {
-                showAuthGate();
-                return;
-            }
-            state.student = student;
-            $('#bootView')?.classList.add('hidden');
-            $('#authGateView')?.classList.add('hidden');
-            $('#accountBox')?.classList.remove('hidden');
-            $('#appointmentsView')?.classList.remove('hidden');
-            renderStudentHeader();
             window.SchedulerRealtime?.init(state.config);
             window.SchedulerRealtime?.subscribe(async (event) => {
+                if (event?.type === 'auth_changed' && event?.fromLocalTab) {
+                    try {
+                        const { student: fresh } = await api('/api/auth/me');
+                        if (!fresh) {
+                            showAuthGate();
+                            return;
+                        }
+                        const switched = !state.student || state.student.id !== fresh.id;
+                        if (switched) {
+                            closeCancelConfirmModal();
+                            closeRescheduleModal();
+                        }
+                        applyAuthenticatedStudent(fresh);
+                        await loadBookings(false);
+                    } catch { /* ignore */ }
+                    return;
+                }
                 if (!state.student) return;
                 if (event?.type === 'student_updated') {
                     try {
@@ -1525,14 +1550,6 @@
                         state.student = fresh;
                         renderStudentHeader();
                     } catch { /* ignore */ }
-                } else if (event?.type === 'auth_changed' && event?.fromLocalTab) {
-                    try {
-                        const { student: fresh } = await api('/api/auth/me');
-                        if (!fresh) {
-                            showAuthGate();
-                            return;
-                        }
-                    } catch { /* ignore */ }
                 }
                 loadBookings(false);
                 if (event?.bookingId && state.lastRescheduledId && event.bookingId === state.lastRescheduledId) {
@@ -1540,6 +1557,11 @@
                 }
                 refreshRescheduleAvailability();
             });
+            if (!student) {
+                showAuthGate();
+                return;
+            }
+            applyAuthenticatedStudent(student);
             await loadBookings();
         } catch {
             showAuthGate();
