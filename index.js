@@ -191,19 +191,7 @@ let lastRealtimeEvent = {
     timestamp: new Date().toISOString(),
 };
 const sseClients = new Set();
-const queueStatusOverrides = new Map();
 let serverRealtimeChannel = null;
-
-function getEffectiveQueueStateForRow(r) {
-    const override = r?.id ? queueStatusOverrides.get(r.id) : null;
-    if (override) return override;
-    const raw = r?.queue_status;
-    const queueStatus = raw === 'waiting' || raw === 'serving' || raw === 'completed' ? raw : null;
-    return {
-        queueStatus,
-        queueUpdatedAt: r?.queue_updated_at || null,
-    };
-}
 
 function sendSseKeepalive() {
     for (const res of sseClients) {
@@ -2019,7 +2007,6 @@ function toBooking(r, now, studentLookup = null) {
         || normalizeDefenseLevel(matchedStudent?.project_level)
         || null;
     const defenseLevel = consultationType === 'defense' ? projectLevel : null;
-    const effQueue = getEffectiveQueueStateForRow(r);
     const booking = {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
@@ -2053,8 +2040,6 @@ function toBooking(r, now, studentLookup = null) {
         notifiedAt: r.notified_at || null,
         reminderSentAt: r.reminder_sent_at || (r.consultation_type !== 'dropoff' ? r.notified_at : null) || null,
         studentReminderSentAt: r.student_reminder_sent_at || null,
-        queueStatus: effQueue.queueStatus,
-        queueUpdatedAt: effQueue.queueUpdatedAt,
         createdAt: r.created_at,
     };
     booking.outlookCalendarUrl = buildOutlookCalendarUrl(booking);
@@ -2161,7 +2146,6 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
     }
     if (!data) return res.status(404).json({ error: 'Appointment not found.' });
 
-    queueStatusOverrides.delete(row.id);
     const rtPromise = notifyRealtimeListeners({
         type: 'booking_cancelled',
         date: data.appointment_date,
@@ -2832,7 +2816,6 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
     if (!data) return res.status(404).json({ error: 'Booking not found.' });
 
     const booking = toBooking(data);
-    queueStatusOverrides.delete(booking.id);
     const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
         console.error('Failed to send student cancellation email:', err.message || err);
     });
@@ -2853,250 +2836,9 @@ app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
     const { error } = await db().from(TABLE).delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
-    queueStatusOverrides.delete(req.params.id);
     const rtPromise = notifyRealtimeListeners({ type: 'booking_deleted', bookingId: req.params.id });
     if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true });
-});
-
-/* ------------------------------------------------------------------ */
-/* Live "Now Serving / Queue" Board                                    */
-/* ------------------------------------------------------------------ */
-async function buildQueuePayload({ requestedDate = '', studentId = null, isAdmin = false } = {}) {
-    const now = nowInTz();
-    const { data, error } = await db()
-        .from(TABLE)
-        .select('*')
-        .gte('appointment_date', now.date)
-        .neq('status', 'cancelled')
-        .order('appointment_date', { ascending: true })
-        .order('start_minute', { ascending: true });
-    if (error) throw error;
-
-    const allActiveRows = (data || [])
-        .filter((r) => isActiveRow(r))
-        .sort((a, b) => a.appointment_date.localeCompare(b.appointment_date) || rowInterval(a)[0] - rowInterval(b)[0]);
-
-    const availableDates = [...new Set(allActiveRows.map((r) => r.appointment_date))].sort();
-    const servingRowAnyDate = allActiveRows.find((r) => getEffectiveQueueStateForRow(r).queueStatus === 'serving');
-
-    let queueDate = now.date;
-    if (requestedDate && parseDate(requestedDate)) {
-        queueDate = requestedDate;
-    } else if (allActiveRows.some((r) => r.appointment_date === now.date)) {
-        queueDate = now.date;
-    } else if (servingRowAnyDate) {
-        queueDate = servingRowAnyDate.appointment_date;
-    } else if (availableDates.length > 0) {
-        queueDate = availableDates[0];
-    }
-
-    const dayRows = allActiveRows.filter((r) => r.appointment_date === queueDate);
-    const timedRows = dayRows.filter((r) => isTimedRow(r));
-    const dropoffRows = dayRows.filter((r) => !isTimedRow(r));
-    const isToday = queueDate === now.date;
-    const hasExplicitServing = timedRows.some((r) => getEffectiveQueueStateForRow(r).queueStatus === 'serving');
-
-    const rawItems = timedRows.map((r, idx) => {
-        const [startMinute, endMinute] = rowInterval(r);
-        const effQueue = getEffectiveQueueStateForRow(r);
-        let queueState = 'waiting';
-        if (effQueue.queueStatus === 'completed') {
-            queueState = 'completed';
-        } else if (effQueue.queueStatus === 'serving') {
-            queueState = 'serving';
-        } else if (!hasExplicitServing && isToday) {
-            if (startMinute <= now.minuteOfDay && now.minuteOfDay < endMinute && effQueue.queueStatus !== 'waiting') {
-                queueState = 'serving';
-            } else if (endMinute <= now.minuteOfDay && effQueue.queueStatus !== 'waiting') {
-                queueState = 'completed';
-            }
-        }
-
-        const consultationType = r.consultation_type || 'system';
-        const projectLevel = normalizeDefenseLevel(r.defense_level) || null;
-        const defenseLevel = consultationType === 'defense' ? projectLevel : null;
-        const durationMinutes = Math.max(0, endMinute - startMinute);
-        const members = Array.isArray(r.members) && r.members.length ? r.members : [r.student_name];
-
-        const item = {
-            id: r.id,
-            reference: String(r.id || '').slice(0, 8).toUpperCase(),
-            queueNumber: idx + 1,
-            date: r.appointment_date,
-            startMinute,
-            endMinute,
-            label: `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`,
-            durationMinutes,
-            durationLabel: formatDurationLabel(consultationType, durationMinutes),
-            consultationType,
-            consultationTitle: formatConsultationTitle(consultationType, defenseLevel),
-            capstoneTitle: r.capstone_title || r.team_name || r.student_name || 'Student Group',
-            instructorRole: r.instructor_role || null,
-            projectLevelLabel: projectLevel ? DEFENSE_LEVELS[projectLevel].label : null,
-            queueState,
-            manualQueueStatus: effQueue.queueStatus,
-            isMine: Boolean(studentId && r.student_id === studentId),
-        };
-        if (isAdmin) {
-            item.studentName = r.student_name;
-            item.members = members;
-            item.studentEmail = r.student_email || null;
-        }
-        return item;
-    });
-
-    const firstWaiting = rawItems.find((item) => item.queueState === 'waiting');
-    if (firstWaiting) firstWaiting.queueState = 'next';
-
-    const nowServing = rawItems.find((item) => item.queueState === 'serving') || null;
-    const upNext = rawItems.find((item) => item.queueState === 'next') || null;
-    const waitingCount = rawItems.filter((item) => item.queueState === 'waiting' || item.queueState === 'next').length;
-    const completedCount = rawItems.filter((item) => item.queueState === 'completed').length;
-    const myActiveItem = rawItems.find((item) => item.isMine && item.queueState !== 'completed')
-        || rawItems.find((item) => item.isMine)
-        || null;
-
-    return {
-        today: now.date,
-        currentMinute: now.minuteOfDay,
-        currentTimeLabel: formatMinute(now.minuteOfDay),
-        queueDate,
-        queueDateLabel: formatLongDateStr(queueDate),
-        isToday,
-        availableDates,
-        nowServing,
-        upNext,
-        waitingCount,
-        completedCount,
-        dropoffCount: dropoffRows.length,
-        totalTimedCount: rawItems.length,
-        myActiveItem,
-        items: rawItems,
-    };
-}
-
-async function setRowQueueStatus(id, status) {
-    const updatedAt = status ? new Date().toISOString() : null;
-    if (status === null) {
-        queueStatusOverrides.delete(id);
-    } else {
-        queueStatusOverrides.set(id, { queueStatus: status, queueUpdatedAt: updatedAt });
-    }
-    const { error } = await db()
-        .from(TABLE)
-        .update({ queue_status: status, queue_updated_at: updatedAt })
-        .eq('id', id);
-    if (error && !['42703', 'PGRST204'].includes(error.code)) {
-        throw error;
-    }
-}
-
-app.get('/api/queue', async (req, res) => {
-    const student = await currentStudent(req).catch(() => null);
-    const requestedDate = String(req.query.date || '').trim();
-    const payload = await buildQueuePayload({
-        requestedDate: parseDate(requestedDate) ? requestedDate : '',
-        studentId: student?.id || null,
-        isAdmin: false,
-    });
-    res.set('Cache-Control', 'no-store');
-    res.json(payload);
-});
-
-app.get('/api/admin/queue', requireAdmin, async (req, res) => {
-    const requestedDate = String(req.query.date || '').trim();
-    const payload = await buildQueuePayload({
-        requestedDate: parseDate(requestedDate) ? requestedDate : '',
-        studentId: null,
-        isAdmin: true,
-    });
-    res.set('Cache-Control', 'no-store');
-    res.json(payload);
-});
-
-app.post('/api/admin/queue', requireAdmin, async (req, res) => {
-    const body = req.body || {};
-    const action = String(body.action || '').trim();
-    const bookingId = body.bookingId ? String(body.bookingId).trim() : '';
-    const rawDate = body.date ? String(body.date).trim() : '';
-
-    if (!['serve', 'complete', 'waiting', 'next', 'reset'].includes(action)) {
-        return res.status(400).json({ error: 'Invalid queue action.' });
-    }
-
-    let targetDate = parseDate(rawDate) ? rawDate : '';
-
-    if (action === 'serve' || action === 'complete' || action === 'waiting') {
-        if (!/^[0-9a-f-]{36}$/i.test(bookingId)) {
-            return res.status(400).json({ error: 'Invalid appointment ID.' });
-        }
-        const { data: row, error: fetchErr } = await db()
-            .from(TABLE)
-            .select('*')
-            .eq('id', bookingId)
-            .maybeSingle();
-        if (fetchErr) return res.status(500).json({ error: fetchErr.message });
-        if (!row || !isActiveRow(row)) {
-            return res.status(404).json({ error: 'Active appointment not found.' });
-        }
-        targetDate = row.appointment_date;
-
-        if (action === 'serve') {
-            const currentQueue = await buildQueuePayload({ requestedDate: targetDate, isAdmin: true });
-            if (currentQueue.nowServing && currentQueue.nowServing.id !== bookingId) {
-                await setRowQueueStatus(currentQueue.nowServing.id, 'completed');
-            }
-            await setRowQueueStatus(bookingId, 'serving');
-        } else if (action === 'complete') {
-            await setRowQueueStatus(bookingId, 'completed');
-        } else {
-            await setRowQueueStatus(bookingId, 'waiting');
-        }
-    } else if (action === 'next') {
-        const currentQueue = await buildQueuePayload({ requestedDate: targetDate, isAdmin: true });
-        targetDate = currentQueue.queueDate;
-        if (currentQueue.nowServing) {
-            await setRowQueueStatus(currentQueue.nowServing.id, 'completed');
-        }
-        const nextCandidate = currentQueue.items.find(
-            (item) => item.id !== currentQueue.nowServing?.id && (item.queueState === 'next' || item.queueState === 'waiting')
-        );
-        if (nextCandidate) {
-            await setRowQueueStatus(nextCandidate.id, 'serving');
-        }
-    } else if (action === 'reset') {
-        if (!targetDate) {
-            const currentQueue = await buildQueuePayload({ isAdmin: true });
-            targetDate = currentQueue.queueDate;
-        }
-        const { data: dayRows, error: dayErr } = await db()
-            .from(TABLE)
-            .select('id')
-            .eq('appointment_date', targetDate);
-        if (dayErr) return res.status(500).json({ error: dayErr.message });
-        for (const r of dayRows || []) {
-            queueStatusOverrides.delete(r.id);
-        }
-        const { error: resetErr } = await db()
-            .from(TABLE)
-            .update({ queue_status: null, queue_updated_at: null })
-            .eq('appointment_date', targetDate);
-        if (resetErr && !['42703', 'PGRST204'].includes(resetErr.code)) {
-            return res.status(500).json({ error: resetErr.message });
-        }
-    }
-
-    const updatedQueue = await buildQueuePayload({ requestedDate: targetDate, isAdmin: true });
-    const rtPromise = notifyRealtimeListeners({
-        type: 'queue_updated',
-        date: targetDate,
-        bookingId: bookingId || null,
-        action,
-    });
-    if (process.env.VERCEL) await rtPromise;
-
-    res.json({ ok: true, queue: updatedQueue });
 });
 
 /* ------------------------------------------------------------------ */

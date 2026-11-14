@@ -18,8 +18,6 @@ create table if not exists public.appointments (
     notified_at             timestamptz,
     reminder_sent_at        timestamptz,
     student_reminder_sent_at timestamptz,
-    queue_status            text check (queue_status is null or queue_status in ('waiting', 'serving', 'completed')),
-    queue_updated_at        timestamptz,
     created_at              timestamptz not null default now()
 );
 
@@ -60,11 +58,6 @@ alter table public.appointments add column if not exists cancelled_at timestampt
 alter table public.appointments add column if not exists notified_at timestamptz;
 alter table public.appointments add column if not exists reminder_sent_at timestamptz;
 alter table public.appointments add column if not exists student_reminder_sent_at timestamptz;
-alter table public.appointments add column if not exists queue_status text;
-alter table public.appointments drop constraint if exists appointments_queue_status_check;
-alter table public.appointments add constraint appointments_queue_status_check
-    check (queue_status is null or queue_status in ('waiting', 'serving', 'completed'));
-alter table public.appointments add column if not exists queue_updated_at timestamptz;
 alter table public.appointments drop constraint if exists appointments_slot_unique;
 alter table public.appointments drop constraint if exists appointments_start_hour_check;
 alter table public.appointments drop constraint if exists appointments_duration_minutes_check;

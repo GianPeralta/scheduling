@@ -32,9 +32,6 @@
         cancelling: false,
         blockScope: 'full', // 'full' | 'time'
         blocking: false,
-        queue: null,
-        queueDate: '',
-        queueBusy: false,
     };
 
     /* ---------------- helpers ---------------- */
@@ -153,9 +150,6 @@
         state.blockedSchedules = [];
         state.students = [];
         state.studentUpdateLogs = [];
-        state.queue = null;
-        state.queueDate = '';
-        if ($('#adminQueueCard')) $('#adminQueueCard').innerHTML = '';
         showLogin();
     }
 
@@ -172,51 +166,12 @@
         return state.config;
     }
 
-    async function loadQueue(dateOverride = state.queueDate) {
-        if (!state.password) return null;
-        const url = dateOverride
-            ? `/api/admin/queue?date=${encodeURIComponent(dateOverride)}`
-            : '/api/admin/queue';
-        const q = await api(url);
-        state.queue = q;
-        if (q?.queueDate) state.queueDate = q.queueDate;
-        renderAdminQueue();
-        return q;
-    }
-
-    async function runQueueAction(payload, toastMessage) {
-        if (state.queueBusy || !state.password) return;
-        state.queueBusy = true;
-        renderAdminQueue();
-        try {
-            const res = await api('/api/admin/queue', {
-                method: 'POST',
-                body: JSON.stringify(payload),
-            });
-            state.queue = res.queue || null;
-            if (res.queue?.queueDate) state.queueDate = res.queue.queueDate;
-            window.SchedulerRealtime?.notifyLocal({
-                type: 'queue_updated',
-                date: state.queueDate,
-                action: payload.action,
-            });
-            if (toastMessage) toast(toastMessage, 'success');
-            await loadBookings();
-        } catch (err) {
-            toast(err.message, 'error');
-        } finally {
-            state.queueBusy = false;
-            renderAdminQueue();
-        }
-    }
-
     async function loadBookings() {
         const reqId = ++state.loadReqId;
         try {
             const [data] = await Promise.all([
                 api('/api/admin/bookings'),
                 ensureConfig(),
-                loadQueue().catch(() => null),
             ]);
             if (reqId !== state.loadReqId) return false;
             state.bookings = data.bookings.sort(
@@ -373,7 +328,6 @@
             closeBlockModal();
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'block_created', date });
-            loadQueue().catch(() => null);
 
             const cancelledMsg = cancelledList.length
                 ? ` (${cancelledList.length} appointment${cancelledList.length === 1 ? '' : 's'} cancelled)`
@@ -402,7 +356,6 @@
             state.blockedSchedules = state.blockedSchedules.filter((x) => x.id !== blk.id);
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'block_removed', date: blk.date });
-            loadQueue().catch(() => null);
             toast(`Unblocked ${shortDate(blk.date)}.`, 'success');
         } catch (err) {
             if (btn) btn.disabled = false;
@@ -481,7 +434,6 @@
             closeCancelModal();
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'booking_cancelled', bookingId: b.id, date: b.date });
-            loadQueue().catch(() => null);
             toast('Consultation cancelled. Reason is now visible in the student’s profile.', 'success');
         } catch (err) {
             setCancelError(err.message);
@@ -506,7 +458,6 @@
             b.notifiedAt = notifiedAt;
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'manuscript_checked', bookingId: b.id, date: b.date });
-            loadQueue().catch(() => null);
             toast(`Notification emailed to ${target}.`, 'success');
         } catch (err) {
             btn.disabled = false;
@@ -842,209 +793,6 @@
         });
     }
 
-    function buildAdminQueueSlotCard(boxClass, eyebrowText, item, emptyTitle, emptySub) {
-        const box = el('div', `queue-slot-card ${boxClass}`);
-        box.appendChild(el('span', 'queue-slot-eyebrow', eyebrowText));
-        if (!item) {
-            box.appendChild(el('strong', 'queue-slot-empty-title', emptyTitle));
-            box.appendChild(el('p', 'muted small', emptySub));
-            return box;
-        }
-
-        const topRow = el('div', 'queue-slot-top');
-        topRow.append(
-            el('span', 'queue-num-badge', `#${item.queueNumber}`),
-            el('span', 'queue-slot-time', item.label)
-        );
-        box.appendChild(topRow);
-        box.appendChild(el('strong', 'queue-slot-title', item.capstoneTitle || item.studentName || 'Student Group'));
-
-        const metaRow = el('div', 'queue-slot-meta');
-        metaRow.appendChild(el('span', 'badge muted-badge', item.consultationTitle || 'Consultation'));
-        if (item.projectLevelLabel) {
-            metaRow.appendChild(el('span', 'badge rose', item.projectLevelLabel));
-        }
-        if (item.studentName) {
-            metaRow.appendChild(el('span', 'muted small', `Rep: ${item.studentName}`));
-        }
-        box.appendChild(metaRow);
-        return box;
-    }
-
-    function queueStateBadge(queueState) {
-        if (queueState === 'serving') return { cls: 'teal', text: 'Now Serving' };
-        if (queueState === 'next') return { cls: 'sky', text: 'Up Next' };
-        if (queueState === 'completed') return { cls: 'muted-badge', text: 'Completed' };
-        return { cls: 'amber', text: 'Waiting' };
-    }
-
-    function renderAdminQueue() {
-        const card = $('#adminQueueCard');
-        if (!card) return;
-
-        const q = state.queue;
-        const hasDates = Array.isArray(q?.availableDates) && q.availableDates.length > 0;
-        if (!state.password || !q || (!q.totalTimedCount && !hasDates)) {
-            card.innerHTML = '';
-            card.hidden = true;
-            card.classList.add('hidden');
-            return;
-        }
-
-        card.hidden = false;
-        card.classList.remove('hidden');
-        card.innerHTML = '';
-
-        const head = el('div', 'admin-queue-head');
-        const headLeft = el('div', 'admin-queue-title-block');
-        const titleRow = el('div', 'badge-row');
-        if (q.isToday) {
-            const liveBadge = el('span', 'live-inline-badge is-live');
-            liveBadge.appendChild(el('span', 'live-dot'));
-            liveBadge.appendChild(document.createTextNode('Live Queue'));
-            titleRow.appendChild(liveBadge);
-        } else {
-            titleRow.appendChild(el('span', 'badge sky', 'Preview Queue'));
-        }
-        titleRow.appendChild(el('h3', 'admin-queue-title', q.queueDateLabel || shortDate(q.queueDate)));
-        headLeft.appendChild(titleRow);
-
-        const dropoffSuffix = q.dropoffCount > 0
-            ? ` · ${q.dropoffCount} drop-off${q.dropoffCount === 1 ? '' : 's'}`
-            : '';
-        headLeft.appendChild(
-            el('p', 'muted small admin-queue-sub', `${q.waitingCount} waiting · ${q.completedCount} done · ${q.currentTimeLabel}${dropoffSuffix}`)
-        );
-
-        const actions = el('div', 'admin-queue-actions');
-        const nextBtn = el('button', 'btn btn-primary btn-sm', 'Call Next Group');
-        nextBtn.type = 'button';
-        nextBtn.disabled = state.queueBusy || (!q.upNext && !q.nowServing);
-        nextBtn.addEventListener('click', () => {
-            const msg = q.upNext
-                ? `Calling #${q.upNext.queueNumber} (${q.upNext.capstoneTitle || q.upNext.studentName}).`
-                : 'Current session marked completed.';
-            runQueueAction({ action: 'next', date: q.queueDate }, msg);
-        });
-
-        const resetBtn = el('button', 'btn btn-ghost btn-sm', 'Auto / Reset');
-        resetBtn.type = 'button';
-        resetBtn.disabled = state.queueBusy || !q.items.some((it) => it.manualQueueStatus !== null);
-        resetBtn.addEventListener('click', () => {
-            runQueueAction({ action: 'reset', date: q.queueDate }, 'Queue reset to automatic schedule order.');
-        });
-        actions.append(nextBtn, resetBtn);
-        head.append(headLeft, actions);
-        card.appendChild(head);
-
-        if (Array.isArray(q.availableDates) && q.availableDates.length > 1) {
-            const dateBar = el('div', 'admin-queue-dates');
-            q.availableDates.forEach((d) => {
-                const label = d === q.today ? `Today · ${shortDate(d)}` : shortDate(d);
-                const btn = el('button', `admin-queue-date-btn${d === q.queueDate ? ' active' : ''}`, label);
-                btn.type = 'button';
-                btn.disabled = state.queueBusy;
-                btn.addEventListener('click', () => {
-                    if (state.queueDate === d) return;
-                    state.queueDate = d;
-                    loadQueue(d).catch((err) => toast(err.message, 'error'));
-                });
-                dateBar.appendChild(btn);
-            });
-            card.appendChild(dateBar);
-        }
-
-        const grid = el('div', 'queue-grid');
-        grid.appendChild(
-            buildAdminQueueSlotCard(
-                'now-serving-box',
-                'NOW SERVING',
-                q.nowServing,
-                q.isToday ? 'Waiting to start' : 'Scheduled queue preview',
-                q.isToday ? 'Click "Call Next Group" or "Serve Now" below.' : `Queue opens on ${q.queueDateLabel}.`
-            )
-        );
-        grid.appendChild(
-            buildAdminQueueSlotCard(
-                'up-next-box',
-                'UP NEXT',
-                q.upNext,
-                'No group waiting',
-                'All remaining timed sessions on this day are finished.'
-            )
-        );
-        card.appendChild(grid);
-
-        const list = el('div', 'admin-queue-list');
-        if (!q.items || !q.items.length) {
-            list.appendChild(el('p', 'muted small', `No timed consultation slots scheduled for ${q.queueDateLabel || q.queueDate}.`));
-        } else {
-            q.items.forEach((item) => {
-                const row = el('div', `admin-queue-item is-${item.queueState}`);
-                const left = el('div', 'admin-queue-item-left');
-                left.appendChild(el('span', 'queue-num-badge', `#${item.queueNumber}`));
-
-                const info = el('div', 'admin-queue-item-info');
-                const badges = el('div', 'badge-row');
-                badges.appendChild(el('strong', 'admin-queue-item-title', item.capstoneTitle || item.studentName || 'Student Group'));
-                const badgeInfo = queueStateBadge(item.queueState);
-                badges.appendChild(el('span', `badge ${badgeInfo.cls}`, badgeInfo.text));
-                if (item.projectLevelLabel) {
-                    badges.appendChild(el('span', 'badge rose', item.projectLevelLabel));
-                }
-                info.appendChild(badges);
-
-                const repSuffix = item.studentName ? ` · Rep: ${item.studentName}` : '';
-                info.appendChild(
-                    el('div', 'muted small admin-queue-item-meta', `${item.label} · ${item.consultationTitle}${repSuffix}`)
-                );
-                left.appendChild(info);
-
-                const itemActions = el('div', 'admin-queue-item-actions');
-                if (item.queueState !== 'serving') {
-                    const serveBtn = el('button', 'btn btn-primary btn-sm', 'Serve Now');
-                    serveBtn.type = 'button';
-                    serveBtn.disabled = state.queueBusy;
-                    serveBtn.addEventListener('click', () => {
-                        runQueueAction(
-                            { action: 'serve', bookingId: item.id, date: q.queueDate },
-                            `Now serving #${item.queueNumber} (${item.capstoneTitle || item.studentName}).`
-                        );
-                    });
-                    itemActions.appendChild(serveBtn);
-                }
-                if (item.queueState !== 'completed') {
-                    const doneBtn = el('button', 'btn btn-ghost btn-sm', 'Done ✓');
-                    doneBtn.type = 'button';
-                    doneBtn.disabled = state.queueBusy;
-                    doneBtn.addEventListener('click', () => {
-                        runQueueAction(
-                            { action: 'complete', bookingId: item.id, date: q.queueDate },
-                            `Marked #${item.queueNumber} completed.`
-                        );
-                    });
-                    itemActions.appendChild(doneBtn);
-                }
-                if (item.queueState === 'serving' || item.queueState === 'completed') {
-                    const waitBtn = el('button', 'btn btn-ghost btn-sm', 'Wait');
-                    waitBtn.type = 'button';
-                    waitBtn.disabled = state.queueBusy;
-                    waitBtn.addEventListener('click', () => {
-                        runQueueAction(
-                            { action: 'waiting', bookingId: item.id, date: q.queueDate },
-                            `Moved #${item.queueNumber} back to waiting.`
-                        );
-                    });
-                    itemActions.appendChild(waitBtn);
-                }
-
-                row.append(left, itemActions);
-                list.appendChild(row);
-            });
-        }
-        card.appendChild(list);
-    }
-
     /* ---------------- render ---------------- */
     function render() {
         const activeBlocks = state.blockedSchedules.filter(isActiveBlock);
@@ -1067,7 +815,6 @@
         if ($('#countCancelled')) $('#countCancelled').textContent = cancelled.length;
 
         renderStudentsSection();
-        renderAdminQueue();
 
         const q = state.search.toLowerCase();
         const container = $('#bookingList');

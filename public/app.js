@@ -1356,7 +1356,6 @@
                 updateRoleVisibility();
             }
             loadMyBookings();
-            loadLiveQueue();
             window.SchedulerRealtime?.notifyLocal({
                 type: 'booking_created',
                 date: booking.date,
@@ -1621,24 +1620,6 @@
         }
     }
 
-    async function loadLiveQueue() {
-        const container = $('#homeQueueBoard');
-        if (!container) return;
-        if (!state.student) {
-            container.innerHTML = '';
-            container.classList.add('hidden');
-            return;
-        }
-        try {
-            const queue = await api('/api/queue');
-            window.SchedulerRealtime?.renderStudentQueueBoard(container, queue, {
-                location: state.config?.location,
-            });
-        } catch {
-            /* ignore queue background errors */
-        }
-    }
-
     async function loadMyBookings() {
         if (!state.student) {
             state.myBookings = [];
@@ -1646,12 +1627,10 @@
             $('#myBookingsBtn')?.classList.add('hidden');
             $('#profileCancelDot')?.classList.add('hidden');
             $('#cancelledAlertBanner')?.classList.add('hidden');
-            $('#homeQueueBoard')?.classList.add('hidden');
             return;
         }
         $('#myAppointmentsLink')?.classList.remove('hidden');
         $('#myBookingsBtn')?.classList.remove('hidden');
-        loadLiveQueue();
         try {
             const data = await api('/api/my-bookings');
             state.myBookings = data.bookings || [];

@@ -308,19 +308,6 @@
         });
     }
 
-    async function loadLiveQueue() {
-        const container = $('#appointmentsQueueBoard');
-        if (!container || !state.student) return;
-        try {
-            const queue = await api('/api/queue');
-            window.SchedulerRealtime?.renderStudentQueueBoard(container, queue, {
-                location: state.config?.location,
-            });
-        } catch {
-            /* ignore queue background errors */
-        }
-    }
-
     async function loadBookings(showToastOnRefresh = false) {
         try {
             const data = await api('/api/my-bookings');
@@ -396,7 +383,7 @@
                 date: b.date,
                 by: 'student',
             });
-            await Promise.all([loadBookings(), loadLiveQueue()]);
+            await loadBookings();
         } catch (err) {
             state.cancelling = false;
             closeCancelConfirmModal();
@@ -467,9 +454,8 @@
             window.SchedulerRealtime?.subscribe(() => {
                 if (!state.student) return;
                 loadBookings(false);
-                loadLiveQueue();
             });
-            await Promise.all([loadBookings(), loadLiveQueue()]);
+            await loadBookings();
         } catch {
             showAuthGate();
         }
