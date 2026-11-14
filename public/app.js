@@ -120,6 +120,7 @@
         loadedSlotsKey: null,
         activeWindowLabel: null,
         submitting: false,
+        lastBookedId: null,
         student: null, // { id, name, email, capstoneTitle, instructorRole, members }
         myBookings: [],
         profileFilter: 'all', // 'all' | 'upcoming' | 'cancelled' | 'past'
@@ -1351,6 +1352,8 @@
                 method: 'POST',
                 body: JSON.stringify(payload),
             });
+            state.lastBookedId = booking.id;
+            state.selectedSlot = null;
             if (updatedStudent) {
                 state.student = updatedStudent;
                 updateRoleVisibility();
@@ -1399,6 +1402,7 @@
     }
 
     function showConfirmation(b) {
+        state.selectedSlot = null;
         const meta = getMeta(b.consultationType, b.defenseLevel);
         const hasMultipleMembers = Array.isArray(b.members) && b.members.length >= 2;
         const capstone = b.capstoneTitle || b.teamName || state.student?.capstoneTitle || null;
@@ -2625,9 +2629,12 @@
         initAuth();
         loadCurrentStudent();
 
-        window.SchedulerRealtime?.subscribe(() => {
+        window.SchedulerRealtime?.subscribe((event) => {
             if (!state.student) return;
             loadMyBookings();
+            if (event?.bookingId && state.lastBookedId && event.bookingId === state.lastBookedId) {
+                return;
+            }
             refreshLiveAvailability();
         });
 
@@ -2641,7 +2648,7 @@
     }
 
     async function refreshLiveAvailability() {
-        if (!state.student || (state.currentStep !== 2 && state.currentStep !== 3)) return;
+        if (!state.student || state.submitting || (state.currentStep !== 2 && state.currentStep !== 3)) return;
         const purpose = state.consultationPurpose || 'system';
         const level = purpose === 'defense' ? (state.defenseLevel || state.student?.projectLevel || 'capstone1') : '';
         const mKey = monthKey(state.viewYear, state.viewMonth);
@@ -2651,12 +2658,13 @@
 
         try {
             const mData = await api(monthQuery);
+            if (state.submitting || (state.currentStep !== 2 && state.currentStep !== 3)) return;
             state.monthDays = mData.days || {};
             state.loadedMonthKey = monthLoadKey(state.viewYear, state.viewMonth, purpose);
             renderCalendar(false);
         } catch { /* ignore transient refresh errors */ }
 
-        if (!state.selectedDate) return;
+        if (!state.selectedDate || state.submitting || (state.currentStep !== 2 && state.currentStep !== 3)) return;
         const ds = state.selectedDate;
         const slotsQuery = purpose === 'defense'
             ? `/api/slots?date=${ds}&purpose=defense&level=${encodeURIComponent(level)}`
@@ -2664,7 +2672,7 @@
 
         try {
             const data = await api(slotsQuery);
-            if (state.selectedDate !== ds) return;
+            if (state.selectedDate !== ds || state.submitting || (state.currentStep !== 2 && state.currentStep !== 3)) return;
 
             if (purpose === 'defense') {
                 state.defenseDay = data;

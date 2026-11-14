@@ -41,6 +41,7 @@
         cancelling: false,
         rescheduleTarget: null,
         rescheduleSubmitting: false,
+        lastRescheduledId: null,
         reschedViewYear: 0,
         reschedViewMonth: 0,
         reschedMonthDays: {},
@@ -558,6 +559,7 @@
 
         state.rescheduleTarget = b;
         state.rescheduleSubmitting = false;
+        state.lastRescheduledId = null;
         state.reschedSelectedDate = null;
         state.reschedSelectedSlot = null;
         state.reschedDefenseDay = null;
@@ -771,12 +773,14 @@
     async function selectRescheduleDate(ds, userInitiated = true) {
         const b = state.rescheduleTarget;
         if (!b || !ds) return;
+        if (!userInitiated && state.rescheduleSubmitting) return;
 
         const reqId = ++state.reschedSlotsRequest;
+        const previousSlot = userInitiated ? null : state.reschedSelectedSlot;
         state.reschedSelectedDate = ds;
-        state.reschedSelectedSlot = null;
-        state.reschedDefenseDay = null;
         if (userInitiated) {
+            state.reschedSelectedSlot = null;
+            state.reschedDefenseDay = null;
             state.reschedActiveWindowLabel = null;
             setRescheduleError('');
         }
@@ -788,20 +792,22 @@
         });
 
         setText('#reschedSlotsTitle', formatLongDate(ds));
-        setText('#reschedSlotsSubtitle', 'Loading available times…');
+        if (userInitiated) {
+            setText('#reschedSlotsSubtitle', 'Loading available times…');
 
-        const tabsEl = $('#reschedWindowTabs');
-        if (tabsEl) {
-            tabsEl.innerHTML = '';
-            tabsEl.classList.add('hidden');
-        }
-        const listEl = $('#reschedSlotList');
-        if (listEl) {
-            listEl.innerHTML = '';
-            for (let i = 0; i < 3; i++) {
-                const sk = document.createElement('div');
-                sk.className = 'slot skeleton';
-                listEl.appendChild(sk);
+            const tabsEl = $('#reschedWindowTabs');
+            if (tabsEl) {
+                tabsEl.innerHTML = '';
+                tabsEl.classList.add('hidden');
+            }
+            const listEl = $('#reschedSlotList');
+            if (listEl) {
+                listEl.innerHTML = '';
+                for (let i = 0; i < 3; i++) {
+                    const sk = document.createElement('div');
+                    sk.className = 'slot skeleton';
+                    listEl.appendChild(sk);
+                }
             }
         }
 
@@ -814,7 +820,12 @@
                 ? `/api/slots?date=${ds}&purpose=defense&level=${encodeURIComponent(level)}&excludeBookingId=${encodeURIComponent(b.id)}`
                 : `/api/slots?date=${ds}&purpose=${encodeURIComponent(purpose)}&excludeBookingId=${encodeURIComponent(b.id)}`;
             const data = await api(url);
-            if (reqId !== state.reschedSlotsRequest || !state.rescheduleTarget || state.rescheduleTarget.id !== b.id) {
+            if (
+                reqId !== state.reschedSlotsRequest
+                || !state.rescheduleTarget
+                || state.rescheduleTarget.id !== b.id
+                || (!userInitiated && state.rescheduleSubmitting)
+            ) {
                 return;
             }
             state.reschedLoadingSlotsKey = null;
@@ -822,9 +833,30 @@
 
             if (purpose === 'defense') {
                 state.reschedDefenseDay = data;
+                if (!userInitiated && previousSlot) {
+                    const check = validateDefenseStartMinute(previousSlot.startMinute, data);
+                    if (!check.ok) {
+                        state.reschedSelectedSlot = null;
+                        toast(check.error || 'That defense time was just booked by another group. Please choose another time.', 'error');
+                    } else {
+                        state.reschedSelectedSlot = previousSlot;
+                    }
+                }
                 renderRescheduleDefenseSlots(data);
+                updateReschedSelectionPreview();
             } else {
-                renderRescheduleSlots(data.slots || [], data);
+                const slots = data.slots || [];
+                if (!userInitiated && previousSlot) {
+                    const match = slots.find((s) => s.startMinute === previousSlot.startMinute);
+                    if (!match || !match.available) {
+                        state.reschedSelectedSlot = null;
+                        toast('That time slot was just booked by another group. Please pick another time.', 'error');
+                    } else {
+                        state.reschedSelectedSlot = match;
+                    }
+                }
+                renderRescheduleSlots(slots, data);
+                updateReschedSelectionPreview();
             }
         } catch (err) {
             if (reqId !== state.reschedSlotsRequest || !state.rescheduleTarget || state.rescheduleTarget.id !== b.id) {
@@ -832,7 +864,8 @@
             }
             state.reschedLoadingSlotsKey = null;
             setText('#reschedSlotsSubtitle', err.message || 'Could not load time slots.');
-            if (listEl) listEl.innerHTML = '<div class="empty-state"><p>Could not load available slots.</p></div>';
+            const errListEl = $('#reschedSlotList');
+            if (errListEl) errListEl.innerHTML = '<div class="empty-state"><p>Could not load available slots.</p></div>';
         }
     }
 
@@ -1268,6 +1301,11 @@
             }
         });
 
+        if (state.reschedSelectedSlot && typeof state.reschedSelectedSlot.startMinute === 'number') {
+            timeInput.value = formatMinute(state.reschedSelectedSlot.startMinute);
+            applyTypedDefenseTime(timeInput.value);
+        }
+
         list.appendChild(inputCard);
     }
 
@@ -1276,7 +1314,8 @@
         if (!b || state.rescheduleSubmitting) return;
         const selectedDate = state.reschedSelectedDate;
         await loadRescheduleMonth(null);
-        if (state.rescheduleTarget && state.rescheduleTarget.id === b.id && selectedDate) {
+        if (!state.rescheduleTarget || state.rescheduleTarget.id !== b.id || state.rescheduleSubmitting) return;
+        if (selectedDate) {
             await selectRescheduleDate(selectedDate, false);
         }
     }
@@ -1317,8 +1356,16 @@
                     startMinute: targetStartMinute,
                 }),
             });
+            state.lastRescheduledId = b.id;
+            state.reschedSelectedSlot = null;
             state.rescheduleSubmitting = false;
             closeRescheduleModal();
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'booking_rescheduled',
+                date: targetDate,
+                previousDate: b.date,
+                bookingId: b.id,
+            });
             toast('Appointment rescheduled! Your new slot is confirmed.', 'success');
             await loadBookings(false);
         } catch (err) {
@@ -1408,9 +1455,12 @@
             $('#appointmentsView')?.classList.remove('hidden');
             renderStudentHeader();
             window.SchedulerRealtime?.init(state.config);
-            window.SchedulerRealtime?.subscribe(() => {
+            window.SchedulerRealtime?.subscribe((event) => {
                 if (!state.student) return;
                 loadBookings(false);
+                if (event?.bookingId && state.lastRescheduledId && event.bookingId === state.lastRescheduledId) {
+                    return;
+                }
                 refreshRescheduleAvailability();
             });
             await loadBookings();
