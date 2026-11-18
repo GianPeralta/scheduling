@@ -745,6 +745,10 @@
 
     function syncMemberControls() {
         const rows = Array.from(document.querySelectorAll('#memberList .member-row'));
+        const requiresAll = Boolean(state.consultationPurpose && getMeta().requiresAllMembers);
+        const savedMembers = Array.isArray(state.student?.members) && state.student.members.length
+            ? state.student.members.slice(0, MAX_MEMBERS)
+            : (state.student?.name ? [state.student.name] : []);
         rows.forEach((row, idx) => {
             const input = row.querySelector('input');
             input.placeholder = idx === 0
@@ -752,15 +756,20 @@
                 : `Member ${idx + 1} — full name`;
             const removeBtn = row.querySelector('.remove-member');
             const isSelf = idx === 0 && Boolean(state.student);
-            input.readOnly = isSelf;
+            const isLockedRegisteredMember = requiresAll && Boolean(state.student) && idx < savedMembers.length;
+            input.readOnly = isSelf || isLockedRegisteredMember;
             if (isSelf) input.value = state.student.name;
-            removeBtn.disabled = isSelf || rows.length <= MIN_MEMBERS;
+            else if (isLockedRegisteredMember) input.value = savedMembers[idx];
+            removeBtn.disabled = isSelf || isLockedRegisteredMember || rows.length <= MIN_MEMBERS;
             removeBtn.title = isSelf
                 ? 'You are always Member 1 on your booking'
-                : 'Remove member';
+                : isLockedRegisteredMember
+                    ? 'All registered group members are required for this schedule'
+                    : 'Remove member';
         });
         setText('#memberCount', `(${rows.length}/${MAX_MEMBERS})`);
-        $('#addMemberBtn')?.classList.toggle('hidden', rows.length >= MAX_MEMBERS);
+        const hideAddBtn = rows.length >= MAX_MEMBERS || (requiresAll && Boolean(state.student));
+        $('#addMemberBtn')?.classList.toggle('hidden', hideAddBtn);
     }
 
     function addMemberRow(initialValue = '', shouldFocus = false) {
@@ -782,7 +791,7 @@
         removeBtn.setAttribute('aria-label', 'Remove member');
         removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
         removeBtn.addEventListener('click', () => {
-            if (list.children.length <= MIN_MEMBERS) return;
+            if (removeBtn.disabled || list.children.length <= MIN_MEMBERS) return;
             row.remove();
             clearFieldError('#bookingMembersField');
             syncMemberControls();
@@ -1578,7 +1587,12 @@
                 setFieldError('#bookingMembersField', 'Each member needs a full name (at least 2 characters).', shortInput);
                 return;
             }
-            const members = inputs.map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS);
+            const savedMembers = Array.isArray(state.student?.members) && state.student.members.length
+                ? state.student.members.slice(0, MAX_MEMBERS)
+                : null;
+            const members = (meta.requiresAllMembers && savedMembers)
+                ? [...savedMembers]
+                : inputs.map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS);
             payload = {
                 type: 'group',
                 consultationType: state.consultationPurpose,
@@ -2416,6 +2430,15 @@
         }
         if (state.student.capstoneTitle && $('#teamInput') && !$('#teamInput').value.trim()) {
             $('#teamInput').value = state.student.capstoneTitle;
+        }
+        if (state.consultationPurpose && getMeta().requiresAllMembers) {
+            const savedMembers = Array.isArray(state.student.members) && state.student.members.length
+                ? state.student.members.slice(0, MAX_MEMBERS)
+                : [state.student.name];
+            const currentInputs = getMemberInputs();
+            if (currentInputs.length !== savedMembers.length) {
+                resetMembers();
+            }
         }
         updatePurposeUI();
         syncMemberControls();

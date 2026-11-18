@@ -2978,11 +2978,20 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         });
     }
 
+    const registeredMembers = (Array.isArray(student.members) && student.members.length ? student.members : [student.full_name])
+        .map(cleanName)
+        .filter(Boolean)
+        .slice(0, MAX_MEMBERS);
+    if (!registeredMembers.length) registeredMembers.push(student.full_name);
+    registeredMembers[0] = student.full_name;
+
     let members;
-    if (type === 'group') {
+    if (requiresAllMembers) {
+        // Mandatory all-member schedules always use the group's registered members
+        members = [...registeredMembers];
+    } else if (type === 'group') {
         const submittedMembers = (Array.isArray(body.members) ? body.members : []).map(cleanName).filter(Boolean);
-        const fallbackMembers = Array.isArray(student.members) && student.members.length ? student.members : [student.full_name];
-        members = submittedMembers.length ? submittedMembers : [...fallbackMembers];
+        members = submittedMembers.length ? submittedMembers : [...registeredMembers];
         // Member 1 is always the logged-in student (the person responsible for the booking)
         members[0] = student.full_name;
         if (members.length < MIN_MEMBERS) {
