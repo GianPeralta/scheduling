@@ -543,14 +543,16 @@ function computePickupEligibility(studentRow, appointmentRows = [], now = nowInT
         return r.appointment_date > now.date || end > now.minuteOfDay;
     };
 
+    const countsTowardNotification = (r) => isActiveRow(r) && r.status !== 'no_show';
+
     const latestRetrievalBookedAt = latestIsoTimestamp(
         ...(appointmentRows || [])
-            .filter((r) => isActiveRow(r) && r.consultation_type === 'retrieval')
+            .filter((r) => countsTowardNotification(r) && r.consultation_type === 'retrieval')
             .map((r) => r.created_at)
     );
     const latestLetterPickupBookedAt = latestIsoTimestamp(
         ...(appointmentRows || [])
-            .filter((r) => isActiveRow(r) && r.consultation_type === 'letter_pickup')
+            .filter((r) => countsTowardNotification(r) && r.consultation_type === 'letter_pickup')
             .map((r) => r.created_at)
     );
 
@@ -561,14 +563,17 @@ function computePickupEligibility(studentRow, appointmentRows = [], now = nowInT
         (r) => isUpcomingAppointment(r) && r.consultation_type === 'letter_pickup'
     );
 
-    const canBookRetrieval = Boolean(
+    const hasUnclaimedRetrievalNotification = Boolean(
         manuscriptNotifiedAt
         && (!latestRetrievalBookedAt || new Date(manuscriptNotifiedAt).getTime() > new Date(latestRetrievalBookedAt).getTime())
     );
-    const canBookLetterPickup = Boolean(
+    const hasUnclaimedLetterNotification = Boolean(
         letterNotifiedAt
         && (!latestLetterPickupBookedAt || new Date(letterNotifiedAt).getTime() > new Date(latestLetterPickupBookedAt).getTime())
     );
+
+    const canBookRetrieval = !hasUpcomingRetrieval && hasUnclaimedRetrievalNotification;
+    const canBookLetterPickup = !hasUpcomingLetterPickup && hasUnclaimedLetterNotification;
 
     return {
         manuscriptNotifiedAt,
@@ -577,8 +582,8 @@ function computePickupEligibility(studentRow, appointmentRows = [], now = nowInT
         canBookLetterPickup,
         hasUpcomingRetrieval,
         hasUpcomingLetterPickup,
-        retrievalAlreadyBookedForNotification: Boolean(manuscriptNotifiedAt && !canBookRetrieval),
-        letterPickupAlreadyBookedForNotification: Boolean(letterNotifiedAt && !canBookLetterPickup),
+        retrievalAlreadyBookedForNotification: Boolean(manuscriptNotifiedAt && !hasUnclaimedRetrievalNotification),
+        letterPickupAlreadyBookedForNotification: Boolean(letterNotifiedAt && !hasUnclaimedLetterNotification),
     };
 }
 
@@ -3112,17 +3117,25 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
                 error: 'You already have pending Manuscript Drop-offs scheduled.',
             });
         }
-    } else if (AUTH.maxActiveBookings > 0) {
-        const upcomingTimed = upcomingMine.filter(
-            (r) => isTimedRow(r) && r.consultation_type !== 'defense' && r.consultation_type !== 'letter_pickup'
-        );
-        if (upcomingTimed.length >= AUTH.maxActiveBookings) {
+    } else {
+        if (consultationType === 'retrieval' && upcomingMine.some((r) => r.consultation_type === 'retrieval')) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
-                error: AUTH.maxActiveBookings === 1
-                    ? 'You already have an upcoming timed consultation. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).'
-                    : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can reschedule or cancel one in My Appointments at least 2 hours before the schedule.`,
+                error: 'Your group already has an upcoming Retrieval of Manuscript scheduled. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).',
             });
+        }
+        if (AUTH.maxActiveBookings > 0) {
+            const upcomingTimed = upcomingMine.filter(
+                (r) => isTimedRow(r) && r.consultation_type !== 'defense' && r.consultation_type !== 'letter_pickup'
+            );
+            if (upcomingTimed.length >= AUTH.maxActiveBookings) {
+                return res.status(409).json({
+                    code: 'BOOKING_LIMIT',
+                    error: AUTH.maxActiveBookings === 1
+                        ? 'You already have an upcoming timed consultation. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).'
+                        : `You already have ${upcomingTimed.length} upcoming timed consultations (the limit is ${AUTH.maxActiveBookings}). You can reschedule or cancel one in My Appointments at least 2 hours before the schedule.`,
+                });
+            }
         }
     }
 

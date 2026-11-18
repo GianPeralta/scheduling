@@ -547,6 +547,7 @@
 
     function getPickupEligibilityDetails(purpose) {
         const active = (state.myBookings || []).filter((b) => b.status !== 'cancelled');
+        const counted = active.filter((b) => b.status !== 'no_show');
         const today = state.serverToday || state.config?.today || '';
         const curMin = state.serverCurrentMinute || 0;
         const isUpcoming = (b) => b.status === 'scheduled'
@@ -561,17 +562,18 @@
                     ...active.filter((b) => b.consultationType === 'dropoff' && b.notifiedAt).map((b) => b.notifiedAt),
                 ]);
             const bookedMs = latestMsFromList(
-                active.filter((b) => b.consultationType === 'retrieval').map((b) => b.createdAt)
+                counted.filter((b) => b.consultationType === 'retrieval').map((b) => b.createdAt)
             );
             const hasUpcoming = typeof elig?.hasUpcomingRetrieval === 'boolean'
                 ? elig.hasUpcomingRetrieval
                 : active.some((b) => b.consultationType === 'retrieval' && isUpcoming(b));
-            const canBook = elig
+            const hasUnclaimed = Boolean(notifiedMs !== null && (bookedMs === null || notifiedMs > bookedMs));
+            const canBook = !hasUpcoming && (elig
                 ? Boolean(elig.canBookRetrieval)
-                : Boolean(notifiedMs !== null && (bookedMs === null || notifiedMs > bookedMs));
+                : hasUnclaimed);
             const alreadyBooked = typeof elig?.retrievalAlreadyBookedForNotification === 'boolean'
                 ? elig.retrievalAlreadyBookedForNotification
-                : Boolean(!canBook && notifiedMs !== null);
+                : Boolean(!hasUnclaimed && notifiedMs !== null);
             return { canBook, alreadyBooked, hasUpcoming };
         }
 
@@ -584,17 +586,18 @@
                     ...active.filter((b) => b.consultationType === 'letter' && b.notifiedAt).map((b) => b.notifiedAt),
                 ]);
             const bookedMs = latestMsFromList(
-                active.filter((b) => b.consultationType === 'letter_pickup').map((b) => b.createdAt)
+                counted.filter((b) => b.consultationType === 'letter_pickup').map((b) => b.createdAt)
             );
             const hasUpcoming = typeof elig?.hasUpcomingLetterPickup === 'boolean'
                 ? elig.hasUpcomingLetterPickup
                 : active.some((b) => b.consultationType === 'letter_pickup' && isUpcoming(b));
-            const canBook = elig
+            const hasUnclaimed = Boolean(notifiedMs !== null && (bookedMs === null || notifiedMs > bookedMs));
+            const canBook = !hasUpcoming && (elig
                 ? Boolean(elig.canBookLetterPickup)
-                : Boolean(notifiedMs !== null && (bookedMs === null || notifiedMs > bookedMs));
+                : hasUnclaimed);
             const alreadyBooked = typeof elig?.letterPickupAlreadyBookedForNotification === 'boolean'
                 ? elig.letterPickupAlreadyBookedForNotification
-                : Boolean(!canBook && notifiedMs !== null);
+                : Boolean(!hasUnclaimed && notifiedMs !== null);
             return { canBook, alreadyBooked, hasUpcoming };
         }
 
