@@ -1637,12 +1637,39 @@ function computeStudentProfileDiff(current, next) {
     };
 }
 
+async function assertNoAdviserOnlyRoleConflict(studentId, nextInstructorRole) {
+    if (nextInstructorRole !== 'panel') return;
+    const now = nowInTz();
+    const { data, error } = await db()
+        .from(TABLE)
+        .select('id, appointment_date, start_minute, start_hour, duration_minutes, consultation_type, status')
+        .eq('student_id', studentId)
+        .eq('status', 'scheduled')
+        .in('consultation_type', ['letter', 'letter_pickup']);
+    if (error) throw error;
+
+    const hasUpcomingAdviserOnly = (data || []).some((r) => {
+        if (!isActiveRow(r) || r.appointment_date < now.date) return false;
+        const [, end] = rowInterval(r);
+        return r.appointment_date > now.date || end > now.minuteOfDay;
+    });
+    if (hasUpcomingAdviserOnly) {
+        throw httpError(
+            409,
+            `You cannot switch your instructor role to Panel Member while you have an upcoming Communication Letter appointment scheduled. Please cancel that appointment in My Appointments first.`,
+            { field: 'profileRole', code: 'ADVISER_APPOINTMENT_CONFLICT' }
+        );
+    }
+}
+
 async function applyStudentProfileUpdate(
     currentStudentRow,
     { name, email, capstoneTitle, instructorRole, projectLevel, members },
     { verifiedViaOtp = false } = {}
 ) {
     const studentId = currentStudentRow.id;
+    await assertNoAdviserOnlyRoleConflict(studentId, instructorRole);
+
     const normalizedMembers = Array.isArray(members) && members.length ? members : [name];
     const normalizedLevel = normalizeDefenseLevel(projectLevel);
     const diff = computeStudentProfileDiff(currentStudentRow, {
@@ -1738,24 +1765,54 @@ async function applyStudentProfileUpdate(
         }
     }
 
-    // Keep the student's appointments in sync with their updated email and group details
-    await db()
+    // Only sync profile metadata to upcoming scheduled appointments so completed/cancelled/no-show history is preserved
+    const now = nowInTz();
+    const { data: scheduledRows } = await db()
         .from(TABLE)
-        .update({
-            student_email: email,
-            student_name: name,
-            capstone_title: capstoneTitle,
-            team_name: capstoneTitle,
-            instructor_role: instructorRole,
-            members: normalizedMembers,
-        })
-        .eq('student_id', studentId);
-
-    await db()
-        .from(TABLE)
-        .update({ defense_level: normalizedLevel })
+        .select('id, appointment_date, start_minute, start_hour, duration_minutes, consultation_type, status')
         .eq('student_id', studentId)
-        .neq('consultation_type', 'defense');
+        .eq('status', 'scheduled');
+
+    const upcomingIds = (scheduledRows || [])
+        .filter((r) => {
+            if (!isActiveRow(r) || r.appointment_date < now.date) return false;
+            const [, end] = rowInterval(r);
+            return r.appointment_date > now.date || end > now.minuteOfDay;
+        })
+        .map((r) => r.id);
+
+    if (upcomingIds.length) {
+        await db()
+            .from(TABLE)
+            .update({
+                student_email: email,
+                student_name: name,
+                capstone_title: capstoneTitle,
+                team_name: capstoneTitle,
+                instructor_role: instructorRole,
+                members: normalizedMembers,
+            })
+            .in('id', upcomingIds)
+            .eq('status', 'scheduled');
+
+        await db()
+            .from(TABLE)
+            .update({ defense_level: normalizedLevel })
+            .in('id', upcomingIds)
+            .eq('status', 'scheduled')
+            .neq('consultation_type', 'defense');
+    }
+
+    // If the student verified a new email, also update student_email on any un-notified dropoff/letter row so pickup notifications reach them
+    if (email !== normalizeEmail(currentStudentRow.email)) {
+        await db()
+            .from(TABLE)
+            .update({ student_email: email })
+            .eq('student_id', studentId)
+            .neq('status', 'cancelled')
+            .in('consultation_type', ['dropoff', 'letter'])
+            .is('notified_at', null);
+    }
 
     return updated;
 }
@@ -1768,6 +1825,8 @@ async function handleStudentProfileUpdate(req, res) {
     }
 
     const { name, email, capstoneTitle, instructorRole, projectLevel, members } = validation.values;
+    await assertNoAdviserOnlyRoleConflict(student.id, instructorRole);
+
     const emailChanged = email !== normalizeEmail(student.email);
 
     if (emailChanged) {
@@ -1916,7 +1975,7 @@ app.get('/api/month', async (req, res) => {
     for (const r of data) {
         if (!isActiveRow(r)) continue;
         if (excludedRow && r.id === excludedRow.id) continue;
-        if (requesterId && r.student_id === requesterId && !isTimedRow(r)) {
+        if (requesterId && r.student_id === requesterId && (!r.status || r.status === 'scheduled') && !isTimedRow(r)) {
             studentDropoffDates.add(r.appointment_date);
         }
         if (!isTimedRow(r)) continue; // Cancelled & Drop-offs take 0 minutes off schedule
@@ -2044,7 +2103,7 @@ app.get('/api/slots', async (req, res) => {
         ? (data.find((r) => r.id === excludeBookingId && r.student_id === requesterId && isActiveRow(r)) || null)
         : null;
     const hasOtherStudentDropoff = Boolean(
-        requesterId && data.some((r) => r.student_id === requesterId && (!excludedRow || r.id !== excludedRow.id) && isActiveRow(r) && !isTimedRow(r))
+        requesterId && data.some((r) => r.student_id === requesterId && (!excludedRow || r.id !== excludedRow.id) && isActiveRow(r) && (!r.status || r.status === 'scheduled') && !isTimedRow(r))
     );
     const bookedIntervals = data
         .filter((r) => isActiveRow(r) && isTimedRow(r) && (!excludedRow || r.id !== excludedRow.id))
@@ -2606,15 +2665,24 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
     }
     if (!data) return res.status(404).json({ error: 'Appointment not found.' });
 
+    remindedAppointmentIds.delete(row.id);
+    remindedStudentAppointmentIds.delete(row.id);
+
+    const booking = toBooking(data, now, req.student);
+    const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
+        console.error('Failed to send student cancellation email:', err.message || err);
+    });
     const rtPromise = notifyRealtimeListeners({
         type: 'booking_cancelled',
         date: data.appointment_date,
         bookingId: data.id,
         by: 'student',
     });
-    if (process.env.VERCEL) await rtPromise;
+    if (process.env.VERCEL) {
+        await Promise.all([emailPromise, rtPromise]);
+    }
 
-    res.json({ ok: true, booking: toBooking(data, now, req.student) });
+    res.json({ ok: true, booking });
 });
 
 // Atomically swap a logged-in student's existing appointment to a new date/time in one transaction
@@ -2753,7 +2821,7 @@ async function handleStudentReschedule(req, res) {
 
     if (isDropoff) {
         const duplicateDropoff = existingRows.some(
-            (r) => r.id !== row.id && r.student_id === student.id && isActiveRow(r) && !isTimedRow(r)
+            (r) => r.id !== row.id && r.student_id === student.id && isActiveRow(r) && (!r.status || r.status === 'scheduled') && !isTimedRow(r)
         );
         if (duplicateDropoff) {
             return res.status(409).json({
@@ -2909,7 +2977,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
     const typeInfo = CONSULTATION_TYPES[consultationType];
     const isDefense = consultationType === 'defense';
     const defenseLevel = isDefense
-        ? (normalizeDefenseLevel(student.project_level) || normalizeDefenseLevel(body.defenseLevel) || 'capstone1')
+        ? (normalizeDefenseLevel(body.defenseLevel) || normalizeDefenseLevel(student.project_level) || 'capstone1')
         : null;
     const durationMinutes = isDefense ? DEFENSE_LEVELS[defenseLevel].durationMinutes : typeInfo.durationMinutes;
     const isDropoff = consultationType === 'dropoff';
@@ -4552,7 +4620,11 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '') {
         attachments: [
             {
                 filename: `consultation-${booking.reference.toLowerCase()}-cancelled.ics`,
-                content: buildBookingIcs(booking, { method: 'CANCEL', status: 'CANCELLED', sequence: 1 }),
+                content: buildBookingIcs(booking, {
+                    method: 'CANCEL',
+                    status: 'CANCELLED',
+                    sequence: (booking.rescheduledCount || 0) + 1,
+                }),
                 contentType: 'text/calendar; charset=utf-8; method=CANCEL',
             },
         ],
@@ -4690,26 +4762,48 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
                 info.result = 'sending';
             } else {
                 remindedAppointmentIds.add(r.id);
-                try {
-                    await sendTeacherReminderEmail(booking, minsUntil);
+                const sentAt = new Date().toISOString();
+                let claimedColumn = 'reminder_sent_at';
+                let claimRes = await db()
+                    .from(TABLE)
+                    .update({ reminder_sent_at: sentAt })
+                    .eq('id', r.id)
+                    .is('reminder_sent_at', null)
+                    .select('id')
+                    .maybeSingle();
 
-                    const sentAt = new Date().toISOString();
-                    const { error: updateErr } = await db()
+                if (claimRes.error && ['42703', 'PGRST204'].includes(claimRes.error.code) && !['dropoff', 'letter'].includes(r.consultation_type)) {
+                    claimedColumn = 'notified_at';
+                    claimRes = await db()
                         .from(TABLE)
-                        .update({ reminder_sent_at: sentAt })
-                        .eq('id', r.id);
+                        .update({ notified_at: sentAt })
+                        .eq('id', r.id)
+                        .is('notified_at', null)
+                        .select('id')
+                        .maybeSingle();
+                }
 
-                    if (updateErr && ['42703', 'PGRST204'].includes(updateErr.code) && !['dropoff', 'letter'].includes(r.consultation_type)) {
-                        await db().from(TABLE).update({ notified_at: sentAt }).eq('id', r.id);
-                    } else if (updateErr) {
-                        console.error(`Could not record reminder_sent_at for appointment ${r.id}:`, updateErr);
-                    }
-                    sentIds.push(r.id);
-                    info.result = 'sent';
-                } catch (err) {
+                if (claimRes.error) {
                     remindedAppointmentIds.delete(r.id);
-                    info.result = `send failed: ${err.message || err}`;
-                    console.error(`Failed to send 10-minute reminder for appointment ${r.id}:`, err);
+                    info.result = `claim failed: ${claimRes.error.message}`;
+                    console.error(`Could not claim ${claimedColumn} for appointment ${r.id}:`, claimRes.error);
+                } else if (!claimRes.data) {
+                    info.result = 'already sent';
+                } else {
+                    try {
+                        await sendTeacherReminderEmail(booking, minsUntil);
+                        sentIds.push(r.id);
+                        info.result = 'sent';
+                    } catch (err) {
+                        remindedAppointmentIds.delete(r.id);
+                        await db()
+                            .from(TABLE)
+                            .update({ [claimedColumn]: null })
+                            .eq('id', r.id)
+                            .eq(claimedColumn, sentAt);
+                        info.result = `send failed: ${err.message || err}`;
+                        console.error(`Failed to send 10-minute reminder for appointment ${r.id}:`, err);
+                    }
                 }
             }
 
@@ -4729,25 +4823,44 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
                     info.studentResult = 'sending';
                 } else {
                     remindedStudentAppointmentIds.add(r.id);
-                    try {
-                        await sendStudentReminderEmail(booking, minsUntil, siteOrigin);
-
-                        if (hasStudentReminderCol) {
-                            const sentAt = new Date().toISOString();
-                            const { error: stuUpdateErr } = await db()
-                                .from(TABLE)
-                                .update({ student_reminder_sent_at: sentAt })
-                                .eq('id', r.id);
-                            if (stuUpdateErr) {
-                                console.error(`Could not record student_reminder_sent_at for appointment ${r.id}:`, stuUpdateErr);
-                            }
+                    const stuSentAt = new Date().toISOString();
+                    let stuClaimed = true;
+                    if (hasStudentReminderCol) {
+                        const { data: stuClaimData, error: stuClaimErr } = await db()
+                            .from(TABLE)
+                            .update({ student_reminder_sent_at: stuSentAt })
+                            .eq('id', r.id)
+                            .is('student_reminder_sent_at', null)
+                            .select('id')
+                            .maybeSingle();
+                        if (stuClaimErr) {
+                            remindedStudentAppointmentIds.delete(r.id);
+                            info.studentResult = `claim failed: ${stuClaimErr.message}`;
+                            console.error(`Could not claim student_reminder_sent_at for appointment ${r.id}:`, stuClaimErr);
+                            stuClaimed = false;
+                        } else if (!stuClaimData) {
+                            info.studentResult = 'already sent';
+                            stuClaimed = false;
                         }
-                        studentSentIds.push(r.id);
-                        info.studentResult = 'sent';
-                    } catch (err) {
-                        remindedStudentAppointmentIds.delete(r.id);
-                        info.studentResult = `send failed: ${err.message || err}`;
-                        console.error(`Failed to send student reminder for appointment ${r.id}:`, err);
+                    }
+
+                    if (stuClaimed) {
+                        try {
+                            await sendStudentReminderEmail(booking, minsUntil, siteOrigin);
+                            studentSentIds.push(r.id);
+                            info.studentResult = 'sent';
+                        } catch (err) {
+                            remindedStudentAppointmentIds.delete(r.id);
+                            if (hasStudentReminderCol) {
+                                await db()
+                                    .from(TABLE)
+                                    .update({ student_reminder_sent_at: null })
+                                    .eq('id', r.id)
+                                    .eq('student_reminder_sent_at', stuSentAt);
+                            }
+                            info.studentResult = `send failed: ${err.message || err}`;
+                            console.error(`Failed to send student reminder for appointment ${r.id}:`, err);
+                        }
                     }
                 }
             }
@@ -4831,7 +4944,11 @@ app.use((err, req, res, next) => {
         });
     }
     if (err.retryAfter) res.set('Retry-After', String(err.retryAfter));
-    res.status(err.status || 500).json({ error: err.message || 'Something went wrong.' });
+    res.status(err.status || 500).json({
+        error: err.message || 'Something went wrong.',
+        ...(err.field ? { field: err.field } : {}),
+        ...(err.code ? { code: err.code } : {}),
+    });
 });
 
 // Background 30-second reminder poller (only for long-lived Node servers, not Vercel)

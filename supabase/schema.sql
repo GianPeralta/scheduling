@@ -365,11 +365,18 @@ begin
     v_reason := coalesce(nullif(btrim(p_new_reason), ''), v_row.reason);
 
     if v_duration = 0 then
-        if exists (
+        if not exists (
             select 1
-              from public.blocked_schedules
-             where blocked_date = p_new_date
-               and is_full_day
+              from generate_series(p_new_start_minute::int, (p_new_start_minute + 79)::int) as m
+             where not exists (
+                 select 1
+                   from public.blocked_schedules b
+                  where b.blocked_date = p_new_date
+                    and (
+                        b.is_full_day
+                        or (m >= b.start_minute and m < b.end_minute)
+                    )
+             )
         ) then
             raise exception 'The instructor is unavailable during that date/time.' using errcode = '23P01';
         end if;
@@ -378,7 +385,7 @@ begin
               from public.appointments
              where student_id = p_student_id
                and id <> p_appointment_id
-               and status <> 'cancelled'
+               and status = 'scheduled'
                and duration_minutes = 0
                and appointment_date = p_new_date
         ) then
