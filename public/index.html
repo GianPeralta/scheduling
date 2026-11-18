@@ -539,6 +539,38 @@
         </div>
     </div>
 
+    <!-- Prerequisite Gate Modal: Email Notification for Retrieval of Manuscript -->
+    <div class="modal-backdrop hidden" id="retrievalModal" role="dialog" aria-modal="true" aria-labelledby="retrievalModalTitle">
+        <div class="modal-card">
+            <div id="retrievalAskView" class="modal-body">
+                <h3 id="retrievalModalTitle">Manuscript Retrieval Check</h3>
+                <p class="muted">
+                    Have you already been <strong>notified through email</strong> that your manuscript is checked?
+                </p>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="retrievalYesBtn">
+                        Yes, I was notified by email
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-block" id="retrievalNoBtn">
+                        No, not yet
+                    </button>
+                </div>
+            </div>
+
+            <div id="retrievalNoView" class="modal-body hidden">
+                <h3>Wait for the email notification first</h3>
+                <p class="muted">
+                    Please wait until you are notified through your registered school email that your manuscript is checked, then return here to schedule.
+                </p>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="retrievalCloseBtn">
+                        Got it
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Student Profile Modal -->
     <div class="modal-backdrop hidden" id="myBookingsModal" role="dialog" aria-modal="true" aria-labelledby="myBookingsTitle">
         <div class="modal-card modal-profile">

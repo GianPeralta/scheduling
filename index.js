@@ -2578,6 +2578,15 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         }
     }
 
+    if (consultationType === 'retrieval') {
+        if (body.retrievalEmailConfirmed !== true) {
+            return res.status(400).json({
+                code: 'RETRIEVAL_EMAIL_REQUIRED',
+                error: 'Please wait until you are notified through email that your manuscript has been checked before scheduling a Retrieval of Manuscript.',
+            });
+        }
+    }
+
     let rawReason = String(body.reason ?? '').trim();
     if (!rawReason && consultationType === 'dropoff') {
         rawReason = 'Manuscript drop-off for checking.';

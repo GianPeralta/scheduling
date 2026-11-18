@@ -112,6 +112,7 @@
         defenseLevel: null, // 'capstone1' | 'capstone2' | 'thesis1' | 'thesis2' (only for defenses)
         defenseDay: null, // last /api/slots response for a defense date (windows + free ranges)
         beninsigConfirmed: false,
+        retrievalNotifiedConfirmed: false,
         bookingType: 'group', // 'individual' | 'group'
         monthRequest: 0,
         slotsRequest: 0,
@@ -421,6 +422,20 @@
         syncModalBodyLock();
     }
 
+    /* ---------------- Email notification prerequisite modal for Retrieval of Manuscript ---------------- */
+    function openRetrievalModal() {
+        $('#retrievalAskView').classList.remove('hidden');
+        $('#retrievalNoView').classList.add('hidden');
+        $('#retrievalModal').classList.remove('hidden');
+        syncModalBodyLock();
+        setTimeout(() => $('#retrievalYesBtn')?.focus(), 40);
+    }
+
+    function closeRetrievalModal() {
+        $('#retrievalModal').classList.add('hidden');
+        syncModalBodyLock();
+    }
+
     function onClickConsultationCard(purpose) {
         if (purpose === 'letter') {
             if (state.student?.instructorRole !== 'adviser') {
@@ -431,6 +446,10 @@
                 openBeninsigModal();
                 return;
             }
+        }
+        if (purpose === 'retrieval' && !state.retrievalNotifiedConfirmed) {
+            openRetrievalModal();
+            return;
         }
         proceedWithConsultationPurpose(purpose);
     }
@@ -1283,6 +1302,10 @@
                 return;
             }
         }
+        if (state.consultationPurpose === 'retrieval' && !state.retrievalNotifiedConfirmed) {
+            openRetrievalModal();
+            return;
+        }
         if (!state.selectedDate || !state.selectedSlot) {
             goToStep(2);
             return;
@@ -1320,6 +1343,7 @@
                 consultationType: state.consultationPurpose,
                 defenseLevel: state.consultationPurpose === 'defense' ? state.defenseLevel : undefined,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
+                retrievalEmailConfirmed: state.retrievalNotifiedConfirmed,
                 teamName,
                 members,
                 reason,
@@ -1332,6 +1356,7 @@
                 consultationType: state.consultationPurpose,
                 defenseLevel: state.consultationPurpose === 'defense' ? state.defenseLevel : undefined,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
+                retrievalEmailConfirmed: state.retrievalNotifiedConfirmed,
                 teamName,
                 reason,
                 date: state.selectedDate,
@@ -1378,6 +1403,9 @@
             } else if (err.code === 'BENINSIG_REQUIRED') {
                 state.beninsigConfirmed = false;
                 openBeninsigModal();
+            } else if (err.code === 'RETRIEVAL_EMAIL_REQUIRED') {
+                state.retrievalNotifiedConfirmed = false;
+                openRetrievalModal();
             } else if (err.field === 'teamName') {
                 setFieldError('#teamInput', err.message);
             } else if (err.field === 'members') {
@@ -1469,6 +1497,7 @@
         state.defenseLevel = isDefenseLevel(state.student?.projectLevel) ? state.student.projectLevel : null;
         state.defenseDay = null;
         state.beninsigConfirmed = false;
+        state.retrievalNotifiedConfirmed = false;
         state.selectedSlot = null;
         state.loadedMonthKey = null;
         state.loadedSlotsKey = null;
@@ -2091,11 +2120,13 @@
             state.profileBusy = false;
             closeMyBookingsModal();
             closeBeninsigModal();
+            closeRetrievalModal();
             $('#myAppointmentsLink')?.classList.add('hidden');
             $('#myBookingsBtn')?.classList.add('hidden');
             if ($('#teamInput')) $('#teamInput').value = '';
             state.consultationPurpose = null;
             state.beninsigConfirmed = false;
+            state.retrievalNotifiedConfirmed = false;
             state.selectedDate = null;
             state.selectedSlot = null;
             resetMembers();
@@ -2562,6 +2593,22 @@
             if (e.target.id === 'beninsigModal') closeBeninsigModal();
         });
 
+        // Retrieval of Manuscript email notification prerequisite modal events
+        $('#retrievalYesBtn')?.addEventListener('click', () => {
+            state.retrievalNotifiedConfirmed = true;
+            closeRetrievalModal();
+            proceedWithConsultationPurpose('retrieval');
+        });
+        $('#retrievalNoBtn')?.addEventListener('click', () => {
+            $('#retrievalAskView').classList.add('hidden');
+            $('#retrievalNoView').classList.remove('hidden');
+            $('#retrievalCloseBtn')?.focus();
+        });
+        $('#retrievalCloseBtn')?.addEventListener('click', closeRetrievalModal);
+        $('#retrievalModal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'retrievalModal') closeRetrievalModal();
+        });
+
         document.querySelectorAll('input[name="regLevel"]').forEach((r) => {
             r.addEventListener('change', () => clearFieldError('#regLevelField'));
         });
@@ -2604,6 +2651,7 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 closeBeninsigModal();
+                closeRetrievalModal();
                 closeMyBookingsModal();
             }
         });
