@@ -701,7 +701,11 @@
     function maxReschedMonthKeyForPurpose(purpose, config) {
         const lastBookable = config?.lastBookableDate || '2026-11-30';
         if (purpose === 'letter_pickup') {
-            return `${lastBookable.slice(0, 4)}-12`;
+            const decFallback = `${lastBookable.slice(0, 4)}-12`;
+            const latestPickupKey = config?.latestLetterPickupDate
+                ? config.latestLetterPickupDate.slice(0, 7)
+                : '';
+            return [lastBookable.slice(0, 7), decFallback, latestPickupKey].sort().pop() || decFallback;
         }
         return lastBookable.slice(0, 7);
     }
@@ -815,7 +819,7 @@
 
             if (loading) {
                 btn.disabled = true;
-            } else if ((purpose !== 'letter_pickup' && m !== 10) || !info || !info.bookable) {
+            } else if (!info || !info.bookable) {
                 if (ds === today) {
                     btn.setAttribute('aria-disabled', 'true');
                     btn.addEventListener('click', () => {
@@ -1610,6 +1614,12 @@
                     return;
                 }
                 if (!state.student) return;
+                if (event?.type === 'settings_updated' || event?.bookingEndDate || event?.type?.startsWith('letter_pickup_schedule')) {
+                    try {
+                        const freshConfig = await api('/api/config');
+                        if (freshConfig) state.config = freshConfig;
+                    } catch { /* ignore */ }
+                }
                 if (event?.type === 'student_updated') {
                     try {
                         const { student: fresh } = await api('/api/auth/me');

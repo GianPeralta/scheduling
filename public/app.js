@@ -663,7 +663,11 @@
         if (!state.config) return '';
         const lastBookable = state.config.lastBookableDate || `${state.config.today.slice(0, 4)}-11-30`;
         if (purpose === 'letter_pickup') {
-            return `${lastBookable.slice(0, 4)}-12`;
+            const decFallback = `${lastBookable.slice(0, 4)}-12`;
+            const latestPickupKey = state.config.latestLetterPickupDate
+                ? state.config.latestLetterPickupDate.slice(0, 7)
+                : '';
+            return [lastBookable.slice(0, 7), decFallback, latestPickupKey].sort().pop() || decFallback;
         }
         return lastBookable.slice(0, 7);
     }
@@ -898,7 +902,7 @@
 
             if (loading) {
                 btn.disabled = true;
-            } else if ((state.consultationPurpose !== 'letter_pickup' && m !== 10) || !info || !info.bookable) {
+            } else if (!info || !info.bookable) {
                 if (ds === config.today) {
                     btn.setAttribute('aria-disabled', 'true');
                     btn.addEventListener('click', () => {
@@ -3014,10 +3018,19 @@
         initAuth();
         loadCurrentStudent();
 
-        window.SchedulerRealtime?.subscribe((event) => {
+        window.SchedulerRealtime?.subscribe(async (event) => {
             if (event?.type === 'auth_changed' && event?.fromLocalTab) {
                 loadCurrentStudent();
                 return;
+            }
+            if (event?.type === 'settings_updated' || event?.bookingEndDate || event?.type?.startsWith('letter_pickup_schedule')) {
+                try {
+                    const freshConfig = await api('/api/config');
+                    state.config = freshConfig;
+                    if (freshConfig.lastBookableDate) {
+                        setText('#deadlineMeta', `Tue–Thu · Until ${formatShortDate(freshConfig.lastBookableDate)}`);
+                    }
+                } catch { /* ignore */ }
             }
             if (!state.student) return;
             if (event?.type === 'student_updated' && event?.fromLocalTab) {

@@ -39,6 +39,8 @@
         blockScope: 'full', // 'full' | 'time'
         blocking: false,
         savingLetterPickup: false,
+        savingCutoff: false,
+        bookingEndDate: '',
         sendingEmail: false,
         emailTemplate: 'manuscript_ready',
     };
@@ -159,11 +161,13 @@
         state.notesSaving = false;
         state.blocking = false;
         state.savingLetterPickup = false;
+        state.savingCutoff = false;
         state.sendingEmail = false;
         closeCancelModal();
         closeNotesModal();
         closeBlockModal();
         closeLetterPickupModal();
+        closeCutoffModal();
         closeSendEmailModal();
         state.bookings = [];
         state.blockedSchedules = [];
@@ -208,6 +212,7 @@
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
+            state.bookingEndDate = data.bookingEndDate || state.config?.lastBookableDate || `${data.today.slice(0, 4)}-11-30`;
             if (!$('#letterPickupScheduleModal')?.classList.contains('hidden')) {
                 renderLetterPickupModalList();
             }
@@ -227,7 +232,7 @@
                     state.notesTarget = updatedNotesTarget;
                 }
             }
-            $('#todayLabel').textContent = `Today is ${longDate(data.today)}`;
+            updateHeaderDates();
             render();
             return true;
         } catch (err) {
@@ -264,6 +269,132 @@
         if (!state.today) return true;
         return item.date > state.today || (item.date === state.today && (item.endMinute ?? 1440) > state.currentMinute);
     };
+
+    function updateHeaderDates() {
+        const todayText = state.today ? `Today is ${longDate(state.today)}` : '';
+        const cutoffText = state.bookingEndDate ? ` · Open until ${longDate(state.bookingEndDate)}` : '';
+        if ($('#todayLabel')) {
+            $('#todayLabel').textContent = `${todayText}${cutoffText}`;
+        }
+        if ($('#cutoffBtnLabel')) {
+            $('#cutoffBtnLabel').textContent = state.bookingEndDate
+                ? `Cutoff: ${shortDate(state.bookingEndDate)}`
+                : 'Booking Cutoff';
+        }
+    }
+
+    /* ---------------- booking cutoff date modal ---------------- */
+    function setCutoffError(msg) {
+        const errEl = $('#cutoffFormError');
+        if (!errEl) return;
+        errEl.textContent = msg || '';
+        errEl.classList.toggle('hidden', !msg);
+    }
+
+    function renderCutoffPresets() {
+        const wrap = $('#cutoffPresetChips');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        const year = Number((state.today || new Date().toISOString()).slice(0, 4)) || 2026;
+        const presets = [
+            { label: `Nov 30, ${year}`, date: `${year}-11-30` },
+            { label: `Dec 10, ${year}`, date: `${year}-12-10` },
+            { label: `Dec 18, ${year}`, date: `${year}-12-18` },
+            { label: `Dec 31, ${year}`, date: `${year}-12-31` },
+        ];
+        presets.forEach((p) => {
+            if (state.today && p.date < state.today) return;
+            const chip = el('button', 'reason-chip', p.label);
+            chip.type = 'button';
+            chip.addEventListener('click', () => {
+                const input = $('#bookingEndDateInput');
+                if (input) input.value = p.date;
+                setCutoffError('');
+            });
+            wrap.appendChild(chip);
+        });
+    }
+
+    function openCutoffModal() {
+        const current = state.bookingEndDate || state.config?.lastBookableDate || (state.today ? `${state.today.slice(0, 4)}-11-30` : '');
+        if ($('#cutoffCurrentText')) {
+            $('#cutoffCurrentText').textContent = current ? longDate(current) : '—';
+        }
+        const dateInput = $('#bookingEndDateInput');
+        if (dateInput) {
+            if (state.today) dateInput.min = state.today;
+            dateInput.value = current;
+        }
+        renderCutoffPresets();
+        setCutoffError('');
+        $('#cutoffModal')?.classList.remove('hidden');
+        syncModalBodyLock();
+        if (window.matchMedia('(hover: hover)').matches) {
+            setTimeout(() => dateInput?.focus(), 40);
+        }
+    }
+
+    function closeCutoffModal() {
+        if (state.savingCutoff) return;
+        $('#cutoffModal')?.classList.add('hidden');
+        syncModalBodyLock();
+        setCutoffError('');
+    }
+
+    async function submitCutoffForm(e) {
+        e.preventDefault();
+        if (state.savingCutoff) return;
+        setCutoffError('');
+
+        const date = ($('#bookingEndDateInput')?.value || '').trim();
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            setCutoffError('Please select a valid cutoff date.');
+            $('#bookingEndDateInput')?.focus();
+            return;
+        }
+        if (state.today && date < state.today) {
+            setCutoffError('The booking cutoff date must be today or a future date.');
+            $('#bookingEndDateInput')?.focus();
+            return;
+        }
+
+        state.savingCutoff = true;
+        const confirmBtn = $('#confirmCutoffBtn');
+        const cancelBtn = $('#cancelCutoffModalBtn');
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.querySelector('.spinner')?.classList.remove('hidden');
+            confirmBtn.querySelector('.btn-label').textContent = 'Saving…';
+        }
+        if (cancelBtn) cancelBtn.disabled = true;
+
+        try {
+            const { bookingEndDate } = await api('/api/admin/settings/booking-end-date', {
+                method: 'POST',
+                body: JSON.stringify({ bookingEndDate: date }),
+            });
+            state.bookingEndDate = bookingEndDate;
+            if (state.config) state.config.lastBookableDate = bookingEndDate;
+            updateHeaderDates();
+            state.savingCutoff = false;
+            closeCutoffModal();
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'settings_updated',
+                bookingEndDate,
+            });
+            toast(`Booking cutoff updated to ${longDate(bookingEndDate)}.`, 'success');
+        } catch (err) {
+            setCutoffError(err.message);
+        } finally {
+            state.savingCutoff = false;
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.querySelector('.spinner')?.classList.add('hidden');
+                confirmBtn.querySelector('.btn-label').textContent = 'Save cutoff date';
+            }
+            if (cancelBtn) cancelBtn.disabled = false;
+        }
+    }
 
     /* ---------------- block date / time modal ---------------- */
     function setBlockFormError(msg) {
@@ -2209,12 +2340,23 @@
     $('#letterPickupDateInput')?.addEventListener('input', () => setLetterPickupError(''));
     $('#letterPickupScheduleForm')?.addEventListener('submit', submitLetterPickupSchedule);
 
+    // Booking Cutoff Date modal bindings
+    $('#openCutoffModalBtn')?.addEventListener('click', () => openCutoffModal());
+    $('#closeCutoffModalBtn')?.addEventListener('click', closeCutoffModal);
+    $('#cancelCutoffModalBtn')?.addEventListener('click', closeCutoffModal);
+    $('#cutoffModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'cutoffModal') closeCutoffModal();
+    });
+    $('#bookingEndDateInput')?.addEventListener('input', () => setCutoffError(''));
+    $('#cutoffForm')?.addEventListener('submit', submitCutoffForm);
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeCancelModal();
             closeNotesModal();
             closeBlockModal();
             closeLetterPickupModal();
+            closeCutoffModal();
             closeSendEmailModal();
         }
     });

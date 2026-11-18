@@ -173,6 +173,10 @@ const CONFIG = {
 const TABLE = 'appointments';
 const BLOCKED_TABLE = 'blocked_schedules';
 const LETTER_PICKUP_TABLE = 'letter_pickup_schedules';
+const SETTINGS_TABLE = 'scheduler_settings';
+const BOOKING_END_DATE_KEY = 'booking_end_date';
+const BLOCKED_SETTING_SENTINEL_DATE = '1970-01-01';
+const BLOCKED_SETTING_PREFIX = '__SETTING_BOOKING_END_DATE__:';
 
 /* ------------------------------------------------------------------ */
 /* Supabase client                                                     */
@@ -310,6 +314,10 @@ function startServerRealtimeSubscription() {
                 );
             })
             .on('broadcast', { event: 'schedule_change' }, ({ payload }) => {
+                if (payload?.bookingEndDate && parseDate(payload.bookingEndDate)) {
+                    cachedBookingEndDate = payload.bookingEndDate;
+                    lastSettingsLoadedAt = Date.now();
+                }
                 notifyRealtimeListeners(payload || { type: 'broadcast' }, { fromSupabaseWs: true });
             });
 
@@ -858,12 +866,105 @@ function nowInTz() {
     };
 }
 
+let cachedBookingEndDate = (CONFIG.bookingEndDate && DATE_RE.test(CONFIG.bookingEndDate))
+    ? CONFIG.bookingEndDate
+    : null;
+let lastSettingsLoadedAt = 0;
+
+async function loadBookingEndDateSetting({ force = false } = {}) {
+    if (!force && lastSettingsLoadedAt && Date.now() - lastSettingsLoadedAt < 5000) {
+        return cachedBookingEndDate;
+    }
+    try {
+        const { data, error } = await db()
+            .from(SETTINGS_TABLE)
+            .select('value')
+            .eq('key', BOOKING_END_DATE_KEY)
+            .maybeSingle();
+        if (!error && data?.value && parseDate(String(data.value).trim())) {
+            cachedBookingEndDate = String(data.value).trim();
+            lastSettingsLoadedAt = Date.now();
+            return cachedBookingEndDate;
+        }
+        // Fallback: check sentinel row in blocked_schedules if scheduler_settings table hasn't been created yet
+        const { data: sentinelRows, error: bErr } = await db()
+            .from(BLOCKED_TABLE)
+            .select('reason, created_at')
+            .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
+            .like('reason', `${BLOCKED_SETTING_PREFIX}%`)
+            .order('created_at', { ascending: false })
+            .limit(1);
+        if (!bErr && Array.isArray(sentinelRows) && sentinelRows.length) {
+            const candidate = String(sentinelRows[0].reason || '').slice(BLOCKED_SETTING_PREFIX.length).trim();
+            if (parseDate(candidate)) {
+                cachedBookingEndDate = candidate;
+                lastSettingsLoadedAt = Date.now();
+                return cachedBookingEndDate;
+            }
+        }
+        lastSettingsLoadedAt = Date.now();
+    } catch {
+        // Ignore transient lookup errors and fall back to cached / default value
+    }
+    return cachedBookingEndDate;
+}
+
+async function saveBookingEndDateSetting(dateStr) {
+    const clean = String(dateStr || '').trim();
+    if (!parseDate(clean)) {
+        throw httpError(400, 'Please select a valid cutoff date (YYYY-MM-DD).', { field: 'bookingEndDateInput' });
+    }
+
+    const { error: settingsErr } = await db()
+        .from(SETTINGS_TABLE)
+        .upsert(
+            [{ key: BOOKING_END_DATE_KEY, value: clean, updated_at: new Date().toISOString() }],
+            { onConflict: 'key' }
+        );
+
+    if (settingsErr) {
+        if (['42P01', 'PGRST205'].includes(settingsErr.code)) {
+            await db()
+                .from(BLOCKED_TABLE)
+                .delete()
+                .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
+                .like('reason', `${BLOCKED_SETTING_PREFIX}%`);
+            const { error: fallbackErr } = await db()
+                .from(BLOCKED_TABLE)
+                .insert([{
+                    blocked_date: BLOCKED_SETTING_SENTINEL_DATE,
+                    is_full_day: true,
+                    start_minute: null,
+                    end_minute: null,
+                    reason: `${BLOCKED_SETTING_PREFIX}${clean}`,
+                }]);
+            if (fallbackErr) throw fallbackErr;
+        } else {
+            throw settingsErr;
+        }
+    } else {
+        // Clean up any legacy sentinel row if scheduler_settings succeeded
+        await db()
+            .from(BLOCKED_TABLE)
+            .delete()
+            .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
+            .like('reason', `${BLOCKED_SETTING_PREFIX}%`)
+            .catch(() => {});
+    }
+
+    cachedBookingEndDate = clean;
+    lastSettingsLoadedAt = Date.now();
+    return clean;
+}
+
 function getLastBookableDate(now = nowInTz()) {
-    const novEnd = `${now.date.slice(0, 4)}-11-30`;
-    if (CONFIG.bookingEndDate && CONFIG.bookingEndDate < novEnd) {
+    if (cachedBookingEndDate && parseDate(cachedBookingEndDate)) {
+        return cachedBookingEndDate;
+    }
+    if (CONFIG.bookingEndDate && parseDate(CONFIG.bookingEndDate)) {
         return CONFIG.bookingEndDate;
     }
-    return novEnd;
+    return `${now.date.slice(0, 4)}-11-30`;
 }
 
 function parseDate(str) {
@@ -989,7 +1090,6 @@ function isBookableDate(dateStr, now = nowInTz(), purpose = 'system', customWind
     const dt = parseDate(dateStr);
     if (!dt) return false;
     if (purpose !== 'letter_pickup') {
-        if (dt.getUTCMonth() !== 10) return false; // Only November (month index 10) is available for now
         if (dateStr > getLastBookableDate(now)) return false;
     }
     if (!windowsForDate(dateStr, purpose, customWindows).length) return false;
@@ -1126,7 +1226,7 @@ async function fetchBlockedByDateRange(first, last) {
         if (['42P01', 'PGRST205'].includes(error.code)) return [];
         throw error;
     }
-    return data || [];
+    return (data || []).filter((r) => !String(r.reason || '').startsWith(BLOCKED_SETTING_PREFIX));
 }
 
 async function fetchBlockedByDate(date) {
@@ -1138,7 +1238,7 @@ async function fetchBlockedByDate(date) {
         if (['42P01', 'PGRST205'].includes(error.code)) return [];
         throw error;
     }
-    return data || [];
+    return (data || []).filter((r) => !String(r.reason || '').startsWith(BLOCKED_SETTING_PREFIX));
 }
 
 /* ---------- Communication Letter Pickup Schedules ---------- */
@@ -1206,8 +1306,19 @@ async function fetchLetterPickupByDate(date) {
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
-app.get('/api/config', (req, res) => {
+app.get('/api/config', async (req, res) => {
     const now = nowInTz();
+    const [, latestPickupRes] = await Promise.all([
+        loadBookingEndDateSetting(),
+        db()
+            .from(LETTER_PICKUP_TABLE)
+            .select('available_date')
+            .order('available_date', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+            .catch(() => ({ data: null })),
+    ]);
+    const latestLetterPickupDate = latestPickupRes?.data?.available_date || null;
     res.json({
         teacherName: TEACHER_NAME,
         teacherEmail: TEACHER_EMAIL,
@@ -1219,6 +1330,7 @@ app.get('/api/config', (req, res) => {
         today: now.date,
         firstBookableDate: getFirstBookableDate(now),
         lastBookableDate: getLastBookableDate(now),
+        latestLetterPickupDate,
         allowedEmailDomains: AUTH.allowedDomains,
         maxActiveBookings: AUTH.maxActiveBookings,
         minGroupMembers: MIN_MEMBERS,
@@ -1954,6 +2066,7 @@ app.get('/api/month', async (req, res) => {
             .lte('appointment_date', last),
         fetchBlockedByDateRange(first, last),
         isLetterPickup ? fetchLetterPickupByDateRange(first, last) : Promise.resolve([]),
+        loadBookingEndDateSetting(),
     ]);
     if (error) return res.status(500).json({ error: error.message });
 
@@ -2086,7 +2199,10 @@ app.get('/api/slots', async (req, res) => {
     const level = isDefense ? (normalizeDefenseLevel(req.query.level) || 'capstone1') : null;
     const now = nowInTz();
 
-    const pickupRows = isLetterPickup ? await fetchLetterPickupByDate(date) : [];
+    const [pickupRows] = await Promise.all([
+        isLetterPickup ? fetchLetterPickupByDate(date) : Promise.resolve([]),
+        loadBookingEndDateSetting(),
+    ]);
     const customWindows = isLetterPickup ? normalizePickupWindows(pickupRows) : null;
 
     if (!isBookableDate(date, now, purpose, customWindows)) {
@@ -2769,6 +2885,8 @@ async function handleStudentReschedule(req, res) {
         }
     }
 
+    await loadBookingEndDateSetting();
+
     let slotStart;
     let slotEnd;
     if (isDefense) {
@@ -3098,6 +3216,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         });
     }
 
+    await loadBookingEndDateSetting();
+
     let slotStart;
     let slotEnd;
     if (isDefense) {
@@ -3374,6 +3494,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
             .select('*')
             .order('created_at', { ascending: false }),
         fetchStudentUpdateLogs(),
+        loadBookingEndDateSetting({ force: true }),
     ]);
     if (error) return res.status(500).json({ error: error.message });
 
@@ -3461,6 +3582,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         today: now.date,
         currentHour: now.hour,
         currentMinute: now.minuteOfDay,
+        bookingEndDate: getLastBookableDate(now),
         bookings,
         blockedSchedules,
         letterPickupSchedules,
@@ -3468,6 +3590,38 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         studentUpdateLogs: serializedLogs,
     });
 });
+
+async function handleAdminBookingEndDateUpdate(req, res) {
+    const rawDate = String(req.body?.bookingEndDate ?? req.body?.date ?? '').trim();
+    if (!parseDate(rawDate)) {
+        return res.status(400).json({
+            field: 'bookingEndDateInput',
+            error: 'Please select a valid cutoff date (YYYY-MM-DD).',
+        });
+    }
+    const now = nowInTz();
+    if (rawDate < now.date) {
+        return res.status(400).json({
+            field: 'bookingEndDateInput',
+            error: 'The booking cutoff date must be today or a future date.',
+        });
+    }
+
+    const bookingEndDate = await saveBookingEndDateSetting(rawDate);
+    const rtPromise = notifyRealtimeListeners({
+        type: 'settings_updated',
+        bookingEndDate,
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.json({
+        ok: true,
+        bookingEndDate,
+    });
+}
+
+app.post('/api/admin/settings/booking-end-date', requireAdmin, handleAdminBookingEndDateUpdate);
+app.put('/api/admin/settings/booking-end-date', requireAdmin, handleAdminBookingEndDateUpdate);
 
 // List all blocked dates / time ranges
 app.get('/api/admin/blocks', requireAdmin, async (req, res) => {

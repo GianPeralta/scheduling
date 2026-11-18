@@ -283,6 +283,18 @@ alter table public.letter_pickup_schedules enable row level security;
 
 
 -- ---------------------------------------------------------------------------
+-- Scheduler settings (e.g. configurable booking cutoff / end date from Admin UI)
+-- ---------------------------------------------------------------------------
+create table if not exists public.scheduler_settings (
+    key         text primary key,
+    value       text not null,
+    updated_at  timestamptz not null default now()
+);
+
+alter table public.scheduler_settings enable row level security;
+
+
+-- ---------------------------------------------------------------------------
 -- OPTIONAL: only needed if you keep using SUPABASE_ANON_KEY on the server
 -- instead of SUPABASE_SERVICE_ROLE_KEY. Uncomment and run.
 -- (The anon key stays on the server, but anyone who obtains it could then
@@ -313,6 +325,12 @@ begin
             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'letter_pickup_schedules'
         ) then
             alter publication supabase_realtime add table public.letter_pickup_schedules;
+        end if;
+        if not exists (
+            select 1 from pg_publication_tables
+            where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'scheduler_settings'
+        ) then
+            alter publication supabase_realtime add table public.scheduler_settings;
         end if;
     end if;
 exception when others then

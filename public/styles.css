@@ -3091,9 +3091,6 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         grid-template-columns: 1fr 1fr;
         gap: 8px;
     }
-    #openLetterPickupModalBtn {
-        grid-column: 1 / -1;
-    }
     .dash-actions .btn { min-height: 42px; width: 100%; }
 
     .stats {

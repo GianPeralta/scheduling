@@ -68,6 +68,10 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
                         Letter Pickup Schedule
                     </button>
+                    <button type="button" class="btn btn-ghost" id="openCutoffModalBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                        <span id="cutoffBtnLabel">Booking Cutoff</span>
+                    </button>
                     <span class="live-status-pill is-live" id="realtimeStatusPill" title="Dashboard updates automatically in real time">
                         <span class="live-dot"></span>
                         <span class="live-status-text">Live</span>
@@ -345,6 +349,48 @@
                 <span class="student-field-label">Configured Pickup Windows</span>
                 <div class="pickup-modal-list" id="letterPickupModalList"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- Booking Cutoff Date (Last Bookable Date) Modal -->
+    <div class="modal-backdrop hidden" id="cutoffModal" role="dialog" aria-modal="true" aria-labelledby="cutoffModalTitle">
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3 id="cutoffModalTitle">Booking Cutoff Date</h3>
+                <button type="button" class="icon-btn" id="closeCutoffModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="cutoffForm" novalidate>
+                <p class="muted small">
+                    Set the last date students are allowed to schedule consultations and defenses. Changes take effect immediately on the booking calendar.
+                </p>
+
+                <div class="cancel-target-summary">
+                    <span class="muted small">Current last bookable date</span>
+                    <strong id="cutoffCurrentText">—</strong>
+                </div>
+
+                <label class="field">
+                    <span>Last bookable date</span>
+                    <input type="date" id="bookingEndDateInput" required />
+                </label>
+
+                <div class="field">
+                    <span>Quick presets</span>
+                    <div class="quick-reason-chips" id="cutoffPresetChips"></div>
+                </div>
+
+                <div class="form-error hidden" id="cutoffFormError" role="alert"></div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelCutoffModalBtn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="confirmCutoffBtn">
+                        <span class="btn-label">Save cutoff date</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
