@@ -233,6 +233,87 @@
         </div>
     </div>
 
+    <!-- Consultation Notes, Revision Checklist & Attendance Modal -->
+    <div class="modal-backdrop hidden" id="notesModal" role="dialog" aria-modal="true" aria-labelledby="notesModalTitle">
+        <div class="modal-card modal-wide">
+            <div class="modal-head">
+                <h3 id="notesModalTitle">Consultation Notes &amp; Attendance</h3>
+                <button type="button" class="icon-btn" id="closeNotesModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="notesForm" novalidate>
+                <div class="cancel-target-summary" id="notesTargetSummary"></div>
+
+                <div class="prev-consultation-box hidden" id="notesPrevConsultationBox">
+                    <div class="prev-consultation-head">
+                        <strong id="notesPrevConsultationTitle">Last Consultation</strong>
+                        <span class="badge muted-badge" id="notesPrevConsultationStatus"></span>
+                    </div>
+                    <div id="notesPrevChecklistPreview"></div>
+                    <p class="prev-consultation-notes hidden" id="notesPrevNotesText"></p>
+                    <button type="button" class="btn btn-ghost btn-sm" id="copyPrevUnfinishedBtn">Copy unfinished items to this checklist</button>
+                </div>
+
+                <div class="field">
+                    <span>Consultation outcome</span>
+                    <div class="segmented notes-status-segmented" role="radiogroup" aria-label="Consultation outcome">
+                        <label>
+                            <input type="radio" name="notesStatus" value="scheduled" checked />
+                            <span>Scheduled</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="notesStatus" value="completed" />
+                            <span>Completed</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="notesStatus" value="no_show" />
+                            <span>No-Show</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="field" id="notesAttendanceSection">
+                    <div class="notes-section-head">
+                        <span>Member attendance</span>
+                        <div class="notes-quick-actions">
+                            <button type="button" class="link-btn" id="markAllPresentBtn">Mark all present</button>
+                            <span class="muted">·</span>
+                            <button type="button" class="link-btn" id="markAllAbsentBtn">Clear all</button>
+                        </div>
+                    </div>
+                    <small class="muted field-hint" id="notesAttendanceRuleHint"></small>
+                    <div class="attendance-toggle-list" id="notesAttendanceList"></div>
+                </div>
+
+                <div class="field" id="notesChecklistSection">
+                    <span>Revision Action Items</span>
+                    <div class="checklist-add-row">
+                        <input type="text" id="notesChecklistInput" maxlength="300" placeholder="Add an action item to fix (e.g. Fix ERD cardinality, update Chapter 2 RRL)…" />
+                        <button type="button" class="btn btn-primary-soft btn-sm" id="addChecklistItemBtn">Add item</button>
+                    </div>
+                    <div class="revision-checklist" id="notesChecklistList"></div>
+                </div>
+
+                <label class="field">
+                    <span>Consultation Notes / Revision Summary <small class="muted">(optional)</small></span>
+                    <textarea id="revisionNotesInput" rows="3" maxlength="2000" placeholder="Overall feedback, remarks, or instructions for next consultation…"></textarea>
+                    <small class="counter"><span id="revisionNotesCount">0</span>/2000</small>
+                </label>
+
+                <div class="form-error hidden" id="notesFormError" role="alert"></div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelNotesModalBtn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="saveNotesBtn">
+                        <span class="btn-label">Save notes &amp; attendance</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <footer class="footer">
         <p>© <span id="year"></span>Consultation dashboard</p>
     </footer>

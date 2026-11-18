@@ -30,6 +30,10 @@
         loadReqId: 0,
         cancelTarget: null,
         cancelling: false,
+        notesTarget: null,
+        notesSaving: false,
+        notesDraftChecklist: [],
+        notesDraftAttended: new Set(),
         blockScope: 'full', // 'full' | 'time'
         blocking: false,
     };
@@ -147,8 +151,10 @@
         sessionStorage.removeItem(STORAGE_KEY);
         state.password = '';
         state.cancelling = false;
+        state.notesSaving = false;
         state.blocking = false;
         closeCancelModal();
+        closeNotesModal();
         closeBlockModal();
         state.bookings = [];
         state.blockedSchedules = [];
@@ -197,6 +203,14 @@
                     state.cancelTarget = updatedTarget;
                 }
             }
+            if (state.notesTarget && !state.notesSaving) {
+                const updatedNotesTarget = state.bookings.find((x) => x.id === state.notesTarget.id);
+                if (!updatedNotesTarget || isCancelled(updatedNotesTarget)) {
+                    closeNotesModal();
+                } else {
+                    state.notesTarget = updatedNotesTarget;
+                }
+            }
             $('#todayLabel').textContent = `Today is ${longDate(data.today)}`;
             render();
             return true;
@@ -213,12 +227,15 @@
     }
 
     const isCancelled = (b) => b.status === 'cancelled';
+    const isCompleted = (b) => b.status === 'completed';
+    const isNoShow = (b) => b.status === 'no_show';
     const isPast = (b) => {
+        if (isCompleted(b) || isNoShow(b)) return true;
         const endMin = b.endMinute ?? (b.hour + 1) * 60;
         return b.date < state.today || (b.date === state.today && endMin <= state.currentMinute);
     };
     const isNow = (b) => {
-        if (isCancelled(b)) return false;
+        if (isCancelled(b) || isCompleted(b) || isNoShow(b)) return false;
         const startMin = b.startMinute ?? b.hour * 60;
         const endMin = b.endMinute ?? (b.hour + 1) * 60;
         return b.date === state.today && state.currentMinute >= startMin && state.currentMinute < endMin;
@@ -485,6 +502,409 @@
         thesis2: 'Thesis 2',
     };
 
+    /* ---------------- consultation notes, revision checklist & attendance ---------------- */
+    function bookingStudentKey(b) {
+        return b.studentId || (b.studentEmail ? b.studentEmail.toLowerCase() : '');
+    }
+
+    function compareBookingsChrono(a, b) {
+        return a.date.localeCompare(b.date)
+            || (a.startMinute ?? (a.hour || 0) * 60) - (b.startMinute ?? (b.hour || 0) * 60)
+            || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+    }
+
+    function findPreviousConsultation(b) {
+        if (!b || isCancelled(b)) return null;
+        const key = bookingStudentKey(b);
+        if (!key) return b.previousConsultation || null;
+
+        const earlier = state.bookings
+            .filter((x) => x.id !== b.id && !isCancelled(x) && bookingStudentKey(x) === key && compareBookingsChrono(x, b) < 0)
+            .sort(compareBookingsChrono);
+
+        if (!earlier.length) return b.previousConsultation || null;
+
+        let lastWithRevisions = null;
+        for (const prev of earlier) {
+            const hasRevisions = (Array.isArray(prev.revisionChecklist) && prev.revisionChecklist.length > 0)
+                || Boolean(prev.revisionNotes);
+            if (hasRevisions) lastWithRevisions = prev;
+        }
+        if (lastWithRevisions) return lastWithRevisions;
+
+        const immediatePrev = earlier[earlier.length - 1];
+        const hasOutcome = isCompleted(immediatePrev)
+            || isNoShow(immediatePrev)
+            || (Array.isArray(immediatePrev.attendedMembers) && immediatePrev.attendedMembers.length > 0);
+        return hasOutcome ? immediatePrev : (b.previousConsultation || null);
+    }
+
+    function requiredAttendanceSummary(b) {
+        const members = Array.isArray(b.members) && b.members.length ? b.members : [b.name].filter(Boolean);
+        const total = members.length || 1;
+        if (b.consultationType === 'system' || b.consultationType === 'defense') {
+            return { required: total, hint: 'All group members are required to be present.' };
+        }
+        if (b.consultationType === 'retrieval') {
+            const minReq = total >= 2 ? 2 : 1;
+            return {
+                required: minReq,
+                hint: total >= 2
+                    ? 'At least 2 or all group members are required to be present.'
+                    : 'Member presence is required.',
+            };
+        }
+        return { required: 1, hint: 'Track which members attended this session.' };
+    }
+
+    function applyUpdatedBooking(target, updated) {
+        if (!target || !updated) return;
+        const preservedPrev = target.previousConsultation;
+        Object.assign(target, updated);
+        if (!updated.previousConsultation && preservedPrev) {
+            target.previousConsultation = preservedPrev;
+        }
+    }
+
+    async function toggleCardMemberAttendance(b, memberName, chipBtn) {
+        if (!b || isCancelled(b)) return;
+        const members = Array.isArray(b.members) && b.members.length ? b.members : [b.name].filter(Boolean);
+        const currentSet = new Set(Array.isArray(b.attendedMembers) ? b.attendedMembers : []);
+        if (currentSet.has(memberName)) currentSet.delete(memberName);
+        else currentSet.add(memberName);
+        const nextAttended = members.filter((m) => currentSet.has(m));
+        if (chipBtn) chipBtn.disabled = true;
+        try {
+            const { booking } = await api(`/api/admin/bookings/${b.id}/notes`, {
+                method: 'PATCH',
+                body: JSON.stringify({ attendedMembers: nextAttended }),
+            });
+            applyUpdatedBooking(b, booking);
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'booking_notes_updated',
+                bookingId: b.id,
+                date: b.date,
+            });
+            render();
+        } catch (err) {
+            if (chipBtn) chipBtn.disabled = false;
+            toast(err.message, 'error');
+        }
+    }
+
+    async function toggleChecklistItem(targetBooking, itemId, done, checkboxEl) {
+        if (!targetBooking || isCancelled(targetBooking)) return;
+        const prevChecklist = Array.isArray(targetBooking.revisionChecklist)
+            ? targetBooking.revisionChecklist.map((item) => ({ ...item }))
+            : [];
+        const nextChecklist = prevChecklist.map((item) =>
+            item.id === itemId ? { ...item, done: Boolean(done) } : item
+        );
+        if (checkboxEl) checkboxEl.disabled = true;
+        try {
+            const { booking } = await api(`/api/admin/bookings/${targetBooking.id}/notes`, {
+                method: 'PATCH',
+                body: JSON.stringify({ revisionChecklist: nextChecklist }),
+            });
+            applyUpdatedBooking(targetBooking, booking);
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'booking_notes_updated',
+                bookingId: targetBooking.id,
+                date: targetBooking.date,
+            });
+            render();
+        } catch (err) {
+            if (checkboxEl) {
+                checkboxEl.checked = !done;
+                checkboxEl.disabled = false;
+            }
+            toast(err.message, 'error');
+        }
+    }
+
+    function buildChecklistElement(targetBooking, items) {
+        const list = el('div', 'revision-checklist');
+        items.forEach((item) => {
+            const row = el('label', 'revision-check-item' + (item.done ? ' is-done' : ''));
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = Boolean(item.done);
+            cb.addEventListener('change', () => toggleChecklistItem(targetBooking, item.id, cb.checked, cb));
+            const textSpan = el('span', '', item.text);
+            row.append(cb, textSpan);
+            list.appendChild(row);
+        });
+        return list;
+    }
+
+    function setNotesFormError(msg) {
+        const errEl = $('#notesFormError');
+        if (!errEl) return;
+        errEl.textContent = msg || '';
+        errEl.classList.toggle('hidden', !msg);
+    }
+
+    function renderNotesAttendanceList() {
+        const container = $('#notesAttendanceList');
+        const b = state.notesTarget;
+        if (!container || !b) return;
+        container.innerHTML = '';
+        const members = Array.isArray(b.members) && b.members.length ? b.members : [b.name].filter(Boolean);
+        members.forEach((memberName, idx) => {
+            const isPresent = state.notesDraftAttended.has(memberName);
+            const btn = el('button', 'attendance-toggle-btn' + (isPresent ? ' is-present' : ''));
+            btn.type = 'button';
+            btn.setAttribute('aria-pressed', isPresent ? 'true' : 'false');
+            const nameText = idx === 0 && members.length > 1 ? `${memberName} (Rep)` : memberName;
+            btn.appendChild(el('span', 'attendance-toggle-mark', isPresent ? '✓' : ''));
+            btn.appendChild(el('span', 'attendance-toggle-name', nameText));
+            btn.appendChild(el('span', 'attendance-toggle-state', isPresent ? 'Present' : 'Absent'));
+            btn.addEventListener('click', () => {
+                if (state.notesDraftAttended.has(memberName)) state.notesDraftAttended.delete(memberName);
+                else state.notesDraftAttended.add(memberName);
+                renderNotesAttendanceList();
+            });
+            container.appendChild(btn);
+        });
+    }
+
+    function renderNotesChecklistList() {
+        const container = $('#notesChecklistList');
+        if (!container) return;
+        container.innerHTML = '';
+        if (!state.notesDraftChecklist.length) {
+            container.appendChild(el('p', 'muted small checklist-empty-hint', 'No action items added yet.'));
+            return;
+        }
+        state.notesDraftChecklist.forEach((item, idx) => {
+            const row = el('div', 'revision-check-item revision-check-editable' + (item.done ? ' is-done' : ''));
+            const label = el('label', 'revision-check-label');
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = Boolean(item.done);
+            cb.addEventListener('change', () => {
+                state.notesDraftChecklist[idx].done = cb.checked;
+                renderNotesChecklistList();
+            });
+            label.append(cb, el('span', '', item.text));
+
+            const removeBtn = el('button', 'icon-btn checklist-remove-btn');
+            removeBtn.type = 'button';
+            removeBtn.setAttribute('aria-label', 'Remove item');
+            removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+            removeBtn.addEventListener('click', () => {
+                state.notesDraftChecklist.splice(idx, 1);
+                renderNotesChecklistList();
+            });
+
+            row.append(label, removeBtn);
+            container.appendChild(row);
+        });
+    }
+
+    function addDraftChecklistItem() {
+        const input = $('#notesChecklistInput');
+        if (!input) return;
+        const text = input.value.trim();
+        if (!text) {
+            input.focus();
+            return;
+        }
+        if (state.notesDraftChecklist.length >= 30) {
+            setNotesFormError('You can add up to 30 revision action items per consultation.');
+            return;
+        }
+        setNotesFormError('');
+        const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `item-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+        state.notesDraftChecklist.push({ id, text: text.slice(0, 300), done: false });
+        input.value = '';
+        renderNotesChecklistList();
+        input.focus();
+    }
+
+    function copyPrevUnfinishedToDraft() {
+        if (!state.notesTarget) return;
+        const prev = findPreviousConsultation(state.notesTarget);
+        const items = Array.isArray(prev?.revisionChecklist) ? prev.revisionChecklist : [];
+        const unfinished = items.filter((it) => !it.done);
+        if (!unfinished.length) return;
+
+        const existingTexts = new Set(state.notesDraftChecklist.map((it) => it.text.trim().toLowerCase()));
+        let added = 0;
+        for (const it of unfinished) {
+            if (state.notesDraftChecklist.length >= 30) break;
+            const norm = String(it.text || '').trim().toLowerCase();
+            if (!norm || existingTexts.has(norm)) continue;
+            existingTexts.add(norm);
+            const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : `item-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+            state.notesDraftChecklist.push({ id, text: String(it.text).trim().slice(0, 300), done: false });
+            added += 1;
+        }
+        renderNotesChecklistList();
+        toast(added > 0 ? `Copied ${added} unfinished item${added === 1 ? '' : 's'}.` : 'All unfinished items are already in this checklist.', 'info');
+    }
+
+    function openNotesModal(b) {
+        state.notesTarget = b;
+        const title = b.capstoneTitle || b.teamName || b.name;
+        const summary = $('#notesTargetSummary');
+        if (summary) {
+            summary.innerHTML = '';
+            summary.appendChild(el('strong', '', title));
+            summary.appendChild(el('span', 'muted small', `${b.consultationTitle || 'Consultation'} · ${longDate(b.date)} · ${b.label}`));
+        }
+
+        const prevBox = $('#notesPrevConsultationBox');
+        const prev = findPreviousConsultation(b);
+        const hasPrevRevisions = Boolean(
+            prev && ((Array.isArray(prev.revisionChecklist) && prev.revisionChecklist.length > 0) || prev.revisionNotes)
+        );
+        if (prevBox) {
+            if (hasPrevRevisions) {
+                prevBox.classList.remove('hidden');
+                $('#notesPrevConsultationTitle').textContent = `Last Consultation: ${prev.consultationTitle || 'Consultation'} (${shortDate(prev.date)})`;
+                const prevItems = Array.isArray(prev.revisionChecklist) ? prev.revisionChecklist : [];
+                const doneCount = prevItems.filter((it) => it.done).length;
+                const statusEl = $('#notesPrevConsultationStatus');
+                if (statusEl) {
+                    if (prevItems.length) {
+                        statusEl.textContent = `${doneCount}/${prevItems.length} fixed`;
+                        statusEl.className = `badge ${doneCount === prevItems.length ? 'teal' : 'amber'}`;
+                    } else if (isNoShow(prev)) {
+                        statusEl.textContent = 'No-Show';
+                        statusEl.className = 'badge danger';
+                    } else {
+                        statusEl.textContent = isCompleted(prev) ? 'Completed' : 'Recorded';
+                        statusEl.className = 'badge muted-badge';
+                    }
+                }
+                const previewWrap = $('#notesPrevChecklistPreview');
+                if (previewWrap) {
+                    previewWrap.innerHTML = '';
+                    if (prevItems.length) {
+                        const ul = el('ul', 'prev-checklist-preview');
+                        prevItems.forEach((it) => {
+                            const li = el('li', it.done ? 'is-done' : '', `${it.done ? '✓' : '○'} ${it.text}`);
+                            ul.appendChild(li);
+                        });
+                        previewWrap.appendChild(ul);
+                    }
+                }
+                const prevNotesEl = $('#notesPrevNotesText');
+                if (prevNotesEl) {
+                    prevNotesEl.textContent = prev.revisionNotes || '';
+                    prevNotesEl.classList.toggle('hidden', !prev.revisionNotes);
+                }
+                const hasUnfinished = prevItems.some((it) => !it.done);
+                $('#copyPrevUnfinishedBtn')?.classList.toggle('hidden', !hasUnfinished);
+            } else {
+                prevBox.classList.add('hidden');
+            }
+        }
+
+        const currentStatus = ['scheduled', 'completed', 'no_show'].includes(b.status) ? b.status : 'scheduled';
+        document.querySelectorAll('input[name="notesStatus"]').forEach((r) => {
+            r.checked = r.value === currentStatus;
+        });
+
+        state.notesDraftAttended = new Set(Array.isArray(b.attendedMembers) ? b.attendedMembers : []);
+        const ruleInfo = requiredAttendanceSummary(b);
+        if ($('#notesAttendanceRuleHint')) $('#notesAttendanceRuleHint').textContent = ruleInfo.hint;
+        renderNotesAttendanceList();
+
+        state.notesDraftChecklist = Array.isArray(b.revisionChecklist)
+            ? b.revisionChecklist.map((it) => ({ ...it }))
+            : [];
+        if ($('#notesChecklistInput')) $('#notesChecklistInput').value = '';
+        renderNotesChecklistList();
+
+        const notesInput = $('#revisionNotesInput');
+        if (notesInput) {
+            notesInput.value = b.revisionNotes || '';
+            if ($('#revisionNotesCount')) $('#revisionNotesCount').textContent = String(notesInput.value.length);
+        }
+
+        setNotesFormError('');
+        $('#notesModal')?.classList.remove('hidden');
+        syncModalBodyLock();
+    }
+
+    function closeNotesModal() {
+        if (state.notesSaving) return;
+        state.notesTarget = null;
+        $('#notesModal')?.classList.add('hidden');
+        syncModalBodyLock();
+        setNotesFormError('');
+    }
+
+    async function submitNotesForm(e) {
+        e.preventDefault();
+        if (state.notesSaving || !state.notesTarget) return;
+        setNotesFormError('');
+
+        const pendingItemText = ($('#notesChecklistInput')?.value || '').trim();
+        if (pendingItemText && state.notesDraftChecklist.length < 30) {
+            const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : `item-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+            state.notesDraftChecklist.push({ id, text: pendingItemText.slice(0, 300), done: false });
+            if ($('#notesChecklistInput')) $('#notesChecklistInput').value = '';
+        }
+
+        const b = state.notesTarget;
+        const members = Array.isArray(b.members) && b.members.length ? b.members : [b.name].filter(Boolean);
+        const status = document.querySelector('input[name="notesStatus"]:checked')?.value || 'scheduled';
+        const attendedMembers = members.filter((m) => state.notesDraftAttended.has(m));
+        const revisionNotes = ($('#revisionNotesInput')?.value || '').trim();
+        const revisionChecklist = state.notesDraftChecklist.map((it) => ({ ...it }));
+
+        state.notesSaving = true;
+        const saveBtn = $('#saveNotesBtn');
+        const cancelBtn = $('#cancelNotesModalBtn');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.querySelector('.spinner')?.classList.remove('hidden');
+            saveBtn.querySelector('.btn-label').textContent = 'Saving…';
+        }
+        if (cancelBtn) cancelBtn.disabled = true;
+
+        try {
+            const { booking } = await api(`/api/admin/bookings/${b.id}/notes`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    status,
+                    attendedMembers,
+                    revisionNotes,
+                    revisionChecklist,
+                }),
+            });
+            applyUpdatedBooking(b, booking);
+            state.notesSaving = false;
+            closeNotesModal();
+            render();
+            window.SchedulerRealtime?.notifyLocal({
+                type: 'booking_notes_updated',
+                bookingId: b.id,
+                date: b.date,
+            });
+            toast('Consultation notes and attendance saved.', 'success');
+        } catch (err) {
+            setNotesFormError(err.message);
+        } finally {
+            state.notesSaving = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.querySelector('.spinner')?.classList.add('hidden');
+                saveBtn.querySelector('.btn-label').textContent = 'Save notes & attendance';
+            }
+            if (cancelBtn) cancelBtn.disabled = false;
+        }
+    }
+
     function matchesSearch(b, q) {
         if (!q) return true;
         if (b.name && b.name.toLowerCase().includes(q)) return true;
@@ -498,6 +918,9 @@
         if (Array.isArray(b.members) && b.members.some((m) => m.toLowerCase().includes(q))) return true;
         if (b.reason && b.reason.toLowerCase().includes(q)) return true;
         if (b.cancellationReason && b.cancellationReason.toLowerCase().includes(q)) return true;
+        if (b.status && (b.status.toLowerCase().includes(q) || b.status.replace('_', '-').toLowerCase().includes(q))) return true;
+        if (b.revisionNotes && b.revisionNotes.toLowerCase().includes(q)) return true;
+        if (Array.isArray(b.revisionChecklist) && b.revisionChecklist.some((item) => item.text && item.text.toLowerCase().includes(q))) return true;
         if (b.reference && b.reference.toLowerCase().includes(q)) return true;
         if (b.studentEmail && b.studentEmail.toLowerCase().includes(q)) return true;
         return false;
@@ -695,6 +1118,19 @@
             if (editCount > 0) {
                 badges.appendChild(el('span', 'badge violet', `${editCount} edit${editCount === 1 ? '' : 's'}`));
             }
+            const latestRevisionBooking = studentBookings
+                .filter((b) => !isCancelled(b) && ((Array.isArray(b.revisionChecklist) && b.revisionChecklist.length > 0) || b.revisionNotes))
+                .sort(compareBookingsChrono)
+                .pop();
+            if (latestRevisionBooking) {
+                const revItems = Array.isArray(latestRevisionBooking.revisionChecklist) ? latestRevisionBooking.revisionChecklist : [];
+                const pendingRevCount = revItems.filter((it) => !it.done).length;
+                if (pendingRevCount > 0) {
+                    badges.appendChild(el('span', 'badge amber', `${pendingRevCount} revision${pendingRevCount === 1 ? '' : 's'} pending`));
+                } else if (revItems.length > 0) {
+                    badges.appendChild(el('span', 'badge teal', 'Revisions done ✓'));
+                }
+            }
             top.appendChild(badges);
 
             const projectTitle = el('h3', 'student-project-title', s.capstoneTitle || 'Untitled Project');
@@ -709,6 +1145,24 @@
             });
             membersSection.appendChild(membersWrap);
             card.appendChild(membersSection);
+
+            if (latestRevisionBooking) {
+                const revBox = el('div', 'student-card-log-box student-card-revision-box');
+                const revTitle = `Revision items (${shortDate(latestRevisionBooking.date)}):`;
+                revBox.appendChild(el('span', 'student-field-label', revTitle));
+                const revItems = Array.isArray(latestRevisionBooking.revisionChecklist) ? latestRevisionBooking.revisionChecklist : [];
+                const pendingItems = revItems.filter((it) => !it.done);
+                if (pendingItems.length) {
+                    const summaryText = pendingItems.slice(0, 2).map((it) => `• ${it.text}`).join('  ')
+                        + (pendingItems.length > 2 ? ` (+${pendingItems.length - 2} more)` : '');
+                    revBox.appendChild(el('p', 'small', summaryText));
+                } else if (latestRevisionBooking.revisionNotes) {
+                    revBox.appendChild(el('p', 'muted small', latestRevisionBooking.revisionNotes));
+                } else if (revItems.length) {
+                    revBox.appendChild(el('p', 'muted small', `All ${revItems.length} action item${revItems.length === 1 ? '' : 's'} completed.`));
+                }
+                card.appendChild(revBox);
+            }
 
             if (editCount > 0) {
                 const latestLog = s.changeHistory[0];
@@ -894,6 +1348,10 @@
 
                 if (isCancelled(b)) {
                     header.appendChild(el('span', 'badge danger', 'Cancelled'));
+                } else if (isCompleted(b)) {
+                    header.appendChild(el('span', 'badge teal', 'Completed ✓'));
+                } else if (isNoShow(b)) {
+                    header.appendChild(el('span', 'badge danger', 'No-Show'));
                 }
 
                 const typeBadge = b.consultationType === 'defense'
@@ -903,6 +1361,17 @@
                         cls: 'teal',
                     };
                 header.appendChild(el('span', `badge ${typeBadge.cls}`, typeBadge.label));
+
+                const attendedList = Array.isArray(b.attendedMembers) ? b.attendedMembers : [];
+                const attendedSet = new Set(attendedList);
+                const membersArr = Array.isArray(b.members) && b.members.length ? b.members : [b.name].filter(Boolean);
+                const hasAttendanceRecord = !isCancelled(b) && (attendedList.length > 0 || isCompleted(b) || isNoShow(b));
+                if (hasAttendanceRecord) {
+                    const presentCount = membersArr.filter((m) => attendedSet.has(m)).length;
+                    const { required } = requiredAttendanceSummary(b);
+                    const attCls = presentCount >= required ? 'sky' : 'amber';
+                    header.appendChild(el('span', `badge ${attCls}`, `${presentCount}/${membersArr.length} Present`));
+                }
 
                 if (b.notifiedAt && (b.isDropoff || b.consultationType === 'dropoff')) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
@@ -919,16 +1388,73 @@
                 }
                 body.appendChild(header);
 
-                if (Array.isArray(b.members) && b.members.length) {
+                if (membersArr.length) {
                     const membersWrap = el('div', 'booking-members');
-                    b.members.forEach((memberName) => {
-                        membersWrap.appendChild(el('span', 'member-chip', memberName));
+                    membersArr.forEach((memberName) => {
+                        if (isCancelled(b)) {
+                            membersWrap.appendChild(el('span', 'member-chip', memberName));
+                        } else {
+                            const isPresent = attendedSet.has(memberName);
+                            const chipCls = 'member-chip is-interactive'
+                                + (isPresent ? ' is-present' : hasAttendanceRecord ? ' is-absent' : '');
+                            const chipBtn = el('button', chipCls, isPresent ? `✓ ${memberName}` : memberName);
+                            chipBtn.type = 'button';
+                            chipBtn.title = isPresent ? 'Present — click to unmark' : 'Click to mark present';
+                            chipBtn.setAttribute('aria-pressed', isPresent ? 'true' : 'false');
+                            chipBtn.addEventListener('click', () => toggleCardMemberAttendance(b, memberName, chipBtn));
+                            membersWrap.appendChild(chipBtn);
+                        }
                     });
                     body.appendChild(membersWrap);
                 }
 
                 if (b.reason) {
                     body.appendChild(el('p', 'booking-reason', b.reason));
+                }
+
+                if (!isCancelled(b)) {
+                    const prev = findPreviousConsultation(b);
+                    const canonicalPrev = prev ? (state.bookings.find((x) => x.id === prev.id) || prev) : null;
+                    const prevItems = Array.isArray(canonicalPrev?.revisionChecklist) ? canonicalPrev.revisionChecklist : [];
+                    const showPrevBox = Boolean(
+                        canonicalPrev && (prevItems.length > 0 || canonicalPrev.revisionNotes || isCompleted(canonicalPrev) || isNoShow(canonicalPrev))
+                    );
+                    if (showPrevBox) {
+                        const prevBox = el('div', 'prev-consultation-box');
+                        const prevHead = el('div', 'prev-consultation-head');
+                        prevHead.appendChild(el('strong', '', `From Last Consultation: ${canonicalPrev.consultationTitle || 'Consultation'} (${shortDate(canonicalPrev.date)})`));
+                        if (prevItems.length) {
+                            const doneCount = prevItems.filter((it) => it.done).length;
+                            prevHead.appendChild(
+                                el('span', `badge ${doneCount === prevItems.length ? 'teal' : 'amber'}`, `${doneCount}/${prevItems.length} fixed`)
+                            );
+                        } else if (isNoShow(canonicalPrev)) {
+                            prevHead.appendChild(el('span', 'badge danger', 'No-Show'));
+                        } else if (isCompleted(canonicalPrev)) {
+                            prevHead.appendChild(el('span', 'badge muted-badge', 'Completed'));
+                        }
+                        prevBox.appendChild(prevHead);
+                        if (prevItems.length) {
+                            prevBox.appendChild(buildChecklistElement(canonicalPrev, prevItems));
+                        }
+                        if (canonicalPrev.revisionNotes) {
+                            prevBox.appendChild(el('p', 'prev-consultation-notes', canonicalPrev.revisionNotes));
+                        }
+                        body.appendChild(prevBox);
+                    }
+
+                    const curItems = Array.isArray(b.revisionChecklist) ? b.revisionChecklist : [];
+                    if (curItems.length || b.revisionNotes) {
+                        const revBox = el('div', 'revision-notes-box');
+                        revBox.appendChild(el('strong', '', 'Revision Action Items & Notes'));
+                        if (curItems.length) {
+                            revBox.appendChild(buildChecklistElement(b, curItems));
+                        }
+                        if (b.revisionNotes) {
+                            revBox.appendChild(el('p', 'revision-notes-text', b.revisionNotes));
+                        }
+                        body.appendChild(revBox);
+                    }
                 }
 
                 if (isCancelled(b) && b.cancellationReason) {
@@ -939,6 +1465,21 @@
                 }
 
                 const actions = el('div', 'booking-actions');
+                if (!isCancelled(b)) {
+                    const hasRecordedNotes = isCompleted(b)
+                        || isNoShow(b)
+                        || Boolean(b.revisionNotes)
+                        || (Array.isArray(b.revisionChecklist) && b.revisionChecklist.length > 0)
+                        || (Array.isArray(b.attendedMembers) && b.attendedMembers.length > 0);
+                    const notesBtn = el(
+                        'button',
+                        'btn btn-primary-soft btn-sm',
+                        hasRecordedNotes ? 'Edit Notes' : 'Notes & Attendance'
+                    );
+                    notesBtn.type = 'button';
+                    notesBtn.addEventListener('click', () => openNotesModal(b));
+                    actions.appendChild(notesBtn);
+                }
                 if (!isCancelled(b) && b.consultationType === 'dropoff' && b.studentEmail) {
                     const notifyBtn = el(
                         'button',
@@ -1034,9 +1575,41 @@
             input.focus();
         });
     });
+    // Notes, revision checklist & attendance modal bindings
+    $('#notesForm')?.addEventListener('submit', submitNotesForm);
+    $('#closeNotesModalBtn')?.addEventListener('click', closeNotesModal);
+    $('#cancelNotesModalBtn')?.addEventListener('click', closeNotesModal);
+    $('#notesModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'notesModal') closeNotesModal();
+    });
+    $('#markAllPresentBtn')?.addEventListener('click', () => {
+        const b = state.notesTarget;
+        if (!b) return;
+        const members = Array.isArray(b.members) && b.members.length ? b.members : [b.name].filter(Boolean);
+        state.notesDraftAttended = new Set(members);
+        renderNotesAttendanceList();
+    });
+    $('#markAllAbsentBtn')?.addEventListener('click', () => {
+        state.notesDraftAttended = new Set();
+        renderNotesAttendanceList();
+    });
+    $('#addChecklistItemBtn')?.addEventListener('click', addDraftChecklistItem);
+    $('#notesChecklistInput')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addDraftChecklistItem();
+        }
+    });
+    $('#copyPrevUnfinishedBtn')?.addEventListener('click', copyPrevUnfinishedToDraft);
+    $('#revisionNotesInput')?.addEventListener('input', (e) => {
+        if ($('#revisionNotesCount')) $('#revisionNotesCount').textContent = String(e.target.value.length);
+        setNotesFormError('');
+    });
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeCancelModal();
+            closeNotesModal();
             closeBlockModal();
         }
     });

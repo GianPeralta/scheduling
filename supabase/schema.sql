@@ -12,9 +12,13 @@ create table if not exists public.appointments (
     consultation_type   text        not null default 'system'
                                     check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other')),
     status              text        not null default 'scheduled'
-                                    check (status in ('scheduled', 'cancelled')),
+                                    check (status in ('scheduled', 'completed', 'no_show', 'cancelled')),
     cancellation_reason text        check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500),
     cancelled_at        timestamptz,
+    attended_members    text[]      not null default '{}' check (cardinality(attended_members) <= 3),
+    revision_notes      text        check (revision_notes is null or char_length(revision_notes) <= 2000),
+    revision_checklist  jsonb       not null default '[]'::jsonb,
+    completed_at        timestamptz,
     notified_at             timestamptz,
     reminder_sent_at        timestamptz,
     student_reminder_sent_at timestamptz,
@@ -53,12 +57,22 @@ alter table public.appointments alter column start_minute set not null;
 alter table public.appointments add column if not exists status text not null default 'scheduled';
 alter table public.appointments drop constraint if exists appointments_status_check;
 alter table public.appointments add constraint appointments_status_check
-    check (status in ('scheduled', 'cancelled'));
+    check (status in ('scheduled', 'completed', 'no_show', 'cancelled'));
 alter table public.appointments add column if not exists cancellation_reason text;
 alter table public.appointments drop constraint if exists appointments_cancellation_reason_check;
 alter table public.appointments add constraint appointments_cancellation_reason_check
     check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500);
 alter table public.appointments add column if not exists cancelled_at timestamptz;
+alter table public.appointments add column if not exists attended_members text[] not null default '{}';
+alter table public.appointments drop constraint if exists appointments_attended_members_check;
+alter table public.appointments add constraint appointments_attended_members_check
+    check (cardinality(attended_members) <= 3) not valid;
+alter table public.appointments add column if not exists revision_notes text;
+alter table public.appointments drop constraint if exists appointments_revision_notes_check;
+alter table public.appointments add constraint appointments_revision_notes_check
+    check (revision_notes is null or char_length(revision_notes) <= 2000);
+alter table public.appointments add column if not exists revision_checklist jsonb not null default '[]'::jsonb;
+alter table public.appointments add column if not exists completed_at timestamptz;
 alter table public.appointments add column if not exists notified_at timestamptz;
 alter table public.appointments add column if not exists reminder_sent_at timestamptz;
 alter table public.appointments add column if not exists student_reminder_sent_at timestamptz;
@@ -312,6 +326,9 @@ begin
 
     if v_row.status = 'cancelled' then
         raise exception 'Cancelled appointments cannot be rescheduled.' using errcode = 'P0001';
+    end if;
+    if v_row.status <> 'scheduled' then
+        raise exception 'Completed or recorded appointments cannot be rescheduled.' using errcode = 'P0001';
     end if;
 
     v_duration := coalesce(p_new_duration_minutes, v_row.duration_minutes);

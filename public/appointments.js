@@ -130,6 +130,7 @@
 
     function bookingCategory(b) {
         if (b.status === 'cancelled') return 'cancelled';
+        if (b.status === 'completed' || b.status === 'no_show') return 'past';
         const today = state.serverToday || state.config?.today || '';
         const curMin = state.serverCurrentMinute || 0;
         const endMin = b.endMinute ?? 1440;
@@ -151,7 +152,7 @@
     }
 
     function canStudentModifyBooking(b, flagField = 'canCancel') {
-        if (b.status === 'cancelled') return false;
+        if (b.status !== 'scheduled') return false;
         const cutoff = state.config?.cancelCutoffMinutes || CANCEL_CUTOFF_MINUTES;
         if (minutesUntilBooking(b) < cutoff) return false;
         if (typeof b[flagField] === 'boolean') return b[flagField];
@@ -258,11 +259,28 @@
             } else if (cat === 'upcoming') {
                 statusBadge.className = 'badge teal';
                 statusBadge.textContent = 'Scheduled';
+            } else if (b.status === 'no_show') {
+                statusBadge.className = 'badge danger';
+                statusBadge.textContent = 'No-Show';
+            } else if (b.status === 'completed') {
+                statusBadge.className = 'badge teal';
+                statusBadge.textContent = 'Completed ✓';
             } else {
                 statusBadge.className = 'badge muted-badge';
                 statusBadge.textContent = 'Completed';
             }
             badges.appendChild(statusBadge);
+
+            const attendedSet = new Set(Array.isArray(b.attendedMembers) ? b.attendedMembers : []);
+            const hasAttendance = cat !== 'cancelled'
+                && (attendedSet.size > 0 || b.status === 'completed' || b.status === 'no_show');
+            if (hasAttendance && Array.isArray(b.members) && b.members.length) {
+                const presentCount = b.members.filter((m) => attendedSet.has(m)).length;
+                const attBadge = document.createElement('span');
+                attBadge.className = 'badge sky';
+                attBadge.textContent = `${presentCount}/${b.members.length} Present`;
+                badges.appendChild(attBadge);
+            }
 
             if (cat !== 'cancelled' && (b.rescheduledCount > 0 || b.rescheduledAt)) {
                 const reschedBadge = document.createElement('span');
@@ -300,9 +318,14 @@
                 const membersWrap = document.createElement('div');
                 membersWrap.className = 'booking-members';
                 b.members.forEach((m) => {
+                    const isPresent = attendedSet.has(m);
                     const chip = document.createElement('span');
-                    chip.className = 'member-chip';
-                    chip.textContent = m;
+                    chip.className = 'member-chip'
+                        + (isPresent ? ' is-present' : hasAttendance ? ' is-absent' : '');
+                    chip.textContent = isPresent ? `✓ ${m}` : m;
+                    if (hasAttendance) {
+                        chip.title = isPresent ? 'Present' : 'Absent';
+                    }
                     membersWrap.appendChild(chip);
                 });
                 item.appendChild(membersWrap);
@@ -313,6 +336,42 @@
                 agenda.className = 'muted small my-booking-agenda';
                 agenda.textContent = b.reason;
                 item.appendChild(agenda);
+            }
+
+            const checklist = Array.isArray(b.revisionChecklist) ? b.revisionChecklist : [];
+            if (cat !== 'cancelled' && (checklist.length > 0 || b.revisionNotes)) {
+                const revBox = document.createElement('div');
+                revBox.className = 'revision-notes-box';
+
+                const revTitle = document.createElement('strong');
+                revTitle.textContent = 'Consultation Notes & Revision Action Items';
+                revBox.appendChild(revTitle);
+
+                if (checklist.length) {
+                    const ul = document.createElement('ul');
+                    ul.className = 'revision-checklist readonly';
+                    checklist.forEach((it) => {
+                        const li = document.createElement('li');
+                        li.className = 'revision-check-item' + (it.done ? ' is-done' : '');
+                        const mark = document.createElement('span');
+                        mark.className = 'revision-check-mark';
+                        mark.textContent = it.done ? '✓' : '○';
+                        const txt = document.createElement('span');
+                        txt.textContent = it.text;
+                        li.append(mark, txt);
+                        ul.appendChild(li);
+                    });
+                    revBox.appendChild(ul);
+                }
+
+                if (b.revisionNotes) {
+                    const notesP = document.createElement('p');
+                    notesP.className = 'revision-notes-text';
+                    notesP.textContent = b.revisionNotes;
+                    revBox.appendChild(notesP);
+                }
+
+                item.appendChild(revBox);
             }
 
             if (cat === 'upcoming') {
@@ -405,16 +464,16 @@
 
             if (state.rescheduleTarget && !state.rescheduleSubmitting) {
                 const updatedResched = state.bookings.find((x) => x.id === state.rescheduleTarget.id);
-                if (!updatedResched || updatedResched.status === 'cancelled') {
+                if (!updatedResched || updatedResched.status !== 'scheduled') {
                     closeRescheduleModal();
-                    toast('This appointment was cancelled.', 'error');
+                    toast('This appointment can no longer be rescheduled.', 'error');
                 } else {
                     state.rescheduleTarget = updatedResched;
                 }
             }
             if (state.cancelTarget && !state.cancelling) {
                 const updatedCancel = state.bookings.find((x) => x.id === state.cancelTarget.id);
-                if (!updatedCancel || updatedCancel.status === 'cancelled') {
+                if (!updatedCancel || updatedCancel.status !== 'scheduled') {
                     closeCancelConfirmModal();
                 } else {
                     state.cancelTarget = updatedCancel;

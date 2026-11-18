@@ -3237,3 +3237,277 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     }
 }
 
+/* ==========================================================================
+   Consultation Notes, Revision Checklists & Attendance Tracking
+   ========================================================================== */
+.member-chip.is-interactive {
+    cursor: pointer;
+    transition: all 0.15s var(--ease);
+}
+.member-chip.is-interactive:hover:not(:disabled) {
+    border-color: var(--primary);
+    background-color: var(--primary-soft);
+    color: var(--primary);
+}
+.member-chip.is-interactive:disabled {
+    opacity: 0.65;
+    cursor: wait;
+}
+.member-chip.is-present {
+    background-color: var(--primary-soft);
+    border-color: var(--primary-border);
+    color: var(--primary);
+    font-weight: 600;
+}
+.member-chip.is-absent {
+    background-color: var(--surface-muted);
+    color: var(--muted);
+    text-decoration: line-through;
+}
+
+.prev-consultation-box {
+    margin-top: 10px;
+    padding: 11px 13px;
+    border-radius: var(--radius-sm);
+    background-color: var(--amber-soft);
+    border: 1px solid var(--amber-border);
+    border-left: 3px solid var(--amber-text);
+    display: grid;
+    gap: 8px;
+}
+.prev-consultation-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+}
+.prev-consultation-head strong {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--amber-text);
+}
+.prev-consultation-notes {
+    font-size: 0.86rem;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.45;
+}
+.prev-checklist-preview {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+    font-size: 0.84rem;
+    color: var(--text);
+}
+.prev-checklist-preview li.is-done {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+
+.revision-notes-box {
+    margin-top: 10px;
+    padding: 11px 13px;
+    border-radius: var(--radius-sm);
+    background-color: var(--primary-soft);
+    border: 1px solid var(--primary-border);
+    border-left: 3px solid var(--primary);
+    display: grid;
+    gap: 8px;
+}
+.revision-notes-box > strong {
+    font-size: 0.78rem;
+    font-weight: 800;
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.revision-notes-text {
+    font-size: 0.88rem;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.48;
+}
+
+.revision-checklist {
+    display: grid;
+    gap: 6px;
+}
+.revision-checklist.readonly {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.revision-check-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.86rem;
+    line-height: 1.4;
+    color: var(--text);
+    cursor: pointer;
+}
+.revision-checklist.readonly .revision-check-item {
+    cursor: default;
+}
+.revision-check-item input[type="checkbox"] {
+    margin-top: 2px;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    flex-shrink: 0;
+    cursor: pointer;
+}
+.revision-check-item span {
+    word-break: break-word;
+}
+.revision-check-item.is-done span:not(.revision-check-mark) {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+.revision-check-mark {
+    font-weight: 700;
+    color: var(--primary);
+    flex-shrink: 0;
+    line-height: 1.35;
+}
+.revision-check-item.is-done .revision-check-mark {
+    color: var(--success);
+}
+.revision-check-editable {
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border);
+    cursor: default;
+}
+.revision-check-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+.checklist-remove-btn {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+.checklist-remove-btn svg {
+    width: 14px;
+    height: 14px;
+}
+.checklist-empty-hint {
+    margin: 2px 0;
+}
+
+.segmented.notes-status-segmented {
+    grid-template-columns: repeat(3, 1fr);
+}
+.notes-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--text);
+}
+.notes-quick-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+}
+.attendance-toggle-list {
+    display: grid;
+    gap: 8px;
+}
+.attendance-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--border);
+    background-color: var(--surface);
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    font-weight: 600;
+    text-align: left;
+    transition: all 0.15s var(--ease);
+}
+.attendance-toggle-btn:hover {
+    border-color: var(--primary-border);
+    background-color: var(--primary-soft);
+}
+.attendance-toggle-btn.is-present {
+    border-color: var(--primary);
+    background-color: var(--primary-soft);
+    color: var(--primary);
+}
+.attendance-toggle-mark {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    border: 1.5px solid var(--border-strong);
+    background-color: var(--surface);
+    font-size: 0.78rem;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+.attendance-toggle-btn.is-present .attendance-toggle-mark {
+    border-color: var(--primary);
+    background-color: var(--primary);
+    color: #ffffff;
+}
+.attendance-toggle-name {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+.attendance-toggle-state {
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+}
+.attendance-toggle-btn.is-present .attendance-toggle-state {
+    color: var(--primary);
+}
+.checklist-add-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.checklist-add-row input {
+    flex: 1;
+}
+.student-card-revision-box {
+    border-left: 3px solid var(--amber-text);
+    background-color: var(--amber-soft);
+    border-color: var(--amber-border);
+}
+
+@media (max-width: 680px) {
+    .segmented.notes-status-segmented {
+        grid-template-columns: 1fr;
+    }
+    .checklist-add-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+

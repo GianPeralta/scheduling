@@ -2086,7 +2086,25 @@ function toBooking(r, now, studentOrLookup = null) {
     const durationMinutes = timed ? (endMinute - startMinute) : 0;
     const consultationType = r.consultation_type || 'system';
     const timeRange = `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`;
-    const status = r.status === 'cancelled' ? 'cancelled' : 'scheduled';
+    const status = ['scheduled', 'completed', 'no_show', 'cancelled'].includes(r.status)
+        ? r.status
+        : 'scheduled';
+    const attendedMembers = Array.isArray(r.attended_members)
+        ? r.attended_members.map(cleanName).filter(Boolean).slice(0, MAX_MEMBERS)
+        : [];
+    const revisionNotes = typeof r.revision_notes === 'string' && r.revision_notes.trim()
+        ? r.revision_notes.trim()
+        : null;
+    const revisionChecklist = Array.isArray(r.revision_checklist)
+        ? r.revision_checklist
+            .filter((item) => item && typeof item === 'object' && String(item.text || '').trim())
+            .map((item, idx) => ({
+                id: String(item.id || `item-${idx + 1}`).slice(0, 64),
+                text: String(item.text).trim().slice(0, 300),
+                done: Boolean(item.done),
+            }))
+            .slice(0, 30)
+        : [];
     const minutesUntilStart = minutesUntilBooking(r.appointment_date, startMinute, current);
     const canCancel = status === 'scheduled' && minutesUntilStart >= CANCEL_CUTOFF_MINUTES;
     const canReschedule = canCancel;
@@ -2148,11 +2166,75 @@ function toBooking(r, now, studentOrLookup = null) {
         notifiedAt: r.notified_at || null,
         reminderSentAt: r.reminder_sent_at || (r.consultation_type !== 'dropoff' ? r.notified_at : null) || null,
         studentReminderSentAt: r.student_reminder_sent_at || null,
+        attendedMembers,
+        revisionNotes,
+        revisionChecklist,
+        completedAt: r.completed_at || null,
         createdAt: r.created_at,
     };
     booking.outlookCalendarUrl = buildOutlookCalendarUrl(booking);
     booking.icsUrl = `/api/bookings/${r.id}/ics`;
     return booking;
+}
+
+function summarizePreviousConsultation(prev) {
+    if (!prev) return null;
+    return {
+        id: prev.id,
+        reference: prev.reference,
+        date: prev.date,
+        label: prev.label,
+        consultationType: prev.consultationType,
+        consultationTitle: prev.consultationTitle,
+        status: prev.status,
+        members: prev.members,
+        attendedMembers: prev.attendedMembers,
+        revisionNotes: prev.revisionNotes,
+        revisionChecklist: prev.revisionChecklist,
+        completedAt: prev.completedAt,
+    };
+}
+
+function attachPreviousConsultations(bookings) {
+    if (!Array.isArray(bookings) || !bookings.length) return bookings;
+    const byGroup = new Map();
+    for (const b of bookings) {
+        b.previousConsultation = null;
+        if (b.status === 'cancelled') continue;
+        const key = b.studentId || (b.studentEmail ? String(b.studentEmail).toLowerCase() : '');
+        if (!key) continue;
+        if (!byGroup.has(key)) byGroup.set(key, []);
+        byGroup.get(key).push(b);
+    }
+
+    for (const groupBookings of byGroup.values()) {
+        groupBookings.sort(
+            (a, b) => a.date.localeCompare(b.date)
+                || a.startMinute - b.startMinute
+                || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+        );
+
+        let lastWithRevisions = null;
+        for (let i = 0; i < groupBookings.length; i += 1) {
+            const b = groupBookings[i];
+            const prev = i > 0 ? groupBookings[i - 1] : null;
+            const immediatePrev = prev && (
+                prev.status === 'completed'
+                || prev.status === 'no_show'
+                || (Array.isArray(prev.attendedMembers) && prev.attendedMembers.length > 0)
+            ) ? prev : null;
+
+            b.previousConsultation = summarizePreviousConsultation(lastWithRevisions || immediatePrev);
+
+            const hasRevisions = (Array.isArray(b.revisionChecklist) && b.revisionChecklist.length > 0)
+                || Boolean(b.revisionNotes);
+            if (hasRevisions) {
+                lastWithRevisions = b;
+            }
+        }
+    }
+
+    return bookings;
 }
 
 // Logged-in student's bookings (upcoming, cancelled with instructor reason, and past)
@@ -2166,10 +2248,11 @@ app.get('/api/my-bookings', requireStudent, async (req, res) => {
         .order('start_minute', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
 
+    const bookings = attachPreviousConsultations(data.map((r) => toBooking(r, now, req.student)));
     res.json({
         today: now.date,
         currentMinute: now.minuteOfDay,
-        bookings: data.map((r) => toBooking(r, now, req.student)),
+        bookings,
     });
 });
 
@@ -2221,6 +2304,9 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
 
     if (row.status === 'cancelled') {
         return res.status(400).json({ error: 'This appointment has already been cancelled.' });
+    }
+    if (row.status === 'completed' || row.status === 'no_show') {
+        return res.status(400).json({ error: 'Completed or recorded appointments cannot be cancelled.' });
     }
 
     const now = nowInTz();
@@ -2286,6 +2372,9 @@ async function handleStudentReschedule(req, res) {
 
     if (row.status === 'cancelled') {
         return res.status(400).json({ error: 'Cancelled appointments cannot be rescheduled.' });
+    }
+    if (row.status === 'completed' || row.status === 'no_show') {
+        return res.status(400).json({ error: 'Completed or recorded appointments cannot be rescheduled.' });
     }
 
     const now = nowInTz();
@@ -2680,6 +2769,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
 
     const upcomingMine = mine.filter((r) => {
         if (!isActiveRow(r)) return false;
+        if (r.status && r.status !== 'scheduled') return false;
         const [, end] = rowInterval(r);
         return r.appointment_date > now.date || end > now.minuteOfDay;
     });
@@ -2927,8 +3017,10 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     serializedLogs.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 
     const now = nowInTz();
-    const bookings = data.map((r) => toBooking(r, now, studentLookup)).sort(
-        (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
+    const bookings = attachPreviousConsultations(
+        data.map((r) => toBooking(r, now, studentLookup)).sort(
+            (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
+        )
     );
     const blockedSchedules = blockedRows.map(toBlockedSchedule).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
@@ -3249,6 +3341,130 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
 
     res.json({ ok: true, booking });
 });
+
+// Save consultation status (scheduled / completed / no_show), member attendance, revision checklist & notes
+async function handleAdminBookingNotesUpdate(req, res) {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
+
+    const { data: row, error: fetchErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('id', req.params.id)
+        .maybeSingle();
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!row) return res.status(404).json({ error: 'Booking not found.' });
+    if (row.status === 'cancelled') {
+        return res.status(400).json({ error: 'Cancelled appointments cannot be updated.' });
+    }
+
+    const body = req.body || {};
+
+    let nextStatus = ['scheduled', 'completed', 'no_show'].includes(row.status) ? row.status : 'scheduled';
+    if (Object.prototype.hasOwnProperty.call(body, 'status') && body.status !== undefined && body.status !== null) {
+        const s = String(body.status).trim();
+        if (!['scheduled', 'completed', 'no_show'].includes(s)) {
+            return res.status(400).json({ error: 'Status must be scheduled, completed, or no_show.' });
+        }
+        nextStatus = s;
+    }
+
+    let nextAttended = Array.isArray(row.attended_members)
+        ? row.attended_members.map(cleanName).filter(Boolean).slice(0, MAX_MEMBERS)
+        : [];
+    if (Object.prototype.hasOwnProperty.call(body, 'attendedMembers') && body.attendedMembers !== undefined) {
+        if (!Array.isArray(body.attendedMembers)) {
+            return res.status(400).json({ error: 'attendedMembers must be an array.' });
+        }
+        const seen = new Set();
+        nextAttended = [];
+        for (const rawName of body.attendedMembers) {
+            const name = cleanName(rawName);
+            if (!name || seen.has(name)) continue;
+            seen.add(name);
+            nextAttended.push(name);
+            if (nextAttended.length >= MAX_MEMBERS) break;
+        }
+    }
+
+    let nextNotes = typeof row.revision_notes === 'string' && row.revision_notes.trim()
+        ? row.revision_notes.trim()
+        : null;
+    if (Object.prototype.hasOwnProperty.call(body, 'revisionNotes') && body.revisionNotes !== undefined) {
+        const rawNotes = body.revisionNotes === null ? '' : String(body.revisionNotes).trim();
+        if (rawNotes.length > 2000) {
+            return res.status(400).json({
+                field: 'revisionNotes',
+                error: 'Consultation notes must be 2000 characters or fewer.',
+            });
+        }
+        nextNotes = rawNotes || null;
+    }
+
+    let nextChecklist = Array.isArray(row.revision_checklist) ? row.revision_checklist : [];
+    if (Object.prototype.hasOwnProperty.call(body, 'revisionChecklist') && body.revisionChecklist !== undefined) {
+        if (!Array.isArray(body.revisionChecklist)) {
+            return res.status(400).json({ error: 'revisionChecklist must be an array.' });
+        }
+        if (body.revisionChecklist.length > 30) {
+            return res.status(400).json({ error: 'You can add up to 30 revision action items per consultation.' });
+        }
+        nextChecklist = [];
+        for (let i = 0; i < body.revisionChecklist.length; i += 1) {
+            const item = body.revisionChecklist[i];
+            if (!item || typeof item !== 'object') continue;
+            const text = String(item.text ?? '').trim();
+            if (!text) continue;
+            if (text.length > 300) {
+                return res.status(400).json({ error: 'Each revision action item must be 300 characters or fewer.' });
+            }
+            nextChecklist.push({
+                id: String(item.id || crypto.randomUUID()).trim().slice(0, 64) || `item-${i + 1}`,
+                text,
+                done: Boolean(item.done),
+            });
+        }
+    }
+
+    const nextCompletedAt = (nextStatus === 'completed' || nextStatus === 'no_show')
+        ? (row.completed_at || new Date().toISOString())
+        : null;
+
+    const { data, error } = await db()
+        .from(TABLE)
+        .update({
+            status: nextStatus,
+            attended_members: nextAttended,
+            revision_notes: nextNotes,
+            revision_checklist: nextChecklist,
+            completed_at: nextCompletedAt,
+        })
+        .eq('id', row.id)
+        .select('*')
+        .maybeSingle();
+
+    if (error) {
+        if (['23514', '42703', 'PGRST204'].includes(error.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+    if (!data) return res.status(404).json({ error: 'Booking not found.' });
+
+    const booking = toBooking(data, nowInTz());
+    const rtPromise = notifyRealtimeListeners({
+        type: 'booking_notes_updated',
+        date: booking.date,
+        bookingId: booking.id,
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.json({ ok: true, booking });
+}
+
+app.post('/api/admin/bookings/:id/notes', requireAdmin, handleAdminBookingNotesUpdate);
+app.patch('/api/admin/bookings/:id/notes', requireAdmin, handleAdminBookingNotesUpdate);
 
 app.delete('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
