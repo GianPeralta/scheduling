@@ -60,6 +60,10 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></svg>
                         Block Date / Time
                     </button>
+                    <button type="button" class="btn btn-ghost" id="openSendEmailModalBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                        Send Email
+                    </button>
                     <span class="live-status-pill is-live" id="realtimeStatusPill" title="Dashboard updates automatically in real time">
                         <span class="live-dot"></span>
                         <span class="live-status-text">Live</span>
@@ -196,6 +200,87 @@
                     <button type="button" class="btn btn-ghost" id="cancelBlockModalBtn">Cancel</button>
                     <button type="submit" class="btn btn-danger" id="confirmBlockBtn">
                         <span class="btn-label">Block</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Manual Send Email Modal -->
+    <div class="modal-backdrop hidden" id="sendEmailModal" role="dialog" aria-modal="true" aria-labelledby="sendEmailModalTitle">
+        <div class="modal-card modal-wide">
+            <div class="modal-head">
+                <h3 id="sendEmailModalTitle">Send Email to Student</h3>
+                <button type="button" class="icon-btn" id="closeSendEmailModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="sendEmailForm" novalidate>
+                <label class="field">
+                    <span>Student group <small class="muted">(optional — pick a group or enter manually)</small></span>
+                    <select id="emailStudentSelect">
+                        <option value="">Manual / Other email address</option>
+                    </select>
+                </label>
+
+                <div class="email-recipient-grid">
+                    <label class="field">
+                        <span>Recipient email</span>
+                        <input type="email" id="emailRecipientInput" maxlength="254" placeholder="student@university.edu.ph" required />
+                    </label>
+                    <label class="field">
+                        <span>Student / representative name <small class="muted">(optional)</small></span>
+                        <input type="text" id="emailStudentNameInput" maxlength="100" placeholder="e.g. Juan Dela Cruz" />
+                    </label>
+                </div>
+
+                <label class="field">
+                    <span>Capstone / Thesis title <small class="muted">(optional)</small></span>
+                    <input type="text" id="emailCapstoneInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" />
+                </label>
+
+                <div class="field">
+                    <span>Email purpose / template</span>
+                    <div class="segmented email-template-segmented" role="radiogroup" aria-label="Email template">
+                        <label>
+                            <input type="radio" name="emailTemplate" value="manuscript_ready" checked />
+                            <span>Manuscript Ready for Pickup</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="emailTemplate" value="letter_ready" />
+                            <span>Comm. Letter Ready for Pickup</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="emailTemplate" value="schedule_reminder" />
+                            <span>Remind to Set Appointment</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="emailTemplate" value="custom" />
+                            <span>Custom Message</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="email-template-preview" id="emailTemplateHint"></div>
+
+                <label class="field">
+                    <span>Subject</span>
+                    <input type="text" id="emailSubjectInput" maxlength="200" placeholder="Email subject" required />
+                </label>
+
+                <label class="field">
+                    <span id="emailMessageLabel">Additional note / remarks <small class="muted">(optional)</small></span>
+                    <textarea id="emailMessageInput" rows="4" maxlength="3000" placeholder="Optional note, pickup instructions, or revisions summary…"></textarea>
+                    <small class="counter"><span id="emailMessageCount">0</span>/3000</small>
+                </label>
+
+                <div class="form-error hidden" id="sendEmailFormError" role="alert"></div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelSendEmailModalBtn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="confirmSendEmailBtn">
+                        <span class="btn-label">Send email</span>
                         <span class="spinner hidden"></span>
                     </button>
                 </div>

@@ -3215,6 +3215,187 @@ app.delete('/api/admin/blocks/:id', requireAdmin, async (req, res) => {
     res.json({ ok: true });
 });
 
+function buildManuscriptReadyEmail({ studentName, title, siteOrigin, note = '' }) {
+    const cleanTitle = title || 'your Capstone / Thesis manuscript';
+    const greeting = `Dear ${studentName || 'Student'},`;
+    const cleanNote = String(note || '').trim();
+    const subject = 'Manuscript Ready for Pickup — Please Schedule Your Retrieval';
+
+    const bodyText = [
+        greeting,
+        '',
+        `Good day. This is to inform you that your manuscript (${cleanTitle}) has been reviewed and is now ready for pickup.`,
+        ...(cleanNote ? ['', `Instructor Note:\n${cleanNote}`] : []),
+        '',
+        'Kindly visit the consultation scheduling portal to book a "Retrieval of Manuscript" (5-minute) appointment so the necessary revisions and feedback can be discussed with your group:',
+        siteOrigin,
+        '',
+        'Important Reminders:',
+        '• Appointments must be scheduled at least one (1) day prior to your preferred consultation date.',
+        '• At least two (2) or all group members are required to be present during the manuscript retrieval; otherwise, your group will not be accommodated.',
+        '',
+        'Thank you.',
+    ].join('\n');
+
+    const noteHtml = cleanNote
+        ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155;margin:12px 0"><strong>Instructor Note:</strong><br/>${escapeHtml(cleanNote).replace(/\r\n|\r|\n/g, '<br/>')}</div>`
+        : '';
+
+    const bodyHtml = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Good day. This is to inform you that your manuscript (<strong>${escapeHtml(cleanTitle)}</strong>) has been reviewed and is now <strong>ready for pickup</strong>.</p>
+            ${noteHtml}
+            <p>Kindly visit the consultation scheduling portal to book a <strong>Retrieval of Manuscript (5-minute)</strong> appointment so the necessary revisions and feedback can be discussed with your group:</p>
+            ${siteOrigin ? `<p style="margin:22px 0">
+                <a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">
+                    Schedule Manuscript Retrieval
+                </a>
+            </p>` : ''}
+            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
+                <strong>Important Reminders:</strong>
+                <ul style="margin:6px 0 0;padding-left:18px">
+                    <li>Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred consultation date.</li>
+                    <li><strong>At least two (2) or all group members are required to be present</strong> during the manuscript retrieval; otherwise, your group will not be accommodated.</li>
+                </ul>
+            </div>
+            <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+        </div>`;
+
+    return { subject, text: bodyText, html: bodyHtml };
+}
+
+function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', note = '' }) {
+    const cleanTitle = title || 'your Capstone / Thesis group';
+    const greeting = `Dear ${studentName || 'Student'},`;
+    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
+    const letterReason = typeof reason === 'string' && reason.trim() ? reason.trim() : '';
+    const cleanNote = String(note || '').trim();
+    const subject = 'Communication Letter Ready for Pickup';
+
+    const bodyText = [
+        greeting,
+        '',
+        `Good day. This is to inform you that the communication letter for ${cleanTitle} has been signed by ${TEACHER_NAME} and is now ready for pickup at ${CONFIG.location}.`,
+        ...(letterReason ? ['', `Letter Details: ${letterReason}`] : []),
+        ...(cleanNote ? ['', `Instructor Note:\n${cleanNote}`] : []),
+        ...(appointmentsUrl ? ['', `View your appointments: ${appointmentsUrl}`] : []),
+        '',
+        'Thank you.',
+    ].join('\n');
+
+    const letterReasonHtml = letterReason
+        ? `<p style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155"><strong>Letter Details:</strong> ${escapeHtml(letterReason)}</p>`
+        : '';
+    const noteHtml = cleanNote
+        ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155;margin:12px 0"><strong>Instructor Note:</strong><br/>${escapeHtml(cleanNote).replace(/\r\n|\r|\n/g, '<br/>')}</div>`
+        : '';
+    const portalBtnHtml = appointmentsUrl
+        ? `<p style="margin:22px 0"><a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">View My Appointments</a></p>`
+        : '';
+
+    const bodyHtml = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Good day. This is to inform you that the communication letter for <strong>${escapeHtml(cleanTitle)}</strong> has been signed by <strong>${escapeHtml(TEACHER_NAME)}</strong> and is now <strong>ready for pickup</strong> at <strong>${escapeHtml(CONFIG.location)}</strong>.</p>
+            ${letterReasonHtml}
+            ${noteHtml}
+            ${portalBtnHtml}
+            <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+        </div>`;
+
+    return { subject, text: bodyText, html: bodyHtml };
+}
+
+function buildManualStudentEmail({ template, studentName, capstoneTitle, subject, message, siteOrigin }) {
+    const cleanSubject = cleanName(subject || '').slice(0, 200);
+    const cleanNote = String(message || '').trim();
+    const greeting = `Dear ${studentName || 'Student'},`;
+
+    if (template === 'manuscript_ready') {
+        const built = buildManuscriptReadyEmail({
+            studentName,
+            title: capstoneTitle || 'your Capstone / Thesis manuscript',
+            siteOrigin,
+            note: cleanNote,
+        });
+        return { ...built, subject: cleanSubject || built.subject };
+    }
+
+    if (template === 'letter_ready') {
+        const built = buildLetterReadyEmail({
+            studentName,
+            title: capstoneTitle || 'your Capstone / Thesis group',
+            siteOrigin,
+            note: cleanNote,
+        });
+        return { ...built, subject: cleanSubject || built.subject };
+    }
+
+    if (template === 'schedule_reminder') {
+        const defaultSubject = 'Reminder: Please Schedule Your Consultation / Drop-off Appointment Online';
+        const titleClause = capstoneTitle ? ` for ${capstoneTitle}` : '';
+        const titleClauseHtml = capstoneTitle ? ` for <strong>${escapeHtml(capstoneTitle)}</strong>` : '';
+        const bodyText = [
+            greeting,
+            '',
+            `Good day. This is a friendly reminder to schedule your appointment${titleClause} with ${TEACHER_NAME} through the consultation scheduling portal (e.g. Drop-off Manuscript, Communication Letter Signature, System Consultation, or Defense).`,
+            ...(cleanNote ? ['', `Instructor Note:\n${cleanNote}`] : []),
+            ...(siteOrigin ? ['', `Schedule your appointment here: ${siteOrigin}`] : []),
+            '',
+            'Reminder: Appointments must be scheduled at least one (1) day prior to your preferred consultation date.',
+            '',
+            'Thank you.',
+        ].join('\n');
+
+        const noteHtml = cleanNote
+            ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155;margin:12px 0"><strong>Instructor Note:</strong><br/>${escapeHtml(cleanNote).replace(/\r\n|\r|\n/g, '<br/>')}</div>`
+            : '';
+        const portalBtnHtml = siteOrigin
+            ? `<p style="margin:22px 0"><a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">Open Scheduling Portal</a></p>`
+            : '';
+
+        const bodyHtml = `
+            <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
+                <p>${escapeHtml(greeting)}</p>
+                <p>Good day. This is a friendly reminder to schedule your appointment${titleClauseHtml} with <strong>${escapeHtml(TEACHER_NAME)}</strong> through the consultation scheduling portal (e.g. Drop-off Manuscript, Communication Letter Signature, System Consultation, or Defense).</p>
+                ${noteHtml}
+                ${portalBtnHtml}
+                <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:10px 14px;border-radius:8px;font-size:13px">
+                    <strong>Reminder:</strong> Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred consultation date.
+                </div>
+                <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+            </div>`;
+
+        return { subject: cleanSubject || defaultSubject, text: bodyText, html: bodyHtml };
+    }
+
+    // Custom message
+    const titleHeaderText = capstoneTitle ? `Capstone / Thesis: ${capstoneTitle}\n\n` : '';
+    const titleHeaderHtml = capstoneTitle
+        ? `<p style="margin:0 0 12px;font-size:13px;color:#64748b"><strong>Capstone / Thesis:</strong> ${escapeHtml(capstoneTitle)}</p>`
+        : '';
+    const bodyText = [
+        greeting,
+        '',
+        `${titleHeaderText}${cleanNote}`,
+        ...(siteOrigin ? ['', `Consultation Scheduling Portal: ${siteOrigin}`] : []),
+        '',
+        `— ${TEACHER_NAME}`,
+    ].join('\n');
+
+    const bodyHtml = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
+            <p>${escapeHtml(greeting)}</p>
+            ${titleHeaderHtml}
+            <div style="white-space:normal;color:#0f172a">${escapeHtml(cleanNote).replace(/\r\n|\r|\n/g, '<br/>')}</div>
+            ${siteOrigin ? `<p style="margin:22px 0 8px"><a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px">Open Scheduling Portal</a></p>` : ''}
+            <p style="margin-top:18px;color:#475569;font-size:14px">— ${escapeHtml(TEACHER_NAME)}</p>
+        </div>`;
+
+    return { subject: cleanSubject, text: bodyText, html: bodyHtml };
+}
+
 // Send email notification to student that their dropped-off manuscript has been checked
 app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
@@ -3231,51 +3412,20 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     }
 
     const title = row.capstone_title || row.team_name || 'your Capstone / Thesis manuscript';
-    const greeting = `Dear ${row.student_name},`;
     const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
-    const subject = `Manuscript Ready for Pickup — Please Schedule Your Retrieval`;
-    const bodyText = [
-        greeting,
-        '',
-        `Good day. This is to inform you that your manuscript (${title}) has been reviewed and is now ready for pickup.`,
-        '',
-        'Kindly visit the consultation scheduling portal to book a "Retrieval of Manuscript" (5-minute) appointment so the necessary revisions and feedback can be discussed with your group:',
+    const emailContent = buildManuscriptReadyEmail({
+        studentName: row.student_name,
+        title,
         siteOrigin,
-        '',
-        'Important Reminders:',
-        '• Appointments must be scheduled at least one (1) day prior to your preferred consultation date.',
-        '• At least two (2) or all group members are required to be present during the manuscript retrieval; otherwise, your group will not be accommodated.',
-        '',
-        'Thank you.',
-    ].join('\n');
-
-    const bodyHtml = `
-        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
-            <p>${escapeHtml(greeting)}</p>
-            <p>Good day. This is to inform you that your manuscript (<strong>${escapeHtml(title)}</strong>) has been reviewed and is now <strong>ready for pickup</strong>.</p>
-            <p>Kindly visit the consultation scheduling portal to book a <strong>Retrieval of Manuscript (5-minute)</strong> appointment so the necessary revisions and feedback can be discussed with your group:</p>
-            <p style="margin:22px 0">
-                <a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">
-                    Schedule Manuscript Retrieval
-                </a>
-            </p>
-            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
-                <strong>Important Reminders:</strong>
-                <ul style="margin:6px 0 0;padding-left:18px">
-                    <li>Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred consultation date.</li>
-                    <li><strong>At least two (2) or all group members are required to be present</strong> during the manuscript retrieval; otherwise, your group will not be accommodated.</li>
-                </ul>
-            </div>
-            <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
-        </div>`;
+    });
 
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: row.student_email,
-            subject,
-            text: bodyText,
-            html: bodyHtml,
+            subject: emailContent.subject,
+            text: emailContent.text,
+            html: emailContent.html,
         });
     } catch (err) {
         console.error('Failed to send manuscript checked notification email:', err);
@@ -3307,45 +3457,21 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
     }
 
     const title = row.capstone_title || row.team_name || 'your Capstone / Thesis group';
-    const greeting = `Dear ${row.student_name},`;
     const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
-    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
-    const subject = 'Communication Letter Ready for Pickup';
-    const letterReason = typeof row.reason === 'string' && row.reason.trim() ? row.reason.trim() : '';
-
-    const bodyText = [
-        greeting,
-        '',
-        `Good day. This is to inform you that the communication letter for ${title} has been signed by ${TEACHER_NAME} and is now ready for pickup at ${CONFIG.location}.`,
-        ...(letterReason ? ['', `Letter Details: ${letterReason}`] : []),
-        ...(appointmentsUrl ? ['', `View your appointments: ${appointmentsUrl}`] : []),
-        '',
-        'Thank you.',
-    ].join('\n');
-
-    const letterReasonHtml = letterReason
-        ? `<p style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155"><strong>Letter Details:</strong> ${escapeHtml(letterReason)}</p>`
-        : '';
-    const portalBtnHtml = appointmentsUrl
-        ? `<p style="margin:22px 0"><a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">View My Appointments</a></p>`
-        : '';
-
-    const bodyHtml = `
-        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
-            <p>${escapeHtml(greeting)}</p>
-            <p>Good day. This is to inform you that the communication letter for <strong>${escapeHtml(title)}</strong> has been signed by <strong>${escapeHtml(TEACHER_NAME)}</strong> and is now <strong>ready for pickup</strong> at <strong>${escapeHtml(CONFIG.location)}</strong>.</p>
-            ${letterReasonHtml}
-            ${portalBtnHtml}
-            <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
-        </div>`;
+    const emailContent = buildLetterReadyEmail({
+        studentName: row.student_name,
+        title,
+        siteOrigin,
+        reason: row.reason,
+    });
 
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: row.student_email,
-            subject,
-            text: bodyText,
-            html: bodyHtml,
+            subject: emailContent.subject,
+            text: emailContent.text,
+            html: emailContent.html,
         });
     } catch (err) {
         console.error('Failed to send communication letter ready notification email:', err);
@@ -3359,6 +3485,84 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
     const rtPromise = notifyRealtimeListeners({ type: 'letter_notified', bookingId: row.id, date: row.appointment_date });
     if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true, notifiedAt });
+});
+
+// Manually send an email to a student (including groups who have not booked an appointment)
+app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const rawStudentId = String(body.studentId || '').trim();
+    let studentRow = null;
+    if (rawStudentId) {
+        if (!/^[0-9a-f-]{36}$/i.test(rawStudentId)) {
+            return res.status(400).json({ error: 'Invalid student group ID.' });
+        }
+        const { data, error: studentErr } = await db()
+            .from(STUDENTS_TABLE)
+            .select('id, full_name, email, capstone_title')
+            .eq('id', rawStudentId)
+            .maybeSingle();
+        if (studentErr) return res.status(500).json({ error: studentErr.message });
+        if (!data) return res.status(404).json({ error: 'Student group not found.' });
+        studentRow = data;
+    }
+
+    const recipientEmail = normalizeEmail(body.email || studentRow?.email);
+    if (!recipientEmail || recipientEmail.length > 254 || !EMAIL_RE.test(recipientEmail)) {
+        return res.status(400).json({ field: 'emailRecipientInput', error: 'Please enter a valid recipient email address.' });
+    }
+
+    const studentName = cleanName(body.studentName || studentRow?.full_name || '').slice(0, 100);
+    const capstoneTitle = cleanName(body.capstoneTitle || studentRow?.capstone_title || '').slice(0, 200);
+    const template = ['manuscript_ready', 'letter_ready', 'schedule_reminder', 'custom'].includes(body.template)
+        ? body.template
+        : 'custom';
+    const rawSubject = cleanName(body.subject || '');
+    const rawMessage = String(body.message ?? '').trim();
+
+    if (rawSubject.length > 200) {
+        return res.status(400).json({ field: 'emailSubjectInput', error: 'Email subject must be 200 characters or fewer.' });
+    }
+    if (rawMessage.length > 3000) {
+        return res.status(400).json({ field: 'emailMessageInput', error: 'Message must be 3000 characters or fewer.' });
+    }
+    if (template === 'custom') {
+        if (!rawSubject) {
+            return res.status(400).json({ field: 'emailSubjectInput', error: 'Please enter an email subject.' });
+        }
+        if (!rawMessage) {
+            return res.status(400).json({ field: 'emailMessageInput', error: 'Please enter a message to send.' });
+        }
+    }
+
+    const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
+    const emailContent = buildManualStudentEmail({
+        template,
+        studentName,
+        capstoneTitle,
+        subject: rawSubject,
+        message: rawMessage,
+        siteOrigin,
+    });
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: recipientEmail,
+            subject: emailContent.subject,
+            text: emailContent.text,
+            html: emailContent.html,
+        });
+    } catch (err) {
+        console.error('Failed to send manual student notification email:', err);
+        if (err.status) throw err;
+        throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
+    }
+
+    res.json({
+        ok: true,
+        to: recipientEmail,
+        sentAt: new Date().toISOString(),
+    });
 });
 
 // Cancel an appointment with an instructor reason visible in the student's profile

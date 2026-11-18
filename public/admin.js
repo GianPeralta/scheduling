@@ -36,6 +36,8 @@
         notesDraftAttended: new Set(),
         blockScope: 'full', // 'full' | 'time'
         blocking: false,
+        sendingEmail: false,
+        emailTemplate: 'manuscript_ready',
     };
 
     /* ---------------- helpers ---------------- */
@@ -153,9 +155,11 @@
         state.cancelling = false;
         state.notesSaving = false;
         state.blocking = false;
+        state.sendingEmail = false;
         closeCancelModal();
         closeNotesModal();
         closeBlockModal();
+        closeSendEmailModal();
         state.bookings = [];
         state.blockedSchedules = [];
         state.students = [];
@@ -512,6 +516,253 @@
             btn.disabled = false;
             btn.textContent = prevText;
             toast(err.message, 'error');
+        }
+    }
+
+    /* ---------------- manual send email modal ---------------- */
+    const EMAIL_TEMPLATES = {
+        manuscript_ready: {
+            subject: 'Manuscript Ready for Pickup — Please Schedule Your Retrieval',
+            hint: 'Tells the student their manuscript has been reviewed and is ready for pickup, and directs them to schedule a 5-minute Retrieval of Manuscript appointment online.',
+            placeholder: 'Optional note or pickup instructions (e.g. bring all members, revisions summary)…',
+            requiresMessage: false,
+        },
+        letter_ready: {
+            subject: 'Communication Letter Ready for Pickup',
+            hint: 'Tells the student their communication letter has been signed and is ready for pickup at your office.',
+            placeholder: 'Optional note or pickup instructions (e.g. pick up during office hours)…',
+            requiresMessage: false,
+        },
+        schedule_reminder: {
+            subject: 'Reminder: Please Schedule Your Consultation / Drop-off Appointment Online',
+            hint: 'Reminds the student group to book an appointment online (for Drop-off Manuscript, Communication Letter Signature, System Consultation, or Defense) at least 1 day ahead.',
+            placeholder: 'Optional note specifying what they need to schedule (e.g. please book a Manuscript Drop-off or Comm. Letter signing)…',
+            requiresMessage: false,
+        },
+        custom: {
+            subject: '',
+            hint: 'Write your own subject and custom message directly to the student.',
+            placeholder: 'Write your message to the student…',
+            requiresMessage: true,
+        },
+    };
+
+    function setSendEmailError(msg) {
+        const errEl = $('#sendEmailFormError');
+        if (!errEl) return;
+        errEl.textContent = msg || '';
+        errEl.classList.toggle('hidden', !msg);
+    }
+
+    function populateEmailStudentOptions() {
+        const select = $('#emailStudentSelect');
+        if (!select) return;
+        select.innerHTML = '';
+
+        const manualOpt = document.createElement('option');
+        manualOpt.value = '';
+        manualOpt.textContent = 'Manual / Other email address';
+        select.appendChild(manualOpt);
+
+        const sorted = state.students
+            .slice()
+            .sort((a, b) => (a.capstoneTitle || a.name || '').localeCompare(b.capstoneTitle || b.name || ''));
+
+        sorted.forEach((s) => {
+            const studentBookings = state.bookings.filter(
+                (b) => !isCancelled(b) && (
+                    (b.studentId && b.studentId === s.id)
+                    || (b.studentEmail && s.email && b.studentEmail.toLowerCase() === s.email.toLowerCase())
+                )
+            );
+            const hasDropoff = studentBookings.some((b) => b.consultationType === 'dropoff');
+            const hasLetter = studentBookings.some((b) => b.consultationType === 'letter');
+
+            const tags = [];
+            if (!studentBookings.length) {
+                tags.push('No appointments');
+            } else if (s.instructorRole === 'adviser' && !hasDropoff && !hasLetter) {
+                tags.push('No drop-off/letter');
+            } else if (!hasDropoff) {
+                tags.push('No drop-off');
+            }
+
+            const title = s.capstoneTitle || s.name || 'Student Group';
+            const rep = s.name && s.capstoneTitle ? ` — ${s.name}` : '';
+            const emailPart = s.email ? ` (${s.email})` : '';
+            const tagPart = tags.length ? ` [${tags.join(', ')}]` : '';
+
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = `${title}${rep}${emailPart}${tagPart}`;
+            select.appendChild(opt);
+        });
+    }
+
+    function applySelectedEmailStudent(clearIfEmpty = false) {
+        const select = $('#emailStudentSelect');
+        if (!select) return;
+        const selectedId = select.value;
+        const student = state.students.find((s) => s.id === selectedId);
+        if (student) {
+            if ($('#emailRecipientInput')) $('#emailRecipientInput').value = student.email || '';
+            if ($('#emailStudentNameInput')) $('#emailStudentNameInput').value = student.name || '';
+            if ($('#emailCapstoneInput')) $('#emailCapstoneInput').value = student.capstoneTitle || '';
+        } else if (clearIfEmpty) {
+            if ($('#emailRecipientInput')) $('#emailRecipientInput').value = '';
+            if ($('#emailStudentNameInput')) $('#emailStudentNameInput').value = '';
+            if ($('#emailCapstoneInput')) $('#emailCapstoneInput').value = '';
+        }
+        setSendEmailError('');
+    }
+
+    function setEmailTemplate(tpl, forceSubject = false) {
+        const normalized = Object.prototype.hasOwnProperty.call(EMAIL_TEMPLATES, tpl) ? tpl : 'manuscript_ready';
+        const prevMeta = EMAIL_TEMPLATES[state.emailTemplate] || EMAIL_TEMPLATES.manuscript_ready;
+        const nextMeta = EMAIL_TEMPLATES[normalized];
+        state.emailTemplate = normalized;
+
+        document.querySelectorAll('input[name="emailTemplate"]').forEach((r) => {
+            r.checked = r.value === normalized;
+        });
+
+        const hintEl = $('#emailTemplateHint');
+        if (hintEl) hintEl.textContent = nextMeta.hint;
+
+        const msgLabel = $('#emailMessageLabel');
+        if (msgLabel) {
+            msgLabel.innerHTML = nextMeta.requiresMessage
+                ? 'Message'
+                : 'Additional note / remarks <small class="muted">(optional)</small>';
+        }
+
+        const msgInput = $('#emailMessageInput');
+        if (msgInput) {
+            msgInput.placeholder = nextMeta.placeholder;
+            msgInput.required = nextMeta.requiresMessage;
+        }
+
+        const subjInput = $('#emailSubjectInput');
+        if (subjInput) {
+            const currentVal = subjInput.value.trim();
+            if (forceSubject || !currentVal || currentVal === prevMeta.subject) {
+                subjInput.value = nextMeta.subject;
+            }
+        }
+        setSendEmailError('');
+    }
+
+    function openSendEmailModal(preselectedStudent = null, defaultTemplate = 'manuscript_ready') {
+        populateEmailStudentOptions();
+        const select = $('#emailStudentSelect');
+        if (select) {
+            select.value = preselectedStudent?.id || '';
+        }
+
+        if (preselectedStudent) {
+            if ($('#emailRecipientInput')) $('#emailRecipientInput').value = preselectedStudent.email || '';
+            if ($('#emailStudentNameInput')) $('#emailStudentNameInput').value = preselectedStudent.name || '';
+            if ($('#emailCapstoneInput')) $('#emailCapstoneInput').value = preselectedStudent.capstoneTitle || '';
+        } else {
+            if ($('#emailRecipientInput')) $('#emailRecipientInput').value = '';
+            if ($('#emailStudentNameInput')) $('#emailStudentNameInput').value = '';
+            if ($('#emailCapstoneInput')) $('#emailCapstoneInput').value = '';
+        }
+
+        if ($('#emailMessageInput')) {
+            $('#emailMessageInput').value = '';
+            if ($('#emailMessageCount')) $('#emailMessageCount').textContent = '0';
+        }
+
+        setEmailTemplate(defaultTemplate, true);
+        setSendEmailError('');
+        $('#sendEmailModal')?.classList.remove('hidden');
+        syncModalBodyLock();
+
+        if (window.matchMedia('(hover: hover)').matches) {
+            setTimeout(() => {
+                if (preselectedStudent) $('#emailMessageInput')?.focus();
+                else $('#emailStudentSelect')?.focus();
+            }, 40);
+        }
+    }
+
+    function closeSendEmailModal() {
+        if (state.sendingEmail) return;
+        $('#sendEmailModal')?.classList.add('hidden');
+        syncModalBodyLock();
+        setSendEmailError('');
+    }
+
+    async function submitSendEmail(e) {
+        e.preventDefault();
+        if (state.sendingEmail) return;
+        setSendEmailError('');
+
+        const studentId = ($('#emailStudentSelect')?.value || '').trim();
+        const email = ($('#emailRecipientInput')?.value || '').trim().toLowerCase();
+        const studentName = ($('#emailStudentNameInput')?.value || '').trim();
+        const capstoneTitle = ($('#emailCapstoneInput')?.value || '').trim();
+        const template = state.emailTemplate || 'manuscript_ready';
+        const meta = EMAIL_TEMPLATES[template] || EMAIL_TEMPLATES.custom;
+        const subject = ($('#emailSubjectInput')?.value || '').trim();
+        const message = ($('#emailMessageInput')?.value || '').trim();
+
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            setSendEmailError('Please enter a valid recipient email address.');
+            $('#emailRecipientInput')?.focus();
+            return;
+        }
+        if (!subject) {
+            setSendEmailError('Please enter an email subject.');
+            $('#emailSubjectInput')?.focus();
+            return;
+        }
+        if (meta.requiresMessage && !message) {
+            setSendEmailError('Please enter a message to send to the student.');
+            $('#emailMessageInput')?.focus();
+            return;
+        }
+
+        state.sendingEmail = true;
+        const sendBtn = $('#confirmSendEmailBtn');
+        const cancelBtn = $('#cancelSendEmailModalBtn');
+        const closeBtn = $('#closeSendEmailModalBtn');
+        if (sendBtn) {
+            sendBtn.disabled = true;
+            sendBtn.querySelector('.spinner')?.classList.remove('hidden');
+            sendBtn.querySelector('.btn-label').textContent = 'Sending…';
+        }
+        if (cancelBtn) cancelBtn.disabled = true;
+        if (closeBtn) closeBtn.disabled = true;
+
+        try {
+            const res = await api('/api/admin/send-email', {
+                method: 'POST',
+                body: JSON.stringify({
+                    studentId: studentId || null,
+                    email,
+                    studentName,
+                    capstoneTitle,
+                    template,
+                    subject,
+                    message,
+                }),
+            });
+            state.sendingEmail = false;
+            closeSendEmailModal();
+            toast(`Email sent to ${res.to || email}.`, 'success');
+        } catch (err) {
+            setSendEmailError(err.message);
+        } finally {
+            state.sendingEmail = false;
+            if (sendBtn) {
+                sendBtn.disabled = false;
+                sendBtn.querySelector('.spinner')?.classList.add('hidden');
+                sendBtn.querySelector('.btn-label').textContent = 'Send email';
+            }
+            if (cancelBtn) cancelBtn.disabled = false;
+            if (closeBtn) closeBtn.disabled = false;
         }
     }
 
@@ -1196,10 +1447,16 @@
             }
 
             const footer = el('div', 'student-card-footer');
-            footer.appendChild(el('strong', '', s.name));
+            const identity = el('div', 'student-card-identity');
+            identity.appendChild(el('strong', '', s.name));
             if (s.email) {
-                footer.appendChild(el('span', 'muted small', s.email));
+                identity.appendChild(el('span', 'muted small', s.email));
             }
+            footer.appendChild(identity);
+            const emailBtn = el('button', 'btn btn-primary-soft btn-sm', 'Send Email');
+            emailBtn.type = 'button';
+            emailBtn.addEventListener('click', () => openSendEmailModal(s));
+            footer.appendChild(emailBtn);
             card.appendChild(footer);
 
             container.appendChild(card);
@@ -1639,11 +1896,32 @@
         setNotesFormError('');
     });
 
+    // Manual Send Email modal bindings
+    $('#openSendEmailModalBtn')?.addEventListener('click', () => openSendEmailModal());
+    $('#closeSendEmailModalBtn')?.addEventListener('click', closeSendEmailModal);
+    $('#cancelSendEmailModalBtn')?.addEventListener('click', closeSendEmailModal);
+    $('#sendEmailModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'sendEmailModal') closeSendEmailModal();
+    });
+    $('#emailStudentSelect')?.addEventListener('change', () => applySelectedEmailStudent(true));
+    document.querySelectorAll('input[name="emailTemplate"]').forEach((r) => {
+        r.addEventListener('change', (e) => setEmailTemplate(e.target.value));
+    });
+    ['#emailRecipientInput', '#emailSubjectInput'].forEach((sel) => {
+        $(sel)?.addEventListener('input', () => setSendEmailError(''));
+    });
+    $('#emailMessageInput')?.addEventListener('input', (e) => {
+        if ($('#emailMessageCount')) $('#emailMessageCount').textContent = String(e.target.value.length);
+        setSendEmailError('');
+    });
+    $('#sendEmailForm')?.addEventListener('submit', submitSendEmail);
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeCancelModal();
             closeNotesModal();
             closeBlockModal();
+            closeSendEmailModal();
         }
     });
 

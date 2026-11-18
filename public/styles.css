@@ -913,7 +913,8 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .field { display: grid; gap: 8px; position: relative; scroll-margin-top: 76px; }
 .field > span { font-weight: 600; font-size: 0.88rem; color: var(--text); }
 .field input,
-.field textarea {
+.field textarea,
+.field select {
     width: 100%;
     min-width: 0;
     max-width: 100%;
@@ -923,13 +924,16 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     background-color: var(--surface);
     color: var(--text);
     outline: none;
+    font: inherit;
+    font-size: 1rem;
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 .field textarea { resize: vertical; min-height: 108px; }
 .field input::placeholder,
 .field textarea::placeholder { color: #94a3b8; }
 .field input:focus,
-.field textarea:focus {
+.field textarea:focus,
+.field select:focus {
     border-color: var(--primary);
     box-shadow: 0 0 0 3px var(--primary-tint);
 }
@@ -2544,9 +2548,22 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: 4px 10px;
+    gap: 8px 10px;
     font-size: 0.82rem;
     color: var(--text-soft);
+}
+.student-card-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.student-card-identity strong {
+    color: var(--text);
+    word-break: break-word;
+}
+.student-card-identity span {
+    word-break: break-all;
 }
 .student-rep strong {
     color: var(--text);
@@ -3074,9 +3091,6 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         grid-template-columns: 1fr 1fr;
         gap: 8px;
     }
-    #openBlockModalBtn {
-        grid-column: 1 / -1;
-    }
     .dash-actions .btn { min-height: 42px; width: 100%; }
 
     .stats {
@@ -3501,8 +3515,32 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     border-color: var(--amber-border);
 }
 
+.email-recipient-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.segmented.email-template-segmented {
+    grid-template-columns: 1fr 1fr;
+}
+.segmented.email-template-segmented label > span {
+    font-size: 0.84rem;
+    padding: 9px 10px;
+}
+.email-template-preview {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background-color: var(--primary-soft);
+    border: 1px solid var(--primary-border);
+    color: var(--primary-hover);
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
 @media (max-width: 680px) {
-    .segmented.notes-status-segmented {
+    .segmented.notes-status-segmented,
+    .segmented.email-template-segmented,
+    .email-recipient-grid {
         grid-template-columns: 1fr;
     }
     .checklist-add-row {
