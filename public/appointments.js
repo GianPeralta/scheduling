@@ -698,6 +698,14 @@
         syncModalBodyLock();
     }
 
+    function maxReschedMonthKeyForPurpose(purpose, config) {
+        const lastBookable = config?.lastBookableDate || '2026-11-30';
+        if (purpose === 'letter_pickup') {
+            return `${lastBookable.slice(0, 4)}-12`;
+        }
+        return lastBookable.slice(0, 7);
+    }
+
     async function loadRescheduleMonth(initialDateToSelect = null) {
         const b = state.rescheduleTarget;
         if (!b) return;
@@ -722,7 +730,7 @@
             if (initialDateToSelect) {
                 const initInfo = initialDateToSelect.slice(0, 7) === key ? state.reschedMonthDays[initialDateToSelect] : null;
                 if (initInfo?.bookable && !initInfo.blocked && initInfo.open > 0) {
-                    await selectRescheduleDate(initialDateToSelect, false);
+                    await selectRescheduleDate(initialDateToSelect, true);
                 } else {
                     const firstOpen = Object.keys(state.reschedMonthDays)
                         .sort()
@@ -731,9 +739,9 @@
                             return info?.bookable && !info.blocked && info.open > 0;
                         });
                     if (firstOpen) {
-                        await selectRescheduleDate(firstOpen, false);
+                        await selectRescheduleDate(firstOpen, true);
                     } else if (initInfo?.bookable && !initInfo.blocked && initialDateToSelect === b.date) {
-                        await selectRescheduleDate(initialDateToSelect, false);
+                        await selectRescheduleDate(initialDateToSelect, true);
                     }
                 }
             }
@@ -756,6 +764,7 @@
             firstBookableDate: '2026-11-01',
             lastBookableDate: '2026-11-30',
         };
+        const purpose = getReschedPurpose();
 
         setText('#reschedMonthLabel', new Date(Date.UTC(y, m, 1)).toLocaleDateString('en-US', {
             month: 'long',
@@ -764,7 +773,7 @@
         }));
 
         const minMonthKey = (config.firstBookableDate || config.today || '2026-11-01').slice(0, 7);
-        const lastKey = `${(config.lastBookableDate || '2026-12-31').slice(0, 4)}-12`;
+        const lastKey = maxReschedMonthKeyForPurpose(purpose, config);
         const current = monthKey(y, m);
         const prevBtn = $('#reschedPrevMonth');
         const nextBtn = $('#reschedNextMonth');
@@ -785,7 +794,6 @@
             container.appendChild(spacer);
         }
 
-        const purpose = getReschedPurpose();
         const today = state.serverToday || config.today || '';
 
         for (let d = 1; d <= daysInMonth; d++) {
@@ -870,7 +878,7 @@
             lastBookableDate: '2026-11-30',
         };
         const minMonthKey = (config.firstBookableDate || config.today || '2026-11-01').slice(0, 7);
-        const lastKey = `${(config.lastBookableDate || '2026-12-31').slice(0, 4)}-12`;
+        const lastKey = maxReschedMonthKeyForPurpose(getReschedPurpose(), config);
         const targetKey = monthKey(y, m);
         if (targetKey < minMonthKey || targetKey > lastKey) return;
 

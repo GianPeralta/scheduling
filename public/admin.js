@@ -931,6 +931,13 @@
             });
             state.sendingEmail = false;
             closeSendEmailModal();
+            if (template === 'manuscript_ready' || template === 'letter_ready') {
+                window.SchedulerRealtime?.notifyLocal({
+                    type: 'student_pickup_notified',
+                    studentId: studentId || null,
+                    template,
+                });
+            }
             toast(`Email sent to ${res.to || email}.`, 'success');
         } catch (err) {
             setSendEmailError(err.message);

@@ -532,8 +532,16 @@ function extractStudentNotificationTimestamps(studentRow, appointmentRows = []) 
     };
 }
 
-function computePickupEligibility(studentRow, appointmentRows = []) {
+function computePickupEligibility(studentRow, appointmentRows = [], now = nowInTz()) {
     const { manuscriptNotifiedAt, letterNotifiedAt } = extractStudentNotificationTimestamps(studentRow, appointmentRows);
+
+    const isUpcomingAppointment = (r) => {
+        if (!isActiveRow(r)) return false;
+        if (r.status && r.status !== 'scheduled') return false;
+        if (r.appointment_date < now.date) return false;
+        const [, end] = rowInterval(r);
+        return r.appointment_date > now.date || end > now.minuteOfDay;
+    };
 
     const latestRetrievalBookedAt = latestIsoTimestamp(
         ...(appointmentRows || [])
@@ -544,6 +552,13 @@ function computePickupEligibility(studentRow, appointmentRows = []) {
         ...(appointmentRows || [])
             .filter((r) => isActiveRow(r) && r.consultation_type === 'letter_pickup')
             .map((r) => r.created_at)
+    );
+
+    const hasUpcomingRetrieval = (appointmentRows || []).some(
+        (r) => isUpcomingAppointment(r) && r.consultation_type === 'retrieval'
+    );
+    const hasUpcomingLetterPickup = (appointmentRows || []).some(
+        (r) => isUpcomingAppointment(r) && r.consultation_type === 'letter_pickup'
     );
 
     const canBookRetrieval = Boolean(
@@ -560,6 +575,10 @@ function computePickupEligibility(studentRow, appointmentRows = []) {
         letterNotifiedAt,
         canBookRetrieval,
         canBookLetterPickup,
+        hasUpcomingRetrieval,
+        hasUpcomingLetterPickup,
+        retrievalAlreadyBookedForNotification: Boolean(manuscriptNotifiedAt && !canBookRetrieval),
+        letterPickupAlreadyBookedForNotification: Boolean(letterNotifiedAt && !canBookLetterPickup),
     };
 }
 
@@ -3028,17 +3047,31 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         .eq('student_id', student.id);
     if (mineErr) return res.status(500).json({ error: mineErr.message });
 
-    const eligibility = computePickupEligibility(student, allMine || []);
+    const eligibility = computePickupEligibility(student, allMine || [], now);
     if (consultationType === 'retrieval' && !eligibility.canBookRetrieval) {
+        const msg = eligibility.hasUpcomingRetrieval
+            ? 'You already have an upcoming Retrieval of Manuscript scheduled. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).'
+            : eligibility.retrievalAlreadyBookedForNotification
+                ? 'You have already scheduled a Retrieval of Manuscript for your latest manuscript-ready notification. Please wait for a new email notification after your next manuscript check.'
+                : 'You can only schedule a Retrieval of Manuscript after an email notification has been sent to you confirming that your manuscript is checked and ready for pickup.';
         return res.status(403).json({
             code: 'RETRIEVAL_EMAIL_REQUIRED',
-            error: 'You can only schedule a Retrieval of Manuscript after an email notification has been sent to you confirming that your manuscript is checked and ready for pickup.',
+            alreadyBooked: eligibility.retrievalAlreadyBookedForNotification,
+            hasUpcoming: eligibility.hasUpcomingRetrieval,
+            error: msg,
         });
     }
     if (consultationType === 'letter_pickup' && !eligibility.canBookLetterPickup) {
+        const msg = eligibility.hasUpcomingLetterPickup
+            ? 'You already have an upcoming Communication Letter Pickup scheduled. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).'
+            : eligibility.letterPickupAlreadyBookedForNotification
+                ? 'You have already scheduled a Pickup of Communication Letter for your latest email notification. Please wait for a new notification if you submitted another letter.'
+                : 'You can only schedule a Pickup of Communication Letter after an email notification has been sent to you confirming that your signed letter is ready for pickup.';
         return res.status(403).json({
             code: 'LETTER_PICKUP_EMAIL_REQUIRED',
-            error: 'You can only schedule a Pickup of Communication Letter after an email notification has been sent to you confirming that your signed letter is ready for pickup.',
+            alreadyBooked: eligibility.letterPickupAlreadyBookedForNotification,
+            hasUpcoming: eligibility.hasUpcomingLetterPickup,
+            error: msg,
         });
     }
 
@@ -3980,6 +4013,18 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
     });
 });
 
+// Fetch the student account linked to a booking row so serialized bookings retain student-level metadata.
+async function fetchStudentForBooking(row) {
+    if (!row?.student_id) return null;
+    const { data, error } = await db()
+        .from(STUDENTS_TABLE)
+        .select('*')
+        .eq('id', row.student_id)
+        .maybeSingle();
+    if (error) return null;
+    return data || null;
+}
+
 // Cancel an appointment with an instructor reason visible in the student's profile
 app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
@@ -4014,7 +4059,8 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
     }
     if (!data) return res.status(404).json({ error: 'Booking not found.' });
 
-    const booking = toBooking(data);
+    const studentRow = await fetchStudentForBooking(data);
+    const booking = toBooking(data, nowInTz(), studentRow);
     const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
         console.error('Failed to send student cancellation email:', err.message || err);
     });
@@ -4141,7 +4187,8 @@ async function handleAdminBookingNotesUpdate(req, res) {
     }
     if (!data) return res.status(404).json({ error: 'Booking not found.' });
 
-    const booking = toBooking(data, nowInTz());
+    const studentRow = await fetchStudentForBooking(data);
+    const booking = toBooking(data, nowInTz(), studentRow);
     const rtPromise = notifyRealtimeListeners({
         type: 'booking_notes_updated',
         date: booking.date,

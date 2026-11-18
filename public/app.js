@@ -447,7 +447,53 @@
         setTimeout(() => $('#retrievalYesBtn')?.focus(), 40);
     }
 
+    function applyPickupBlockedContent({ purpose, titleSel, textSel, linkSel, closeBtnSel }) {
+        const status = getPickupEligibilityDetails(purpose);
+        const titleEl = $(titleSel);
+        const textEl = $(textSel);
+        const linkEl = $(linkSel);
+        const closeBtn = $(closeBtnSel);
+        const isRetrieval = purpose === 'retrieval';
+
+        if (status.hasUpcoming) {
+            if (titleEl) titleEl.textContent = isRetrieval ? 'Retrieval already scheduled' : 'Letter pickup already scheduled';
+            if (textEl) {
+                textEl.innerHTML = isRetrieval
+                    ? 'You already have an upcoming <strong>Retrieval of Manuscript</strong> appointment scheduled. Go to <strong>My Appointments</strong> if you need to reschedule or cancel it.'
+                    : 'You already have an upcoming <strong>Pickup of Communication Letter</strong> appointment scheduled. Go to <strong>My Appointments</strong> if you need to reschedule or cancel it.';
+            }
+        } else if (status.alreadyBooked) {
+            if (titleEl) titleEl.textContent = 'New email notification required';
+            if (textEl) {
+                textEl.innerHTML = isRetrieval
+                    ? 'You have already scheduled a <strong>Retrieval of Manuscript</strong> for your latest manuscript-ready notification. Please wait for a new email notification after your next manuscript check.'
+                    : 'You have already scheduled a <strong>Pickup of Communication Letter</strong> for your latest email notification. Please wait for a new email notification if you submitted another letter.';
+            }
+        } else {
+            if (titleEl) titleEl.textContent = 'Email notification required';
+            if (textEl) {
+                textEl.innerHTML = isRetrieval
+                    ? 'No manuscript-ready email notification has been sent to your account yet. You can only schedule a <strong>Retrieval of Manuscript</strong> after your instructor emails you confirming that your manuscript has been checked.'
+                    : 'No communication-letter pickup email notification has been sent to your account yet. You can only schedule a <strong>Pickup of Communication Letter</strong> after your instructor emails you confirming that your signed letter is ready for pickup.';
+            }
+        }
+
+        const showAppointmentsLink = status.hasUpcoming || status.alreadyBooked;
+        if (linkEl) linkEl.classList.toggle('hidden', !showAppointmentsLink);
+        if (closeBtn) {
+            closeBtn.classList.toggle('btn-primary', !showAppointmentsLink);
+            closeBtn.classList.toggle('btn-ghost', showAppointmentsLink);
+        }
+    }
+
     function openRetrievalBlockedModal() {
+        applyPickupBlockedContent({
+            purpose: 'retrieval',
+            titleSel: '#retrievalNoTitle',
+            textSel: '#retrievalNoText',
+            linkSel: '#retrievalAppointmentsLink',
+            closeBtnSel: '#retrievalCloseBtn',
+        });
         $('#retrievalAskView').classList.add('hidden');
         $('#retrievalNoView').classList.remove('hidden');
         $('#retrievalModal').classList.remove('hidden');
@@ -470,6 +516,13 @@
     }
 
     function openLetterPickupBlockedModal() {
+        applyPickupBlockedContent({
+            purpose: 'letter_pickup',
+            titleSel: '#letterPickupNoTitle',
+            textSel: '#letterPickupNoText',
+            linkSel: '#letterPickupAppointmentsLink',
+            closeBtnSel: '#letterPickupCloseBtn',
+        });
         $('#letterPickupAskView').classList.add('hidden');
         $('#letterPickupNoView').classList.remove('hidden');
         $('#letterPickupModal').classList.remove('hidden');
@@ -492,35 +545,64 @@
         return best;
     }
 
-    function hasPickupNotification(purpose) {
-        if (state.pickupEligibility) {
-            if (purpose === 'retrieval') return Boolean(state.pickupEligibility.canBookRetrieval);
-            if (purpose === 'letter_pickup') return Boolean(state.pickupEligibility.canBookLetterPickup);
-        }
+    function getPickupEligibilityDetails(purpose) {
         const active = (state.myBookings || []).filter((b) => b.status !== 'cancelled');
+        const today = state.serverToday || state.config?.today || '';
+        const curMin = state.serverCurrentMinute || 0;
+        const isUpcoming = (b) => b.status === 'scheduled'
+            && (!today || b.date > today || (b.date === today && (b.endMinute ?? 1440) > curMin));
+
         if (purpose === 'retrieval') {
-            const notifiedMs = latestMsFromList([
-                state.student?.manuscriptNotifiedAt,
-                ...active.filter((b) => b.consultationType === 'dropoff' && b.notifiedAt).map((b) => b.notifiedAt),
-            ]);
-            if (notifiedMs === null) return false;
+            const elig = state.pickupEligibility;
+            const notifiedMs = elig?.manuscriptNotifiedAt
+                ? new Date(elig.manuscriptNotifiedAt).getTime()
+                : latestMsFromList([
+                    state.student?.manuscriptNotifiedAt,
+                    ...active.filter((b) => b.consultationType === 'dropoff' && b.notifiedAt).map((b) => b.notifiedAt),
+                ]);
             const bookedMs = latestMsFromList(
                 active.filter((b) => b.consultationType === 'retrieval').map((b) => b.createdAt)
             );
-            return bookedMs === null || notifiedMs > bookedMs;
+            const hasUpcoming = typeof elig?.hasUpcomingRetrieval === 'boolean'
+                ? elig.hasUpcomingRetrieval
+                : active.some((b) => b.consultationType === 'retrieval' && isUpcoming(b));
+            const canBook = elig
+                ? Boolean(elig.canBookRetrieval)
+                : Boolean(notifiedMs !== null && (bookedMs === null || notifiedMs > bookedMs));
+            const alreadyBooked = typeof elig?.retrievalAlreadyBookedForNotification === 'boolean'
+                ? elig.retrievalAlreadyBookedForNotification
+                : Boolean(!canBook && notifiedMs !== null);
+            return { canBook, alreadyBooked, hasUpcoming };
         }
+
         if (purpose === 'letter_pickup') {
-            const notifiedMs = latestMsFromList([
-                state.student?.letterNotifiedAt,
-                ...active.filter((b) => b.consultationType === 'letter' && b.notifiedAt).map((b) => b.notifiedAt),
-            ]);
-            if (notifiedMs === null) return false;
+            const elig = state.pickupEligibility;
+            const notifiedMs = elig?.letterNotifiedAt
+                ? new Date(elig.letterNotifiedAt).getTime()
+                : latestMsFromList([
+                    state.student?.letterNotifiedAt,
+                    ...active.filter((b) => b.consultationType === 'letter' && b.notifiedAt).map((b) => b.notifiedAt),
+                ]);
             const bookedMs = latestMsFromList(
                 active.filter((b) => b.consultationType === 'letter_pickup').map((b) => b.createdAt)
             );
-            return bookedMs === null || notifiedMs > bookedMs;
+            const hasUpcoming = typeof elig?.hasUpcomingLetterPickup === 'boolean'
+                ? elig.hasUpcomingLetterPickup
+                : active.some((b) => b.consultationType === 'letter_pickup' && isUpcoming(b));
+            const canBook = elig
+                ? Boolean(elig.canBookLetterPickup)
+                : Boolean(notifiedMs !== null && (bookedMs === null || notifiedMs > bookedMs));
+            const alreadyBooked = typeof elig?.letterPickupAlreadyBookedForNotification === 'boolean'
+                ? elig.letterPickupAlreadyBookedForNotification
+                : Boolean(!canBook && notifiedMs !== null);
+            return { canBook, alreadyBooked, hasUpcoming };
         }
-        return true;
+
+        return { canBook: true, alreadyBooked: false, hasUpcoming: false };
+    }
+
+    function hasPickupNotification(purpose) {
+        return getPickupEligibilityDetails(purpose).canBook;
     }
 
     async function onClickConsultationCard(purpose) {
@@ -569,6 +651,20 @@
         return purpose === 'defense' ? `${base}#${level}` : base;
     }
 
+    function minMonthKey() {
+        if (!state.config) return '';
+        return (state.config.firstBookableDate || state.config.today).slice(0, 7);
+    }
+
+    function maxMonthKeyForPurpose(purpose = state.consultationPurpose) {
+        if (!state.config) return '';
+        const lastBookable = state.config.lastBookableDate || `${state.config.today.slice(0, 4)}-11-30`;
+        if (purpose === 'letter_pickup') {
+            return `${lastBookable.slice(0, 4)}-12`;
+        }
+        return lastBookable.slice(0, 7);
+    }
+
     async function proceedWithConsultationPurpose(purpose) {
         const nextPurpose = Object.prototype.hasOwnProperty.call(PURPOSE_META, purpose) ? purpose : 'system';
         if (nextPurpose === 'defense') {
@@ -599,6 +695,19 @@
             return;
         }
 
+        const minKey = minMonthKey();
+        const maxKey = maxMonthKeyForPurpose(nextPurpose);
+        const currentKey = monthKey(state.viewYear, state.viewMonth);
+        if (minKey && currentKey < minKey) {
+            const [y, m] = minKey.split('-').map(Number);
+            state.viewYear = y;
+            state.viewMonth = m - 1;
+        } else if (maxKey && currentKey > maxKey && (!minKey || maxKey >= minKey)) {
+            const [y, m] = maxKey.split('-').map(Number);
+            state.viewYear = y;
+            state.viewMonth = m - 1;
+        }
+
         goToStep(2);
 
         const targetMonthLoadKey = monthLoadKey(state.viewYear, state.viewMonth, nextPurpose);
@@ -615,9 +724,7 @@
         } else {
             const bookableInCurrent = Object.keys(state.monthDays).sort().filter((d) => state.monthDays[d]?.bookable);
             let firstOpen = bookableInCurrent.find((d) => state.monthDays[d].open > 0);
-            const autoAdvanceLimit = nextPurpose === 'letter_pickup'
-                ? `${state.config.lastBookableDate.slice(0, 4)}-12`
-                : state.config.lastBookableDate.slice(0, 7);
+            const autoAdvanceLimit = maxMonthKeyForPurpose(nextPurpose);
             if (!bookableInCurrent.length && state.config && monthKey(state.viewYear, state.viewMonth) < autoAdvanceLimit) {
                 const changed = await changeMonth(1);
                 if (!changed) return;
@@ -744,11 +851,11 @@
             month: 'long', year: 'numeric', timeZone: 'UTC',
         });
 
-        const minMonthKey = (config.firstBookableDate || config.today).slice(0, 7);
-        const lastKey = `${config.lastBookableDate.slice(0, 4)}-12`;
+        const minKey = minMonthKey();
+        const lastKey = maxMonthKeyForPurpose(state.consultationPurpose);
         const current = monthKey(y, m);
-        $('#prevMonth').disabled = loading || current <= minMonthKey;
-        $('#nextMonth').disabled = loading || current >= lastKey;
+        $('#prevMonth').disabled = loading || (Boolean(minKey) && current <= minKey);
+        $('#nextMonth').disabled = loading || (Boolean(lastKey) && current >= lastKey);
 
         const container = $('#days');
         container.classList.toggle('loading', loading);
@@ -857,9 +964,9 @@
         if (m > 11) { m = 0; y++; }
 
         const targetKey = monthKey(y, m);
-        const minKey = (state.config.firstBookableDate || state.config.today).slice(0, 7);
-        const lastKey = `${state.config.lastBookableDate.slice(0, 4)}-12`;
-        if (targetKey < minKey || targetKey > lastKey) return Promise.resolve(false);
+        const minKey = minMonthKey();
+        const lastKey = maxMonthKeyForPurpose(state.consultationPurpose);
+        if ((minKey && targetKey < minKey) || (lastKey && targetKey > lastKey)) return Promise.resolve(false);
 
         state.viewMonth = m;
         state.viewYear = y;
@@ -1538,12 +1645,12 @@
                 openBeninsigModal();
             } else if (err.code === 'RETRIEVAL_EMAIL_REQUIRED') {
                 state.retrievalNotifiedConfirmed = false;
-                loadMyBookings();
+                await loadMyBookings();
                 resetBooking();
                 openRetrievalBlockedModal();
             } else if (err.code === 'LETTER_PICKUP_EMAIL_REQUIRED') {
                 state.letterPickupNotifiedConfirmed = false;
-                loadMyBookings();
+                await loadMyBookings();
                 resetBooking();
                 openLetterPickupBlockedModal();
             } else if (err.field === 'teamName') {
@@ -2762,6 +2869,13 @@
             proceedWithConsultationPurpose('retrieval');
         });
         $('#retrievalNoBtn')?.addEventListener('click', () => {
+            applyPickupBlockedContent({
+                purpose: 'retrieval',
+                titleSel: '#retrievalNoTitle',
+                textSel: '#retrievalNoText',
+                linkSel: '#retrievalAppointmentsLink',
+                closeBtnSel: '#retrievalCloseBtn',
+            });
             $('#retrievalAskView').classList.add('hidden');
             $('#retrievalNoView').classList.remove('hidden');
             $('#retrievalCloseBtn')?.focus();
@@ -2778,6 +2892,13 @@
             proceedWithConsultationPurpose('letter_pickup');
         });
         $('#letterPickupNoBtn')?.addEventListener('click', () => {
+            applyPickupBlockedContent({
+                purpose: 'letter_pickup',
+                titleSel: '#letterPickupNoTitle',
+                textSel: '#letterPickupNoText',
+                linkSel: '#letterPickupAppointmentsLink',
+                closeBtnSel: '#letterPickupCloseBtn',
+            });
             $('#letterPickupAskView').classList.add('hidden');
             $('#letterPickupNoView').classList.remove('hidden');
             $('#letterPickupCloseBtn')?.focus();

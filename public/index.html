@@ -310,7 +310,7 @@
                                     <strong>Requirements:</strong>
                                     <ul>
                                         <li>Make sure you were notified by me that your Manuscript is ready for retrieval before scheduling.</li>
-                                        <li>Atleast 2 or all members must be present, otherwise you will not be accommodated.</li>
+                                        <li>At least 2 or all members must be present, otherwise you will not be accommodated.</li>
                                     </ul>
                                 </div>
                             </div>
@@ -574,11 +574,12 @@
             </div>
 
             <div id="retrievalNoView" class="modal-body hidden">
-                <h3>Email notification required</h3>
-                <p class="muted">
+                <h3 id="retrievalNoTitle">Email notification required</h3>
+                <p class="muted" id="retrievalNoText">
                     No manuscript-ready email notification has been sent to your account yet. You can only schedule a <strong>Retrieval of Manuscript</strong> after your instructor emails you confirming that your manuscript has been checked.
                 </p>
                 <div class="modal-actions">
+                    <a class="btn btn-primary btn-block hidden" id="retrievalAppointmentsLink" href="/appointments.html">Go to My Appointments</a>
                     <button type="button" class="btn btn-primary btn-block" id="retrievalCloseBtn">
                         Got it
                     </button>
@@ -606,11 +607,12 @@
             </div>
 
             <div id="letterPickupNoView" class="modal-body hidden">
-                <h3>Email notification required</h3>
-                <p class="muted">
+                <h3 id="letterPickupNoTitle">Email notification required</h3>
+                <p class="muted" id="letterPickupNoText">
                     No communication-letter pickup email notification has been sent to your account yet. You can only schedule a <strong>Pickup of Communication Letter</strong> after your instructor emails you confirming that your signed letter is ready for pickup.
                 </p>
                 <div class="modal-actions">
+                    <a class="btn btn-primary btn-block hidden" id="letterPickupAppointmentsLink" href="/appointments.html">Go to My Appointments</a>
                     <button type="button" class="btn btn-primary btn-block" id="letterPickupCloseBtn">
                         Got it
                     </button>

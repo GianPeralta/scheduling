@@ -119,6 +119,13 @@
                         date: row.blocked_date || null,
                     });
                 })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'letter_pickup_schedules' }, (payload) => {
+                    const row = payload?.new || payload?.old || {};
+                    scheduleEmit({
+                        type: 'ws_letter_pickup_schedules',
+                        date: row.available_date || null,
+                    });
+                })
                 .subscribe((status) => {
                     wsConnected = status === 'SUBSCRIBED';
                     updateStatusIndicators();
