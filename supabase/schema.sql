@@ -10,7 +10,7 @@ create table if not exists public.appointments (
     start_minute      smallint    not null check (start_minute between 0 and 1439),
     duration_minutes  smallint    not null default 15 check (duration_minutes in (0, 5, 6, 10, 15, 60, 80, 120)),
     consultation_type   text        not null default 'system'
-                                    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other')),
+                                    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'letter_pickup', 'defense', 'other')),
     status              text        not null default 'scheduled'
                                     check (status in ('scheduled', 'completed', 'no_show', 'cancelled')),
     cancellation_reason text        check (cancellation_reason is null or char_length(cancellation_reason) between 2 and 500),
@@ -87,7 +87,7 @@ alter table public.appointments add constraint appointments_duration_minutes_che
     check (duration_minutes in (0, 5, 6, 10, 15, 60, 80, 120));
 alter table public.appointments drop constraint if exists appointments_consultation_type_check;
 alter table public.appointments add constraint appointments_consultation_type_check
-    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'defense', 'other'));
+    check (consultation_type in ('system', 'dropoff', 'retrieval', 'letter', 'letter_pickup', 'defense', 'other'));
 
 -- Defenses: 'capstone1' / 'thesis1' = 1 hour (60), 'capstone2' / 'thesis2' = 2 hours (120)
 alter table public.appointments add column if not exists defense_level text;
@@ -162,6 +162,8 @@ alter table public.students add constraint students_project_level_check
     check (project_level is null or project_level in ('capstone1', 'capstone2', 'thesis1', 'thesis2'));
 alter table public.students add column if not exists updated_at timestamptz;
 alter table public.students add column if not exists change_history jsonb not null default '[]'::jsonb;
+alter table public.students add column if not exists manuscript_notified_at timestamptz;
+alter table public.students add column if not exists letter_notified_at timestamptz;
 
 -- Audit log of changes students make to their registration info
 create table if not exists public.student_update_logs (
@@ -263,6 +265,24 @@ alter table public.blocked_schedules enable row level security;
 
 
 -- ---------------------------------------------------------------------------
+-- Available dates & time ranges for Pickup of Communication Letter (5-min slots)
+-- ---------------------------------------------------------------------------
+create table if not exists public.letter_pickup_schedules (
+    id              uuid primary key default gen_random_uuid(),
+    available_date  date        not null,
+    start_minute    smallint    not null check (start_minute >= 0 and start_minute < 1440),
+    end_minute      smallint    not null check (end_minute > 0 and end_minute <= 1440),
+    note            text        check (note is null or char_length(note) <= 500),
+    created_at      timestamptz not null default now(),
+    constraint letter_pickup_schedules_time_check
+        check (start_minute < end_minute and (end_minute - start_minute) >= 5)
+);
+
+create index if not exists letter_pickup_schedules_date_idx on public.letter_pickup_schedules (available_date);
+alter table public.letter_pickup_schedules enable row level security;
+
+
+-- ---------------------------------------------------------------------------
 -- OPTIONAL: only needed if you keep using SUPABASE_ANON_KEY on the server
 -- instead of SUPABASE_SERVICE_ROLE_KEY. Uncomment and run.
 -- (The anon key stays on the server, but anyone who obtains it could then
@@ -287,6 +307,12 @@ begin
             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'blocked_schedules'
         ) then
             alter publication supabase_realtime add table public.blocked_schedules;
+        end if;
+        if not exists (
+            select 1 from pg_publication_tables
+            where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'letter_pickup_schedules'
+        ) then
+            alter publication supabase_realtime add table public.letter_pickup_schedules;
         end if;
     end if;
 exception when others then

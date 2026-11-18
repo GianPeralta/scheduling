@@ -64,6 +64,20 @@
             reasonLabel: 'Purpose of the communication letter',
             reasonPlaceholder: 'e.g. Request letter to conduct survey / data gathering with target respondents.',
         },
+        letter_pickup: {
+            title: 'Pickup of Communication Letter',
+            badge: '5 minutes',
+            summary: 'Comm. Letter Pickup · 5 min',
+            color: 'violet',
+            requiresAllMembers: false,
+            adviserOnly: true,
+            reasonOptional: true,
+            bannerNote: 'Schedule once notified by email that your signed letter is ready.',
+            policyHtml: '<strong>Ready for Pickup:</strong> Schedule this 5-minute slot after receiving the email notification that your communication letter is signed and ready.',
+            confirmHtml: '<strong>Reminder:</strong> Please claim your signed communication letter at the Faculty Office during your scheduled 5-minute pickup slot.',
+            reasonLabel: 'Notes for pickup',
+            reasonPlaceholder: 'e.g. Picking up signed communication letter (optional)',
+        },
         other: {
             title: 'Other Consultations',
             badge: '10 minutes',
@@ -113,6 +127,7 @@
         defenseDay: null, // last /api/slots response for a defense date (windows + free ranges)
         beninsigConfirmed: false,
         retrievalNotifiedConfirmed: false,
+        letterPickupNotifiedConfirmed: false,
         bookingType: 'group', // 'individual' | 'group'
         monthRequest: 0,
         slotsRequest: 0,
@@ -124,6 +139,7 @@
         lastBookedId: null,
         student: null, // { id, name, email, capstoneTitle, instructorRole, members }
         myBookings: [],
+        pickupEligibility: null, // { manuscriptNotifiedAt, letterNotifiedAt, canBookRetrieval, canBookLetterPickup }
         profileFilter: 'all', // 'all' | 'upcoming' | 'cancelled' | 'past'
         serverToday: '',
         serverCurrentMinute: 0,
@@ -431,12 +447,83 @@
         setTimeout(() => $('#retrievalYesBtn')?.focus(), 40);
     }
 
+    function openRetrievalBlockedModal() {
+        $('#retrievalAskView').classList.add('hidden');
+        $('#retrievalNoView').classList.remove('hidden');
+        $('#retrievalModal').classList.remove('hidden');
+        syncModalBodyLock();
+        setTimeout(() => $('#retrievalCloseBtn')?.focus(), 40);
+    }
+
     function closeRetrievalModal() {
         $('#retrievalModal').classList.add('hidden');
         syncModalBodyLock();
     }
 
-    function onClickConsultationCard(purpose) {
+    /* ---------------- Email notification prerequisite modal for Pickup of Communication Letter ---------------- */
+    function openLetterPickupModal() {
+        $('#letterPickupAskView').classList.remove('hidden');
+        $('#letterPickupNoView').classList.add('hidden');
+        $('#letterPickupModal').classList.remove('hidden');
+        syncModalBodyLock();
+        setTimeout(() => $('#letterPickupYesBtn')?.focus(), 40);
+    }
+
+    function openLetterPickupBlockedModal() {
+        $('#letterPickupAskView').classList.add('hidden');
+        $('#letterPickupNoView').classList.remove('hidden');
+        $('#letterPickupModal').classList.remove('hidden');
+        syncModalBodyLock();
+        setTimeout(() => $('#letterPickupCloseBtn')?.focus(), 40);
+    }
+
+    function closeLetterPickupModal() {
+        $('#letterPickupModal').classList.add('hidden');
+        syncModalBodyLock();
+    }
+
+    function latestMsFromList(values) {
+        let best = null;
+        for (const v of values) {
+            if (!v) continue;
+            const ms = new Date(v).getTime();
+            if (Number.isFinite(ms) && (best === null || ms > best)) best = ms;
+        }
+        return best;
+    }
+
+    function hasPickupNotification(purpose) {
+        if (state.pickupEligibility) {
+            if (purpose === 'retrieval') return Boolean(state.pickupEligibility.canBookRetrieval);
+            if (purpose === 'letter_pickup') return Boolean(state.pickupEligibility.canBookLetterPickup);
+        }
+        const active = (state.myBookings || []).filter((b) => b.status !== 'cancelled');
+        if (purpose === 'retrieval') {
+            const notifiedMs = latestMsFromList([
+                state.student?.manuscriptNotifiedAt,
+                ...active.filter((b) => b.consultationType === 'dropoff' && b.notifiedAt).map((b) => b.notifiedAt),
+            ]);
+            if (notifiedMs === null) return false;
+            const bookedMs = latestMsFromList(
+                active.filter((b) => b.consultationType === 'retrieval').map((b) => b.createdAt)
+            );
+            return bookedMs === null || notifiedMs > bookedMs;
+        }
+        if (purpose === 'letter_pickup') {
+            const notifiedMs = latestMsFromList([
+                state.student?.letterNotifiedAt,
+                ...active.filter((b) => b.consultationType === 'letter' && b.notifiedAt).map((b) => b.notifiedAt),
+            ]);
+            if (notifiedMs === null) return false;
+            const bookedMs = latestMsFromList(
+                active.filter((b) => b.consultationType === 'letter_pickup').map((b) => b.createdAt)
+            );
+            return bookedMs === null || notifiedMs > bookedMs;
+        }
+        return true;
+    }
+
+    async function onClickConsultationCard(purpose) {
         if (purpose === 'letter') {
             if (state.student?.instructorRole !== 'adviser') {
                 toast('Communication Letter Signature is only available when Arnemie Gayyed is your Adviser.', 'error');
@@ -447,9 +534,31 @@
                 return;
             }
         }
-        if (purpose === 'retrieval' && !state.retrievalNotifiedConfirmed) {
-            openRetrievalModal();
-            return;
+        if (purpose === 'letter_pickup') {
+            if (state.student?.instructorRole !== 'adviser') {
+                toast('Pickup of Communication Letter is only available when Arnemie Gayyed is your Adviser.', 'error');
+                return;
+            }
+            if (state.pickupEligibility === null) {
+                await loadMyBookings();
+            }
+            if (!hasPickupNotification('letter_pickup')) {
+                state.letterPickupNotifiedConfirmed = false;
+                openLetterPickupBlockedModal();
+                return;
+            }
+            state.letterPickupNotifiedConfirmed = true;
+        }
+        if (purpose === 'retrieval') {
+            if (state.pickupEligibility === null) {
+                await loadMyBookings();
+            }
+            if (!hasPickupNotification('retrieval')) {
+                state.retrievalNotifiedConfirmed = false;
+                openRetrievalBlockedModal();
+                return;
+            }
+            state.retrievalNotifiedConfirmed = true;
         }
         proceedWithConsultationPurpose(purpose);
     }
@@ -506,7 +615,10 @@
         } else {
             const bookableInCurrent = Object.keys(state.monthDays).sort().filter((d) => state.monthDays[d]?.bookable);
             let firstOpen = bookableInCurrent.find((d) => state.monthDays[d].open > 0);
-            if (!bookableInCurrent.length && state.config && monthKey(state.viewYear, state.viewMonth) < state.config.lastBookableDate.slice(0, 7)) {
+            const autoAdvanceLimit = nextPurpose === 'letter_pickup'
+                ? `${state.config.lastBookableDate.slice(0, 4)}-12`
+                : state.config.lastBookableDate.slice(0, 7);
+            if (!bookableInCurrent.length && state.config && monthKey(state.viewYear, state.viewMonth) < autoAdvanceLimit) {
                 const changed = await changeMonth(1);
                 if (!changed) return;
                 firstOpen = Object.keys(state.monthDays).sort().find((d) => state.monthDays[d].open > 0);
@@ -667,7 +779,7 @@
 
             if (loading) {
                 btn.disabled = true;
-            } else if (m !== 10 || !info || !info.bookable) {
+            } else if ((state.consultationPurpose !== 'letter_pickup' && m !== 10) || !info || !info.bookable) {
                 if (ds === config.today) {
                     btn.setAttribute('aria-disabled', 'true');
                     btn.addEventListener('click', () => {
@@ -692,9 +804,11 @@
                 btn.classList.add('available');
                 const openTitle = state.consultationPurpose === 'dropoff'
                     ? 'Open for manuscript drop-off'
-                    : state.consultationPurpose === 'defense'
-                        ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
-                        : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
+                    : state.consultationPurpose === 'letter_pickup'
+                        ? `${info.open} pickup slot${info.open === 1 ? '' : 's'} open`
+                        : state.consultationPurpose === 'defense'
+                            ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
+                            : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
                 btn.title = info.hasBlocks && info.blockReason
                     ? `${openTitle} (${info.blockReason})`
                     : openTitle;
@@ -1302,9 +1416,26 @@
                 return;
             }
         }
-        if (state.consultationPurpose === 'retrieval' && !state.retrievalNotifiedConfirmed) {
-            openRetrievalModal();
-            return;
+        if (state.consultationPurpose === 'letter_pickup') {
+            if (state.student.instructorRole !== 'adviser') {
+                toast('Pickup of Communication Letter is only available when Arnemie Gayyed is your Adviser.', 'error');
+                resetBooking();
+                return;
+            }
+            if (!hasPickupNotification('letter_pickup')) {
+                state.letterPickupNotifiedConfirmed = false;
+                openLetterPickupBlockedModal();
+                return;
+            }
+            state.letterPickupNotifiedConfirmed = true;
+        }
+        if (state.consultationPurpose === 'retrieval') {
+            if (!hasPickupNotification('retrieval')) {
+                state.retrievalNotifiedConfirmed = false;
+                openRetrievalBlockedModal();
+                return;
+            }
+            state.retrievalNotifiedConfirmed = true;
         }
         if (!state.selectedDate || !state.selectedSlot) {
             goToStep(2);
@@ -1344,6 +1475,7 @@
                 defenseLevel: state.consultationPurpose === 'defense' ? state.defenseLevel : undefined,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
                 retrievalEmailConfirmed: state.retrievalNotifiedConfirmed,
+                letterPickupEmailConfirmed: state.letterPickupNotifiedConfirmed,
                 teamName,
                 members,
                 reason,
@@ -1357,6 +1489,7 @@
                 defenseLevel: state.consultationPurpose === 'defense' ? state.defenseLevel : undefined,
                 beninsigInitialConfirmed: state.beninsigConfirmed,
                 retrievalEmailConfirmed: state.retrievalNotifiedConfirmed,
+                letterPickupEmailConfirmed: state.letterPickupNotifiedConfirmed,
                 teamName,
                 reason,
                 date: state.selectedDate,
@@ -1405,7 +1538,14 @@
                 openBeninsigModal();
             } else if (err.code === 'RETRIEVAL_EMAIL_REQUIRED') {
                 state.retrievalNotifiedConfirmed = false;
-                openRetrievalModal();
+                loadMyBookings();
+                resetBooking();
+                openRetrievalBlockedModal();
+            } else if (err.code === 'LETTER_PICKUP_EMAIL_REQUIRED') {
+                state.letterPickupNotifiedConfirmed = false;
+                loadMyBookings();
+                resetBooking();
+                openLetterPickupBlockedModal();
             } else if (err.field === 'teamName') {
                 setFieldError('#teamInput', err.message);
             } else if (err.field === 'members') {
@@ -1498,6 +1638,7 @@
         state.defenseDay = null;
         state.beninsigConfirmed = false;
         state.retrievalNotifiedConfirmed = false;
+        state.letterPickupNotifiedConfirmed = false;
         state.selectedSlot = null;
         state.loadedMonthKey = null;
         state.loadedSlotsKey = null;
@@ -1518,6 +1659,17 @@
         if (tabsEl) {
             tabsEl.innerHTML = '';
             tabsEl.classList.add('hidden');
+        }
+        const hasOpenDays = Object.values(state.monthDays || {}).some((d) => d?.bookable && d.open > 0);
+        if (state.consultationPurpose === 'letter_pickup' && !hasOpenDays) {
+            $('#slotsTitle').textContent = 'No pickup dates open';
+            $('#slotsSubtitle').textContent = 'No Communication Letter Pickup schedule is open for this month yet.';
+            $('#slotList').innerHTML = `
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                    <p>No dates are open for Communication Letter Pickup in this month yet. Please check another month or wait for your instructor to post available pickup times.</p>
+                </div>`;
+            return;
         }
         $('#slotsTitle').textContent = 'Select a date';
         $('#slotsSubtitle').textContent = 'Pick an available day on the calendar.';
@@ -1660,6 +1812,7 @@
     async function loadMyBookings() {
         if (!state.student) {
             state.myBookings = [];
+            state.pickupEligibility = null;
             $('#myAppointmentsLink')?.classList.add('hidden');
             $('#myBookingsBtn')?.classList.add('hidden');
             $('#profileCancelDot')?.classList.add('hidden');
@@ -1671,6 +1824,7 @@
         try {
             const data = await api('/api/my-bookings');
             state.myBookings = data.bookings || [];
+            state.pickupEligibility = data.eligibility || null;
             if (data.today) state.serverToday = data.today;
             if (typeof data.currentMinute === 'number') state.serverCurrentMinute = data.currentMinute;
 
@@ -2049,9 +2203,14 @@
         if (letterCard) {
             letterCard.classList.toggle('hidden', !isAdviser);
         }
-        if (!isAdviser && state.consultationPurpose === 'letter') {
+        const letterPickupCard = $('#letterPickupChoiceCard');
+        if (letterPickupCard) {
+            letterPickupCard.classList.toggle('hidden', !isAdviser);
+        }
+        if (!isAdviser && (state.consultationPurpose === 'letter' || state.consultationPurpose === 'letter_pickup')) {
             state.consultationPurpose = null;
             state.beninsigConfirmed = false;
+            state.letterPickupNotifiedConfirmed = false;
             updateSelectionBox();
         }
 
@@ -2121,12 +2280,15 @@
             closeMyBookingsModal();
             closeBeninsigModal();
             closeRetrievalModal();
+            closeLetterPickupModal();
             $('#myAppointmentsLink')?.classList.add('hidden');
             $('#myBookingsBtn')?.classList.add('hidden');
             if ($('#teamInput')) $('#teamInput').value = '';
             state.consultationPurpose = null;
             state.beninsigConfirmed = false;
             state.retrievalNotifiedConfirmed = false;
+            state.letterPickupNotifiedConfirmed = false;
+            state.pickupEligibility = null;
             state.selectedDate = null;
             state.selectedSlot = null;
             resetMembers();
@@ -2609,6 +2771,22 @@
             if (e.target.id === 'retrievalModal') closeRetrievalModal();
         });
 
+        // Pickup of Communication Letter email notification prerequisite modal events
+        $('#letterPickupYesBtn')?.addEventListener('click', () => {
+            state.letterPickupNotifiedConfirmed = true;
+            closeLetterPickupModal();
+            proceedWithConsultationPurpose('letter_pickup');
+        });
+        $('#letterPickupNoBtn')?.addEventListener('click', () => {
+            $('#letterPickupAskView').classList.add('hidden');
+            $('#letterPickupNoView').classList.remove('hidden');
+            $('#letterPickupCloseBtn')?.focus();
+        });
+        $('#letterPickupCloseBtn')?.addEventListener('click', closeLetterPickupModal);
+        $('#letterPickupModal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'letterPickupModal') closeLetterPickupModal();
+        });
+
         document.querySelectorAll('input[name="regLevel"]').forEach((r) => {
             r.addEventListener('change', () => clearFieldError('#regLevelField'));
         });
@@ -2652,6 +2830,7 @@
             if (e.key === 'Escape') {
                 closeBeninsigModal();
                 closeRetrievalModal();
+                closeLetterPickupModal();
                 closeMyBookingsModal();
             }
         });

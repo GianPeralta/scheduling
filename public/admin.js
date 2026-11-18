@@ -9,6 +9,7 @@
         dropoff: { label: 'Drop-off only', cls: 'amber' },
         retrieval: { label: 'Retrieval · 5m', cls: 'sky' },
         letter: { label: 'Comm. Letter · 5m', cls: 'violet' },
+        letter_pickup: { label: 'Letter Pickup · 5m', cls: 'violet' },
         other: { label: 'Other · 10m', cls: 'sky' },
     };
 
@@ -16,6 +17,7 @@
         password: sessionStorage.getItem(STORAGE_KEY) || '',
         bookings: [],
         blockedSchedules: [],
+        letterPickupSchedules: [],
         students: [],
         studentUpdateLogs: [],
         config: null,
@@ -36,6 +38,7 @@
         notesDraftAttended: new Set(),
         blockScope: 'full', // 'full' | 'time'
         blocking: false,
+        savingLetterPickup: false,
         sendingEmail: false,
         emailTemplate: 'manuscript_ready',
     };
@@ -155,13 +158,16 @@
         state.cancelling = false;
         state.notesSaving = false;
         state.blocking = false;
+        state.savingLetterPickup = false;
         state.sendingEmail = false;
         closeCancelModal();
         closeNotesModal();
         closeBlockModal();
+        closeLetterPickupModal();
         closeSendEmailModal();
         state.bookings = [];
         state.blockedSchedules = [];
+        state.letterPickupSchedules = [];
         state.students = [];
         state.studentUpdateLogs = [];
         showLogin();
@@ -194,11 +200,17 @@
             state.blockedSchedules = (data.blockedSchedules || []).sort(
                 (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
             );
+            state.letterPickupSchedules = (data.letterPickupSchedules || []).sort(
+                (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
+            );
             state.students = data.students || [];
             state.studentUpdateLogs = data.studentUpdateLogs || [];
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
+            if (!$('#letterPickupScheduleModal')?.classList.contains('hidden')) {
+                renderLetterPickupModalList();
+            }
             if (state.cancelTarget && !state.cancelling) {
                 const updatedTarget = state.bookings.find((x) => x.id === state.cancelTarget.id);
                 if (!updatedTarget || isCancelled(updatedTarget)) {
@@ -247,6 +259,10 @@
     const isActiveBlock = (blk) => {
         if (!state.today) return true;
         return blk.date > state.today || (blk.date === state.today && (blk.endMinute ?? 1440) > state.currentMinute);
+    };
+    const isActiveLetterPickup = (item) => {
+        if (!state.today) return true;
+        return item.date > state.today || (item.date === state.today && (item.endMinute ?? 1440) > state.currentMinute);
     };
 
     /* ---------------- block date / time modal ---------------- */
@@ -390,6 +406,170 @@
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'block_removed', date: blk.date });
             toast(`Unblocked ${shortDate(blk.date)}.`, 'success');
+        } catch (err) {
+            if (btn) btn.disabled = false;
+            toast(err.message, 'error');
+        }
+    }
+
+    /* ---------------- communication letter pickup schedule modal ---------------- */
+    function setLetterPickupError(msg) {
+        const errEl = $('#letterPickupFormError');
+        if (!errEl) return;
+        errEl.textContent = msg || '';
+        errEl.classList.toggle('hidden', !msg);
+    }
+
+    function updateLetterPickupSlotPreview() {
+        const preview = $('#letterPickupSlotPreview');
+        if (!preview) return;
+        const startMin = timeValToMinute($('#letterPickupStartTimeInput')?.value);
+        const endMin = timeValToMinute($('#letterPickupEndTimeInput')?.value);
+        if (startMin === null || endMin === null || endMin <= startMin) {
+            preview.textContent = 'End time must be after start time (at least 5 minutes).';
+            return;
+        }
+        const count = Math.floor((endMin - startMin) / 5);
+        if (count < 1) {
+            preview.textContent = 'Window must be at least 5 minutes long to create a 5-minute pickup slot.';
+            return;
+        }
+        preview.textContent = `${count} × 5-minute pickup slot${count === 1 ? '' : 's'} will be open for Communication Letter Pickup.`;
+    }
+
+    function renderLetterPickupModalList() {
+        const list = $('#letterPickupModalList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        const items = state.letterPickupSchedules
+            .slice()
+            .sort((a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0));
+
+        if (!items.length) {
+            list.appendChild(el('p', 'muted small', 'No pickup windows added yet. Students cannot schedule a letter pickup until you add a date & time window above.'));
+            return;
+        }
+
+        items.forEach((item) => {
+            const row = el('div', 'pickup-modal-item');
+            const info = el('div', 'pickup-modal-item-info');
+            const count = item.slotCount ?? Math.max(0, Math.floor(((item.endMinute || 0) - (item.startMinute || 0)) / 5));
+            info.appendChild(el('strong', '', `${shortDate(item.date)} · ${item.label}`));
+            const subText = item.note
+                ? `${count} slot${count === 1 ? '' : 's'} (5 min each) · ${item.note}`
+                : `${count} × 5-min slot${count === 1 ? '' : 's'}`;
+            info.appendChild(el('span', 'muted small', subText));
+
+            const delBtn = el('button', 'btn btn-danger-soft btn-sm', 'Remove');
+            delBtn.type = 'button';
+            delBtn.addEventListener('click', () => deleteLetterPickupSchedule(item, delBtn));
+
+            row.append(info, delBtn);
+            list.appendChild(row);
+        });
+    }
+
+    function openLetterPickupModal(defaultDate = '') {
+        const minDate = state.today ? addDays(state.today, 1) : new Date().toISOString().slice(0, 10);
+        const dateInput = $('#letterPickupDateInput');
+        if (dateInput) {
+            dateInput.min = minDate;
+            dateInput.value = defaultDate && defaultDate >= minDate ? defaultDate : minDate;
+        }
+        if ($('#letterPickupNoteInput')) $('#letterPickupNoteInput').value = '';
+        updateLetterPickupSlotPreview();
+        renderLetterPickupModalList();
+        setLetterPickupError('');
+        $('#letterPickupScheduleModal')?.classList.remove('hidden');
+        syncModalBodyLock();
+        if (window.matchMedia('(hover: hover)').matches) {
+            setTimeout(() => dateInput?.focus(), 40);
+        }
+    }
+
+    function closeLetterPickupModal() {
+        if (state.savingLetterPickup) return;
+        $('#letterPickupScheduleModal')?.classList.add('hidden');
+        syncModalBodyLock();
+        setLetterPickupError('');
+    }
+
+    async function submitLetterPickupSchedule(e) {
+        e.preventDefault();
+        if (state.savingLetterPickup) return;
+        setLetterPickupError('');
+
+        const date = ($('#letterPickupDateInput')?.value || '').trim();
+        const startMinute = timeValToMinute($('#letterPickupStartTimeInput')?.value);
+        const endMinute = timeValToMinute($('#letterPickupEndTimeInput')?.value);
+        const note = ($('#letterPickupNoteInput')?.value || '').trim();
+
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            setLetterPickupError('Please select an available date.');
+            $('#letterPickupDateInput')?.focus();
+            return;
+        }
+        if (state.today && date <= state.today) {
+            setLetterPickupError('Please select a future date (students must schedule at least 1 day in advance).');
+            $('#letterPickupDateInput')?.focus();
+            return;
+        }
+        if (startMinute === null || endMinute === null || startMinute >= endMinute) {
+            setLetterPickupError('End time must be after start time.');
+            return;
+        }
+        if (endMinute - startMinute < 5) {
+            setLetterPickupError('Time range must be at least 5 minutes long.');
+            return;
+        }
+
+        state.savingLetterPickup = true;
+        const confirmBtn = $('#confirmLetterPickupBtn');
+        const cancelBtn = $('#cancelLetterPickupModalBtn');
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.querySelector('.spinner')?.classList.remove('hidden');
+            confirmBtn.querySelector('.btn-label').textContent = 'Adding…';
+        }
+        if (cancelBtn) cancelBtn.disabled = true;
+
+        try {
+            const { schedule } = await api('/api/admin/letter-pickup-schedules', {
+                method: 'POST',
+                body: JSON.stringify({ date, startMinute, endMinute, note }),
+            });
+            state.letterPickupSchedules.push(schedule);
+            state.letterPickupSchedules.sort(
+                (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
+            );
+            if ($('#letterPickupNoteInput')) $('#letterPickupNoteInput').value = '';
+            renderLetterPickupModalList();
+            render();
+            window.SchedulerRealtime?.notifyLocal({ type: 'letter_pickup_schedule_created', date });
+            toast(`Added pickup window on ${shortDate(date)} (${schedule.label}).`, 'success');
+        } catch (err) {
+            setLetterPickupError(err.message);
+        } finally {
+            state.savingLetterPickup = false;
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.querySelector('.spinner')?.classList.add('hidden');
+                confirmBtn.querySelector('.btn-label').textContent = 'Add pickup window';
+            }
+            if (cancelBtn) cancelBtn.disabled = false;
+        }
+    }
+
+    async function deleteLetterPickupSchedule(item, btn) {
+        if (btn) btn.disabled = true;
+        try {
+            await api(`/api/admin/letter-pickup-schedules/${item.id}`, { method: 'DELETE' });
+            state.letterPickupSchedules = state.letterPickupSchedules.filter((x) => x.id !== item.id);
+            renderLetterPickupModalList();
+            render();
+            window.SchedulerRealtime?.notifyLocal({ type: 'letter_pickup_schedule_deleted', date: item.date });
+            toast(`Removed pickup window on ${shortDate(item.date)}.`, 'success');
         } catch (err) {
             if (btn) btn.disabled = false;
             toast(err.message, 'error');
@@ -1536,10 +1716,96 @@
         });
     }
 
+    function matchesLetterPickupSearch(item, q) {
+        if (!q) return true;
+        if (item.date.toLowerCase().includes(q)) return true;
+        if (longDate(item.date).toLowerCase().includes(q)) return true;
+        if (item.label && item.label.toLowerCase().includes(q)) return true;
+        if (item.note && item.note.toLowerCase().includes(q)) return true;
+        return false;
+    }
+
+    function renderLetterPickupTab(container, q) {
+        const itemsList = state.letterPickupSchedules
+            .filter((item) => matchesLetterPickupSearch(item, q))
+            .slice()
+            .sort((a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0));
+
+        const topBar = el('div', 'pickup-tab-toolbar');
+        topBar.appendChild(el('span', 'muted small', 'Only dates and times listed here are open for Pickup of Communication Letter (5 min per slot).'));
+        const addTopBtn = el('button', 'btn btn-primary btn-sm', '+ Add Pickup Window');
+        addTopBtn.type = 'button';
+        addTopBtn.addEventListener('click', () => openLetterPickupModal());
+        topBar.appendChild(addTopBtn);
+        container.appendChild(topBar);
+
+        if (!itemsList.length) {
+            const empty = el('div', 'empty-state');
+            empty.style.marginTop = '12px';
+            empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>';
+            empty.appendChild(el('p', '', q ? 'No letter pickup windows match your search.' : 'No Communication Letter Pickup windows configured yet.'));
+            const addBtn = el('button', 'btn btn-primary btn-sm', 'Add Pickup Date / Time');
+            addBtn.type = 'button';
+            addBtn.addEventListener('click', () => openLetterPickupModal());
+            empty.appendChild(addBtn);
+            container.appendChild(empty);
+            return;
+        }
+
+        const groups = new Map();
+        itemsList.forEach((item) => {
+            if (!groups.has(item.date)) groups.set(item.date, []);
+            groups.get(item.date).push(item);
+        });
+
+        let i = 0;
+        groups.forEach((items, date) => {
+            const group = el('div', 'date-group');
+            const title = el('div', 'date-group-title', longDate(date));
+            if (date === state.today) title.appendChild(el('span', 'badge teal', 'Today'));
+            else if (date === addDays(state.today, 1)) title.appendChild(el('span', 'badge sky', 'Tomorrow'));
+            else if (date < state.today) title.appendChild(el('span', 'badge muted-badge', 'Past'));
+            group.appendChild(title);
+
+            items.forEach((item) => {
+                const card = el('div', 'booking booking-pickup');
+                card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
+
+                const time = el('div', 'booking-time booking-time-pickup');
+                const [start, end] = item.label.split(' – ');
+                time.appendChild(el('strong', '', start));
+                time.appendChild(el('span', '', `to ${end}`));
+
+                const body = el('div', 'booking-body');
+                const head = el('div', 'booking-name');
+                const slotCount = item.slotCount ?? Math.max(0, Math.floor(((item.endMinute || 0) - (item.startMinute || 0)) / 5));
+                head.appendChild(el('span', 'booking-title', 'Communication Letter Pickup Window'));
+                head.appendChild(el('span', 'badge violet', `${slotCount} × 5-min slots`));
+                body.appendChild(head);
+                if (item.note) {
+                    body.appendChild(el('p', 'booking-reason', item.note));
+                }
+
+                const actions = el('div', 'booking-actions');
+                const removeBtn = el('button', 'btn btn-danger-soft btn-sm', 'Remove');
+                removeBtn.type = 'button';
+                removeBtn.addEventListener('click', () => deleteLetterPickupSchedule(item, removeBtn));
+                actions.appendChild(removeBtn);
+
+                card.append(time, body, actions);
+                group.appendChild(card);
+            });
+
+            container.appendChild(group);
+        });
+    }
+
     /* ---------------- render ---------------- */
     function render() {
         const activeBlocks = state.blockedSchedules.filter(isActiveBlock);
         if ($('#countBlocked')) $('#countBlocked').textContent = activeBlocks.length;
+        const activePickups = state.letterPickupSchedules.filter(isActiveLetterPickup);
+        if ($('#countLetterPickup')) $('#countLetterPickup').textContent = activePickups.length;
 
         const active = state.bookings.filter((b) => !isCancelled(b));
         const upcoming = active.filter((b) => !isPast(b));
@@ -1565,6 +1831,10 @@
 
         if (state.tab === 'blocked') {
             renderBlockedTab(container, q);
+            return;
+        }
+        if (state.tab === 'letter_pickup') {
+            renderLetterPickupTab(container, q);
             return;
         }
 
@@ -1916,11 +2186,28 @@
     });
     $('#sendEmailForm')?.addEventListener('submit', submitSendEmail);
 
+    // Communication Letter Pickup Schedule modal bindings
+    $('#openLetterPickupModalBtn')?.addEventListener('click', () => openLetterPickupModal());
+    $('#closeLetterPickupModalBtn')?.addEventListener('click', closeLetterPickupModal);
+    $('#cancelLetterPickupModalBtn')?.addEventListener('click', closeLetterPickupModal);
+    $('#letterPickupScheduleModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'letterPickupScheduleModal') closeLetterPickupModal();
+    });
+    ['#letterPickupStartTimeInput', '#letterPickupEndTimeInput'].forEach((sel) => {
+        $(sel)?.addEventListener('input', () => {
+            updateLetterPickupSlotPreview();
+            setLetterPickupError('');
+        });
+    });
+    $('#letterPickupDateInput')?.addEventListener('input', () => setLetterPickupError(''));
+    $('#letterPickupScheduleForm')?.addEventListener('submit', submitLetterPickupSchedule);
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeCancelModal();
             closeNotesModal();
             closeBlockModal();
+            closeLetterPickupModal();
             closeSendEmailModal();
         }
     });

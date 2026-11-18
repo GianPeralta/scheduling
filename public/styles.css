@@ -3091,6 +3091,9 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         grid-template-columns: 1fr 1fr;
         gap: 8px;
     }
+    #openLetterPickupModalBtn {
+        grid-column: 1 / -1;
+    }
     .dash-actions .btn { min-height: 42px; width: 100%; }
 
     .stats {
@@ -3535,6 +3538,57 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     color: var(--primary-hover);
     font-size: 0.84rem;
     line-height: 1.45;
+}
+
+.pickup-modal-list-wrap {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 10px;
+}
+.pickup-modal-list {
+    display: grid;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.pickup-modal-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background-color: var(--surface-subtle);
+}
+.pickup-modal-item-info {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+.pickup-modal-item-info strong {
+    font-size: 0.88rem;
+    color: var(--text);
+}
+.pickup-tab-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 4px 4px;
+}
+.booking.booking-pickup {
+    align-items: center;
+    border-color: var(--violet-border);
+    background-color: #fcfbff;
+}
+.booking-time.booking-time-pickup {
+    background-color: var(--violet-soft);
+    border-color: var(--violet-border);
+    color: var(--violet-text);
 }
 
 @media (max-width: 680px) {

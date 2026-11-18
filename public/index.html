@@ -332,6 +332,22 @@
                             </div>
                         </button>
 
+                        <!-- 5. Pickup of Communication Letter (5 min — Adviser students ONLY) -->
+                        <button type="button" class="type-choice-card hidden" id="letterPickupChoiceCard" data-purpose="letter_pickup">
+                            <div class="type-choice-top">
+                                <div class="type-choice-icon violet">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                                </div>
+                                <span class="type-duration-pill violet">5 minutes</span>
+                            </div>
+                            <div class="type-choice-content">
+                                <h4>Pickup of Communication Letter</h4>
+                                <div class="type-note violet">
+                                    <strong>Prerequisite:</strong> Schedule only after receiving the email notification that your signed letter is ready for pickup.
+                                </div>
+                            </div>
+                        </button>
+
                         <!-- 5. Other Consultations (10 min — Available for all students) -->
                         <button type="button" class="type-choice-card" data-purpose="other">
                             <div class="type-choice-top">
@@ -558,12 +574,44 @@
             </div>
 
             <div id="retrievalNoView" class="modal-body hidden">
-                <h3>Wait for the email notification first</h3>
+                <h3>Email notification required</h3>
                 <p class="muted">
-                    Please wait until you are notified through your registered school email that your manuscript is checked, then return here to schedule.
+                    No manuscript-ready email notification has been sent to your account yet. You can only schedule a <strong>Retrieval of Manuscript</strong> after your instructor emails you confirming that your manuscript has been checked.
                 </p>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-primary btn-block" id="retrievalCloseBtn">
+                        Got it
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prerequisite Gate Modal: Email Notification for Pickup of Communication Letter -->
+    <div class="modal-backdrop hidden" id="letterPickupModal" role="dialog" aria-modal="true" aria-labelledby="letterPickupGateModalTitle">
+        <div class="modal-card">
+            <div id="letterPickupAskView" class="modal-body">
+                <h3 id="letterPickupGateModalTitle">Communication Letter Pickup Check</h3>
+                <p class="muted">
+                    Have you already been <strong>notified through email</strong> that your signed communication letter is ready for pickup?
+                </p>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="letterPickupYesBtn">
+                        Yes, I was notified by email
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-block" id="letterPickupNoBtn">
+                        No, not yet
+                    </button>
+                </div>
+            </div>
+
+            <div id="letterPickupNoView" class="modal-body hidden">
+                <h3>Email notification required</h3>
+                <p class="muted">
+                    No communication-letter pickup email notification has been sent to your account yet. You can only schedule a <strong>Pickup of Communication Letter</strong> after your instructor emails you confirming that your signed letter is ready for pickup.
+                </p>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary btn-block" id="letterPickupCloseBtn">
                         Got it
                     </button>
                 </div>

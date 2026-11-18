@@ -64,6 +64,10 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                         Send Email
                     </button>
+                    <button type="button" class="btn btn-ghost" id="openLetterPickupModalBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
+                        Letter Pickup Schedule
+                    </button>
                     <span class="live-status-pill is-live" id="realtimeStatusPill" title="Dashboard updates automatically in real time">
                         <span class="live-dot"></span>
                         <span class="live-status-text">Live</span>
@@ -112,6 +116,7 @@
                         <button class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
                         <button class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
                         <button class="tab" data-tab="blocked">Blocked <span class="count" id="countBlocked">0</span></button>
+                        <button class="tab" data-tab="letter_pickup">Letter Pickup <span class="count" id="countLetterPickup">0</span></button>
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -285,6 +290,61 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Communication Letter Pickup Availability Modal -->
+    <div class="modal-backdrop hidden" id="letterPickupScheduleModal" role="dialog" aria-modal="true" aria-labelledby="letterPickupModalTitle">
+        <div class="modal-card modal-wide">
+            <div class="modal-head">
+                <h3 id="letterPickupModalTitle">Communication Letter Pickup Schedule</h3>
+                <button type="button" class="icon-btn" id="closeLetterPickupModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="letterPickupScheduleForm" novalidate>
+                <p class="muted small">
+                    Set the specific dates and time windows open exclusively for <strong>Pickup of Communication Letter</strong> (5-minute slots each). Students can book at least 1 day in advance.
+                </p>
+
+                <label class="field">
+                    <span>Available date</span>
+                    <input type="date" id="letterPickupDateInput" required />
+                </label>
+
+                <div class="block-time-grid">
+                    <label class="field">
+                        <span>Start time</span>
+                        <input type="time" id="letterPickupStartTimeInput" value="14:00" step="300" required />
+                    </label>
+                    <label class="field">
+                        <span>End time</span>
+                        <input type="time" id="letterPickupEndTimeInput" value="15:00" step="300" required />
+                    </label>
+                </div>
+
+                <div class="email-template-preview" id="letterPickupSlotPreview"></div>
+
+                <label class="field">
+                    <span>Note <small class="muted">(optional)</small></span>
+                    <input type="text" id="letterPickupNoteInput" maxlength="500" placeholder="e.g. Room / desk location or pickup batch note" />
+                </label>
+
+                <div class="form-error hidden" id="letterPickupFormError" role="alert"></div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelLetterPickupModalBtn">Close</button>
+                    <button type="submit" class="btn btn-primary" id="confirmLetterPickupBtn">
+                        <span class="btn-label">Add pickup window</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+
+            <div class="pickup-modal-list-wrap">
+                <span class="student-field-label">Configured Pickup Windows</span>
+                <div class="pickup-modal-list" id="letterPickupModalList"></div>
+            </div>
         </div>
     </div>
 

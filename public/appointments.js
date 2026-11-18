@@ -15,6 +15,7 @@
         dropoff: 'amber',
         retrieval: 'sky',
         letter: 'violet',
+        letter_pickup: 'violet',
         other: 'sky',
         defense: 'rose',
     };
@@ -806,7 +807,7 @@
 
             if (loading) {
                 btn.disabled = true;
-            } else if (m !== 10 || !info || !info.bookable) {
+            } else if ((purpose !== 'letter_pickup' && m !== 10) || !info || !info.bookable) {
                 if (ds === today) {
                     btn.setAttribute('aria-disabled', 'true');
                     btn.addEventListener('click', () => {
@@ -833,9 +834,11 @@
                 btn.classList.add('available');
                 const openTitle = purpose === 'dropoff'
                     ? 'Open for manuscript drop-off'
-                    : purpose === 'defense'
-                        ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
-                        : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
+                    : purpose === 'letter_pickup'
+                        ? `${info.open} pickup slot${info.open === 1 ? '' : 's'} open`
+                        : purpose === 'defense'
+                            ? `${info.open} defense window${info.open === 1 ? '' : 's'} available`
+                            : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
                 const currentSuffix = isCurrentBookingDay ? ' · Current date' : '';
                 btn.title = (info.hasBlocks && info.blockReason ? `${openTitle} (${info.blockReason})` : openTitle) + currentSuffix;
                 btn.addEventListener('click', () => selectRescheduleDate(ds, true));

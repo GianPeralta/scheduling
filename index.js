@@ -43,11 +43,12 @@ const STUDENT_REMINDER_MINUTES_BEFORE = intEnv('STUDENT_REMINDER_MINUTES_BEFORE'
 
 const hm = (h, m) => h * 60 + m;
 
-const SYSTEM_DURATION = 15;   // 15 minutes for System Consultation
-const DROPOFF_DURATION = 0;   // Drop-off only (takes 0 minutes off the schedule)
-const RETRIEVAL_DURATION = 5; // 5 minutes for Manuscript Retrieval
-const LETTER_DURATION = 5;    // 5 minutes for Communication Letter Signature
-const OTHER_DURATION = 10;    // 10 minutes for Other Consultations
+const SYSTEM_DURATION = 15;       // 15 minutes for System Consultation
+const DROPOFF_DURATION = 0;       // Drop-off only (takes 0 minutes off the schedule)
+const RETRIEVAL_DURATION = 5;     // 5 minutes for Manuscript Retrieval
+const LETTER_DURATION = 5;        // 5 minutes for Communication Letter Signature
+const LETTER_PICKUP_DURATION = 5; // 5 minutes for Communication Letter Pickup
+const OTHER_DURATION = 10;        // 10 minutes for Other Consultations
 
 const MIN_MEMBERS = 1;        // Solo (1), pair (2), or 3-member Capstone / Thesis groups allowed
 const MAX_MEMBERS = 3;
@@ -84,6 +85,15 @@ const CONSULTATION_TYPES = {
         description: 'Request your adviser’s signature on an official communication letter.',
         note: 'Your letter must already have the initial of Ma’am Melinda Beninsig before requesting your adviser’s signature.',
         durationMinutes: LETTER_DURATION,
+        durationLabel: '5 minutes',
+        adviserOnly: true,
+    },
+    letter_pickup: {
+        id: 'letter_pickup',
+        title: 'Pickup of Communication Letter',
+        description: 'Pick up your signed communication letter once notified by email.',
+        note: 'Schedule this only after receiving the email notification that your communication letter is ready for pickup.',
+        durationMinutes: LETTER_PICKUP_DURATION,
         durationLabel: '5 minutes',
         adviserOnly: true,
     },
@@ -162,6 +172,7 @@ const CONFIG = {
 
 const TABLE = 'appointments';
 const BLOCKED_TABLE = 'blocked_schedules';
+const LETTER_PICKUP_TABLE = 'letter_pickup_schedules';
 
 /* ------------------------------------------------------------------ */
 /* Supabase client                                                     */
@@ -283,6 +294,17 @@ function startServerRealtimeSubscription() {
                         type: `block_${String(payload?.eventType || 'change').toLowerCase()}`,
                         table: BLOCKED_TABLE,
                         date: row.blocked_date || null,
+                    },
+                    { fromSupabaseWs: true }
+                );
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: LETTER_PICKUP_TABLE }, (payload) => {
+                const row = payload?.new || payload?.old || {};
+                notifyRealtimeListeners(
+                    {
+                        type: `letter_pickup_schedule_${String(payload?.eventType || 'change').toLowerCase()}`,
+                        table: LETTER_PICKUP_TABLE,
+                        date: row.available_date || null,
                     },
                     { fromSupabaseWs: true }
                 );
@@ -466,17 +488,146 @@ async function requireStudent(req, res, next) {
     next();
 }
 
-const publicStudent = (s) => ({
-    id: s.id,
-    name: s.full_name,
-    email: s.email,
-    capstoneTitle: s.capstone_title || null,
-    instructorRole: s.instructor_role || null,
-    projectLevel: normalizeDefenseLevel(s.project_level),
-    members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
-    updatedAt: s.updated_at || null,
-    changeHistory: Array.isArray(s.change_history) ? s.change_history : [],
-});
+function latestIsoTimestamp(...values) {
+    let bestIso = null;
+    let bestMs = -Infinity;
+    for (const v of values) {
+        if (!v) continue;
+        const ms = new Date(v).getTime();
+        if (Number.isFinite(ms) && ms > bestMs) {
+            bestMs = ms;
+            bestIso = new Date(ms).toISOString();
+        }
+    }
+    return bestIso;
+}
+
+function extractStudentNotificationTimestamps(studentRow, appointmentRows = []) {
+    const history = Array.isArray(studentRow?.change_history) ? studentRow.change_history : [];
+    const historyManuscriptTimes = history
+        .filter((h) => h && h.type === 'notification' && h.kind === 'manuscript_ready' && h.notifiedAt)
+        .map((h) => h.notifiedAt);
+    const historyLetterTimes = history
+        .filter((h) => h && h.type === 'notification' && h.kind === 'letter_ready' && h.notifiedAt)
+        .map((h) => h.notifiedAt);
+
+    const dropoffNotifiedTimes = (appointmentRows || [])
+        .filter((r) => isActiveRow(r) && r.consultation_type === 'dropoff' && r.notified_at)
+        .map((r) => r.notified_at);
+    const letterNotifiedTimes = (appointmentRows || [])
+        .filter((r) => isActiveRow(r) && r.consultation_type === 'letter' && r.notified_at)
+        .map((r) => r.notified_at);
+
+    return {
+        manuscriptNotifiedAt: latestIsoTimestamp(
+            studentRow?.manuscript_notified_at,
+            ...historyManuscriptTimes,
+            ...dropoffNotifiedTimes
+        ),
+        letterNotifiedAt: latestIsoTimestamp(
+            studentRow?.letter_notified_at,
+            ...historyLetterTimes,
+            ...letterNotifiedTimes
+        ),
+    };
+}
+
+function computePickupEligibility(studentRow, appointmentRows = []) {
+    const { manuscriptNotifiedAt, letterNotifiedAt } = extractStudentNotificationTimestamps(studentRow, appointmentRows);
+
+    const latestRetrievalBookedAt = latestIsoTimestamp(
+        ...(appointmentRows || [])
+            .filter((r) => isActiveRow(r) && r.consultation_type === 'retrieval')
+            .map((r) => r.created_at)
+    );
+    const latestLetterPickupBookedAt = latestIsoTimestamp(
+        ...(appointmentRows || [])
+            .filter((r) => isActiveRow(r) && r.consultation_type === 'letter_pickup')
+            .map((r) => r.created_at)
+    );
+
+    const canBookRetrieval = Boolean(
+        manuscriptNotifiedAt
+        && (!latestRetrievalBookedAt || new Date(manuscriptNotifiedAt).getTime() > new Date(latestRetrievalBookedAt).getTime())
+    );
+    const canBookLetterPickup = Boolean(
+        letterNotifiedAt
+        && (!latestLetterPickupBookedAt || new Date(letterNotifiedAt).getTime() > new Date(latestLetterPickupBookedAt).getTime())
+    );
+
+    return {
+        manuscriptNotifiedAt,
+        letterNotifiedAt,
+        canBookRetrieval,
+        canBookLetterPickup,
+    };
+}
+
+async function recordStudentPickupNotification({ studentId = null, email = null, kind, notifiedAt = new Date().toISOString() }) {
+    if (!['manuscript_ready', 'letter_ready'].includes(kind)) return null;
+    let studentRow = null;
+
+    if (studentId && /^[0-9a-f-]{36}$/i.test(String(studentId))) {
+        const { data } = await db().from(STUDENTS_TABLE).select('*').eq('id', studentId).maybeSingle();
+        studentRow = data || null;
+    }
+    if (!studentRow && email) {
+        const normalized = normalizeEmail(email);
+        if (normalized) {
+            studentRow = await findStudentByEmail(normalized).catch(() => null);
+        }
+    }
+    if (!studentRow) return null;
+
+    const prevHistory = Array.isArray(studentRow.change_history) ? studentRow.change_history : [];
+    const notifEntry = {
+        id: crypto.randomUUID(),
+        type: 'notification',
+        kind,
+        notifiedAt,
+    };
+    const nextHistory = [notifEntry, ...prevHistory].slice(0, 50);
+    const colName = kind === 'manuscript_ready' ? 'manuscript_notified_at' : 'letter_notified_at';
+
+    let { error } = await db()
+        .from(STUDENTS_TABLE)
+        .update({
+            [colName]: notifiedAt,
+            change_history: nextHistory,
+        })
+        .eq('id', studentRow.id);
+
+    if (error && ['42703', 'PGRST204'].includes(error.code)) {
+        const fallbackRes = await db()
+            .from(STUDENTS_TABLE)
+            .update({ change_history: nextHistory })
+            .eq('id', studentRow.id);
+        error = fallbackRes.error;
+    }
+    if (error) {
+        console.error(`Failed to record ${kind} notification on student ${studentRow.id}:`, error);
+    }
+    return studentRow;
+}
+
+const publicStudent = (s) => {
+    const { manuscriptNotifiedAt, letterNotifiedAt } = extractStudentNotificationTimestamps(s);
+    const filteredHistory = (Array.isArray(s.change_history) ? s.change_history : [])
+        .filter((h) => h && h.type !== 'notification');
+    return {
+        id: s.id,
+        name: s.full_name,
+        email: s.email,
+        capstoneTitle: s.capstone_title || null,
+        instructorRole: s.instructor_role || null,
+        projectLevel: normalizeDefenseLevel(s.project_level),
+        members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
+        updatedAt: s.updated_at || null,
+        manuscriptNotifiedAt,
+        letterNotifiedAt,
+        changeHistory: filteredHistory,
+    };
+};
 
 /* ---------- email (SMTP) ---------- */
 let transporter = null;
@@ -720,12 +871,12 @@ function normalizePurpose(purpose) {
 }
 
 /** Generate all candidate slots for a date and consultation purpose. */
-function generateDaySlots(dateStr, purpose = 'system') {
+function generateDaySlots(dateStr, purpose = 'system', customWindows = null) {
     const dt = parseDate(dateStr);
     if (!dt) return [];
     const normalized = normalizePurpose(purpose);
     if (normalized === 'defense') return []; // defenses use typed start times (see defenseDayAvailability)
-    const windows = WINDOWS_BY_DAY[dt.getUTCDay()] || [];
+    const windows = windowsForDate(dateStr, normalized, customWindows);
     const typeInfo = CONSULTATION_TYPES[normalized];
     const slots = [];
 
@@ -798,8 +949,11 @@ function getFirstBookableDate(now = nowInTz()) {
     return addDays(now.date, 1);
 }
 
-/** Time windows open on a given date for this purpose (defenses use their own weekly schedule). */
-function windowsForDate(dateStr, purpose = 'system') {
+/** Time windows open on a given date for this purpose (defenses use their own weekly schedule; letter pickups use instructor-configured windows). */
+function windowsForDate(dateStr, purpose = 'system', customWindows = null) {
+    if (purpose === 'letter_pickup') {
+        return Array.isArray(customWindows) ? customWindows : [];
+    }
     const dt = parseDate(dateStr);
     if (!dt) return [];
     const table = purpose === 'defense' ? DEFENSE_WINDOWS_BY_DAY : WINDOWS_BY_DAY;
@@ -807,13 +961,15 @@ function windowsForDate(dateStr, purpose = 'system') {
 }
 
 /** Is this date one the teacher accepts bookings for at all? */
-function isBookableDate(dateStr, now = nowInTz(), purpose = 'system') {
+function isBookableDate(dateStr, now = nowInTz(), purpose = 'system', customWindows = null) {
     const dt = parseDate(dateStr);
     if (!dt) return false;
-    if (dt.getUTCMonth() !== 10) return false; // Only November (month index 10) is available for now
-    if (!windowsForDate(dateStr, purpose).length) return false;
+    if (purpose !== 'letter_pickup') {
+        if (dt.getUTCMonth() !== 10) return false; // Only November (month index 10) is available for now
+        if (dateStr > getLastBookableDate(now)) return false;
+    }
+    if (!windowsForDate(dateStr, purpose, customWindows).length) return false;
     if (dateStr < getFirstBookableDate(now)) return false;
-    if (dateStr > getLastBookableDate(now)) return false;
     return true;
 }
 
@@ -954,6 +1110,68 @@ async function fetchBlockedByDate(date) {
         .from(BLOCKED_TABLE)
         .select('*')
         .eq('blocked_date', date);
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) return [];
+        throw error;
+    }
+    return data || [];
+}
+
+/* ---------- Communication Letter Pickup Schedules ---------- */
+function toLetterPickupSchedule(r) {
+    const startMinute = Number(r.start_minute) || 0;
+    const endMinute = Number(r.end_minute) || 0;
+    return {
+        id: r.id,
+        date: r.available_date,
+        startMinute,
+        endMinute,
+        slotCount: Math.max(0, Math.floor((endMinute - startMinute) / LETTER_PICKUP_DURATION)),
+        label: `${formatMinute(startMinute)} – ${formatMinute(endMinute)}`,
+        note: r.note || null,
+        createdAt: r.created_at,
+    };
+}
+
+function normalizePickupWindows(rows) {
+    if (!Array.isArray(rows) || !rows.length) return [];
+    const intervals = rows
+        .map((r) => [Number(r.start_minute), Number(r.end_minute)])
+        .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && s >= 0 && e <= 1440 && e - s >= LETTER_PICKUP_DURATION)
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const merged = [];
+    for (const [s, e] of intervals) {
+        const last = merged[merged.length - 1];
+        if (last && s <= last[1]) {
+            last[1] = Math.max(last[1], e);
+        } else {
+            merged.push([s, e]);
+        }
+    }
+    return merged;
+}
+
+async function fetchLetterPickupByDateRange(first, last) {
+    const { data, error } = await db()
+        .from(LETTER_PICKUP_TABLE)
+        .select('*')
+        .gte('available_date', first)
+        .lte('available_date', last)
+        .order('available_date', { ascending: true })
+        .order('start_minute', { ascending: true });
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) return [];
+        throw error;
+    }
+    return data || [];
+}
+
+async function fetchLetterPickupByDate(date) {
+    const { data, error } = await db()
+        .from(LETTER_PICKUP_TABLE)
+        .select('*')
+        .eq('available_date', date)
+        .order('start_minute', { ascending: true });
     if (error) {
         if (['42P01', 'PGRST205'].includes(error.code)) return [];
         throw error;
@@ -1644,15 +1862,26 @@ app.get('/api/month', async (req, res) => {
     const firstDt = parseDate(first);
     const last = toDateStr(new Date(Date.UTC(firstDt.getUTCFullYear(), firstDt.getUTCMonth() + 1, 0)));
 
-    const [{ data, error }, blockedRows] = await Promise.all([
+    const isLetterPickup = purpose === 'letter_pickup';
+    const [{ data, error }, blockedRows, pickupRows] = await Promise.all([
         db()
             .from(TABLE)
             .select('*')
             .gte('appointment_date', first)
             .lte('appointment_date', last),
         fetchBlockedByDateRange(first, last),
+        isLetterPickup ? fetchLetterPickupByDateRange(first, last) : Promise.resolve([]),
     ]);
     if (error) return res.status(500).json({ error: error.message });
+
+    const pickupRowsByDate = new Map();
+    if (isLetterPickup) {
+        for (const p of pickupRows) {
+            const d = p.available_date;
+            if (!pickupRowsByDate.has(d)) pickupRowsByDate.set(d, []);
+            pickupRowsByDate.get(d).push(p);
+        }
+    }
 
     const excludedRow = excludeBookingId
         ? (data.find((r) => r.id === excludeBookingId && r.student_id === requesterId && isActiveRow(r)) || null)
@@ -1683,7 +1912,10 @@ app.get('/api/month', async (req, res) => {
     const days = {};
 
     for (let d = first; d <= last; d = addDays(d, 1)) {
-        if (!isBookableDate(d, now, purpose)) {
+        const customWindows = isLetterPickup
+            ? normalizePickupWindows(pickupRowsByDate.get(d) || [])
+            : null;
+        if (!isBookableDate(d, now, purpose, customWindows)) {
             days[d] = { bookable: false, open: 0 };
             continue;
         }
@@ -1723,7 +1955,7 @@ app.get('/api/month', async (req, res) => {
             };
             continue;
         }
-        const daySlots = generateDaySlots(d, purpose);
+        const daySlots = generateDaySlots(d, purpose, customWindows);
         const excludedStart = (excludedRow && excludedRow.appointment_date === d)
             ? Number(excludedRow.start_minute)
             : null;
@@ -1767,9 +1999,14 @@ app.get('/api/slots', async (req, res) => {
     }
 
     const isDefense = purpose === 'defense';
+    const isLetterPickup = purpose === 'letter_pickup';
     const level = isDefense ? (normalizeDefenseLevel(req.query.level) || 'capstone1') : null;
     const now = nowInTz();
-    if (!isBookableDate(date, now, purpose)) {
+
+    const pickupRows = isLetterPickup ? await fetchLetterPickupByDate(date) : [];
+    const customWindows = isLetterPickup ? normalizePickupWindows(pickupRows) : null;
+
+    if (!isBookableDate(date, now, purpose, customWindows)) {
         return res.json({ date, purpose, level, slots: [], windows: [] });
     }
 
@@ -1821,7 +2058,7 @@ app.get('/api/slots', async (req, res) => {
         });
     }
 
-    const slots = generateDaySlots(date, purpose).map((s) => {
+    const slots = generateDaySlots(date, purpose, customWindows).map((s) => {
         const isCurrentBooking = Boolean(
             excludedRow && excludedRow.appointment_date === date && Number(excludedRow.start_minute) === s.startMinute
         );
@@ -2249,10 +2486,12 @@ app.get('/api/my-bookings', requireStudent, async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const bookings = attachPreviousConsultations(data.map((r) => toBooking(r, now, req.student)));
+    const eligibility = computePickupEligibility(req.student, data || []);
     res.json({
         today: now.date,
         currentMinute: now.minuteOfDay,
         bookings,
+        eligibility,
     });
 });
 
@@ -2449,8 +2688,11 @@ async function handleStudentReschedule(req, res) {
         slotStart = startMinute;
         slotEnd = startMinute + durationMinutes;
     } else {
-        const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
-        if (!isBookableDate(date, now, consultationType) || !validSlot || !isFutureSlot(date, startMinute, now)) {
+        const customWindows = consultationType === 'letter_pickup'
+            ? normalizePickupWindows(await fetchLetterPickupByDate(date))
+            : null;
+        const validSlot = generateDaySlots(date, consultationType, customWindows).find((s) => s.startMinute === startMinute);
+        if (!isBookableDate(date, now, consultationType, customWindows) || !validSlot || !isFutureSlot(date, startMinute, now)) {
             return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
         }
         slotStart = validSlot.startMinute;
@@ -2667,6 +2909,21 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         }
     }
 
+    if (consultationType === 'letter_pickup') {
+        if (student.instructor_role !== 'adviser') {
+            return res.status(403).json({
+                code: 'ADVISER_ONLY',
+                error: `Pickup of Communication Letter is only available for students who registered ${TEACHER_NAME} as their Adviser.`,
+            });
+        }
+        if (body.letterPickupEmailConfirmed !== true) {
+            return res.status(400).json({
+                code: 'LETTER_PICKUP_EMAIL_REQUIRED',
+                error: 'Please wait until you are notified through email that your communication letter is ready for pickup before scheduling.',
+            });
+        }
+    }
+
     if (consultationType === 'retrieval') {
         if (body.retrievalEmailConfirmed !== true) {
             return res.status(400).json({
@@ -2681,6 +2938,8 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         rawReason = 'Manuscript drop-off for checking.';
     } else if (!rawReason && consultationType === 'retrieval') {
         rawReason = 'Retrieval of checked manuscript to discuss needed revisions.';
+    } else if (!rawReason && consultationType === 'letter_pickup') {
+        rawReason = 'Pickup of signed communication letter.';
     } else if (!rawReason && isDefense) {
         rawReason = `${DEFENSE_LEVELS[defenseLevel].label} defense.`;
     }
@@ -2751,25 +3010,42 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         slotStart = startMinute;
         slotEnd = startMinute + durationMinutes;
     } else {
-        const validSlot = generateDaySlots(date, consultationType).find((s) => s.startMinute === startMinute);
-        if (!isBookableDate(date, now, consultationType) || !validSlot || !isFutureSlot(date, startMinute, now)) {
+        const customWindows = consultationType === 'letter_pickup'
+            ? normalizePickupWindows(await fetchLetterPickupByDate(date))
+            : null;
+        const validSlot = generateDaySlots(date, consultationType, customWindows).find((s) => s.startMinute === startMinute);
+        if (!isBookableDate(date, now, consultationType, customWindows) || !validSlot || !isFutureSlot(date, startMinute, now)) {
             return res.status(400).json({ error: 'That time slot is not available. Please choose another one.' });
         }
         slotStart = validSlot.startMinute;
         slotEnd = validSlot.endMinute;
     }
 
-    // Check existing upcoming bookings for this student
-    const { data: mine, error: mineErr } = await db()
+    // Check student's existing appointments (for pickup notification eligibility & upcoming limits)
+    const { data: allMine, error: mineErr } = await db()
         .from(TABLE)
         .select('*')
-        .eq('student_id', student.id)
-        .gte('appointment_date', now.date);
+        .eq('student_id', student.id);
     if (mineErr) return res.status(500).json({ error: mineErr.message });
 
-    const upcomingMine = mine.filter((r) => {
+    const eligibility = computePickupEligibility(student, allMine || []);
+    if (consultationType === 'retrieval' && !eligibility.canBookRetrieval) {
+        return res.status(403).json({
+            code: 'RETRIEVAL_EMAIL_REQUIRED',
+            error: 'You can only schedule a Retrieval of Manuscript after an email notification has been sent to you confirming that your manuscript is checked and ready for pickup.',
+        });
+    }
+    if (consultationType === 'letter_pickup' && !eligibility.canBookLetterPickup) {
+        return res.status(403).json({
+            code: 'LETTER_PICKUP_EMAIL_REQUIRED',
+            error: 'You can only schedule a Pickup of Communication Letter after an email notification has been sent to you confirming that your signed letter is ready for pickup.',
+        });
+    }
+
+    const upcomingMine = (allMine || []).filter((r) => {
         if (!isActiveRow(r)) return false;
         if (r.status && r.status !== 'scheduled') return false;
+        if (r.appointment_date < now.date) return false;
         const [, end] = rowInterval(r);
         return r.appointment_date > now.date || end > now.minuteOfDay;
     });
@@ -2781,6 +3057,13 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
                 error: 'Your group already has an upcoming defense scheduled. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).',
+            });
+        }
+    } else if (consultationType === 'letter_pickup') {
+        if (upcomingMine.some((r) => r.consultation_type === 'letter_pickup')) {
+            return res.status(409).json({
+                code: 'BOOKING_LIMIT',
+                error: 'Your group already has an upcoming Communication Letter Pickup scheduled. You can reschedule or cancel it in My Appointments (at least 2 hours before the schedule).',
             });
         }
     } else if (isDropoff) {
@@ -2797,7 +3080,9 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
             });
         }
     } else if (AUTH.maxActiveBookings > 0) {
-        const upcomingTimed = upcomingMine.filter((r) => isTimedRow(r) && r.consultation_type !== 'defense');
+        const upcomingTimed = upcomingMine.filter(
+            (r) => isTimedRow(r) && r.consultation_type !== 'defense' && r.consultation_type !== 'letter_pickup'
+        );
         if (upcomingTimed.length >= AUTH.maxActiveBookings) {
             return res.status(409).json({
                 code: 'BOOKING_LIMIT',
@@ -2953,13 +3238,14 @@ async function fetchStudentUpdateLogs() {
 }
 
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
-    const [{ data, error }, blockedRows, studentsRes, rawUpdateLogs] = await Promise.all([
+    const [{ data, error }, blockedRows, pickupRows, studentsRes, rawUpdateLogs] = await Promise.all([
         db()
             .from(TABLE)
             .select('*')
             .order('appointment_date', { ascending: true })
             .order('start_hour', { ascending: true }),
         fetchBlockedByDateRange('1970-01-01', '9999-12-31'),
+        fetchLetterPickupByDateRange('1970-01-01', '9999-12-31'),
         db()
             .from(STUDENTS_TABLE)
             .select('*')
@@ -3007,7 +3293,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     for (const s of studentRows) {
         if (!Array.isArray(s.change_history)) continue;
         for (const h of s.change_history) {
-            if (!h || (h.id && seenLogIds.has(h.id))) continue;
+            if (!h || h.type === 'notification' || (h.id && seenLogIds.has(h.id))) continue;
             if (h.id) seenLogIds.add(h.id);
             serializedLogs.push(h);
             if (!logsByStudentId.has(s.id)) logsByStudentId.set(s.id, []);
@@ -3023,6 +3309,9 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         )
     );
     const blockedSchedules = blockedRows.map(toBlockedSchedule).sort(
+        (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
+    );
+    const letterPickupSchedules = pickupRows.map(toLetterPickupSchedule).sort(
         (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
     );
     const students = studentRows.map((s) => {
@@ -3051,6 +3340,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         currentMinute: now.minuteOfDay,
         bookings,
         blockedSchedules,
+        letterPickupSchedules,
         students,
         studentUpdateLogs: serializedLogs,
     });
@@ -3215,6 +3505,96 @@ app.delete('/api/admin/blocks/:id', requireAdmin, async (req, res) => {
     res.json({ ok: true });
 });
 
+// List all custom available dates / time ranges for Communication Letter Pickup
+app.get('/api/admin/letter-pickup-schedules', requireAdmin, async (req, res) => {
+    const rows = await fetchLetterPickupByDateRange('1970-01-01', '9999-12-31');
+    const letterPickupSchedules = rows.map(toLetterPickupSchedule).sort(
+        (a, b) => a.date.localeCompare(b.date) || a.startMinute - b.startMinute
+    );
+    res.json({ letterPickupSchedules });
+});
+
+// Add an available date & time window for Communication Letter Pickup (5-minute slots)
+app.post('/api/admin/letter-pickup-schedules', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const date = String(body.date || '').trim();
+    const startMinute = Number(body.startMinute);
+    const endMinute = Number(body.endMinute);
+    const rawNote = String(body.note ?? '').trim();
+    const note = rawNote ? rawNote.slice(0, 500) : null;
+
+    if (!parseDate(date)) {
+        return res.status(400).json({ field: 'letterPickupDate', error: 'Please select a valid date.' });
+    }
+    const now = nowInTz();
+    if (date <= now.date) {
+        return res.status(400).json({
+            field: 'letterPickupDate',
+            error: 'Please select a future date (students must schedule at least 1 day in advance).',
+        });
+    }
+    if (!Number.isInteger(startMinute) || !Number.isInteger(endMinute)
+        || startMinute < 0 || endMinute > 1440 || startMinute >= endMinute) {
+        return res.status(400).json({
+            field: 'letterPickupTime',
+            error: 'Please enter a valid start and end time (end time must be after start time).',
+        });
+    }
+    if (endMinute - startMinute < LETTER_PICKUP_DURATION) {
+        return res.status(400).json({
+            field: 'letterPickupTime',
+            error: `Time range must be at least ${LETTER_PICKUP_DURATION} minutes long.`,
+        });
+    }
+
+    const { data: inserted, error: insertErr } = await db()
+        .from(LETTER_PICKUP_TABLE)
+        .insert([{
+            available_date: date,
+            start_minute: startMinute,
+            end_minute: endMinute,
+            note,
+        }])
+        .select('*')
+        .single();
+
+    if (insertErr) {
+        if (['42P01', 'PGRST205', '23514', '42703', 'PGRST204'].includes(insertErr.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: insertErr.message });
+    }
+
+    const schedule = toLetterPickupSchedule(inserted);
+    const rtPromise = notifyRealtimeListeners({
+        type: 'letter_pickup_schedule_created',
+        date,
+        scheduleId: schedule.id,
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.status(201).json({ ok: true, schedule });
+});
+
+// Remove an available date & time window for Communication Letter Pickup
+app.delete('/api/admin/letter-pickup-schedules/:id', requireAdmin, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
+    const { error } = await db().from(LETTER_PICKUP_TABLE).delete().eq('id', req.params.id);
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+    const rtPromise = notifyRealtimeListeners({ type: 'letter_pickup_schedule_deleted', scheduleId: req.params.id });
+    if (process.env.VERCEL) await rtPromise;
+    res.json({ ok: true });
+});
+
 function buildManuscriptReadyEmail({ studentName, title, siteOrigin, note = '' }) {
     const cleanTitle = title || 'your Capstone / Thesis manuscript';
     const greeting = `Dear ${studentName || 'Student'},`;
@@ -3268,7 +3648,6 @@ function buildManuscriptReadyEmail({ studentName, title, siteOrigin, note = '' }
 function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', note = '' }) {
     const cleanTitle = title || 'your Capstone / Thesis group';
     const greeting = `Dear ${studentName || 'Student'},`;
-    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
     const letterReason = typeof reason === 'string' && reason.trim() ? reason.trim() : '';
     const cleanNote = String(note || '').trim();
     const subject = 'Communication Letter Ready for Pickup';
@@ -3279,7 +3658,11 @@ function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', no
         `Good day. This is to inform you that the communication letter for ${cleanTitle} has been signed by ${TEACHER_NAME} and is now ready for pickup at ${CONFIG.location}.`,
         ...(letterReason ? ['', `Letter Details: ${letterReason}`] : []),
         ...(cleanNote ? ['', `Instructor Note:\n${cleanNote}`] : []),
-        ...(appointmentsUrl ? ['', `View your appointments: ${appointmentsUrl}`] : []),
+        '',
+        'Kindly visit the consultation scheduling portal to schedule a "Pickup of Communication Letter" (5-minute) appointment:',
+        ...(siteOrigin ? [siteOrigin] : []),
+        '',
+        'Reminder: Appointments must be scheduled at least one (1) day prior to your preferred pickup date.',
         '',
         'Thank you.',
     ].join('\n');
@@ -3290,8 +3673,8 @@ function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', no
     const noteHtml = cleanNote
         ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155;margin:12px 0"><strong>Instructor Note:</strong><br/>${escapeHtml(cleanNote).replace(/\r\n|\r|\n/g, '<br/>')}</div>`
         : '';
-    const portalBtnHtml = appointmentsUrl
-        ? `<p style="margin:22px 0"><a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">View My Appointments</a></p>`
+    const portalBtnHtml = siteOrigin
+        ? `<p style="margin:22px 0"><a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">Schedule Letter Pickup</a></p>`
         : '';
 
     const bodyHtml = `
@@ -3300,7 +3683,11 @@ function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', no
             <p>Good day. This is to inform you that the communication letter for <strong>${escapeHtml(cleanTitle)}</strong> has been signed by <strong>${escapeHtml(TEACHER_NAME)}</strong> and is now <strong>ready for pickup</strong> at <strong>${escapeHtml(CONFIG.location)}</strong>.</p>
             ${letterReasonHtml}
             ${noteHtml}
+            <p>Kindly visit the consultation scheduling portal to book a <strong>Pickup of Communication Letter (5-minute)</strong> appointment:</p>
             ${portalBtnHtml}
+            <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:10px 14px;border-radius:8px;font-size:13px">
+                <strong>Reminder:</strong> Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred pickup date.
+            </div>
             <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
         </div>`;
 
@@ -3436,6 +3823,12 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     const notifiedAt = new Date().toISOString();
     const { error: updateErr } = await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
     if (updateErr) throw updateErr;
+    await recordStudentPickupNotification({
+        studentId: row.student_id,
+        email: row.student_email,
+        kind: 'manuscript_ready',
+        notifiedAt,
+    });
     const rtPromise = notifyRealtimeListeners({ type: 'dropoff_notified', bookingId: row.id, date: row.appointment_date });
     if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true, notifiedAt });
@@ -3482,6 +3875,12 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
     const notifiedAt = new Date().toISOString();
     const { error: updateErr } = await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
     if (updateErr) throw updateErr;
+    await recordStudentPickupNotification({
+        studentId: row.student_id,
+        email: row.student_email,
+        kind: 'letter_ready',
+        notifiedAt,
+    });
     const rtPromise = notifyRealtimeListeners({ type: 'letter_notified', bookingId: row.id, date: row.appointment_date });
     if (process.env.VERCEL) await rtPromise;
     res.json({ ok: true, notifiedAt });
@@ -3558,10 +3957,26 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
         throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
     }
 
+    const sentAt = new Date().toISOString();
+    if (template === 'manuscript_ready' || template === 'letter_ready') {
+        const updatedStudent = await recordStudentPickupNotification({
+            studentId: studentRow?.id || null,
+            email: recipientEmail,
+            kind: template,
+            notifiedAt: sentAt,
+        });
+        const rtPromise = notifyRealtimeListeners({
+            type: 'student_pickup_notified',
+            studentId: updatedStudent?.id || studentRow?.id || null,
+            template,
+        });
+        if (process.env.VERCEL) await rtPromise;
+    }
+
     res.json({
         ok: true,
         to: recipientEmail,
-        sentAt: new Date().toISOString(),
+        sentAt,
     });
 });
 
@@ -3876,6 +4291,8 @@ function studentPolicyReminderText(booking) {
         rules.push('All group members must be present during this schedule.');
     } else if (booking.consultationType === 'letter') {
         rules.push("Please bring your printed communication letter that already bears Ma'am Melinda Beninsig's initial.");
+    } else if (booking.consultationType === 'letter_pickup') {
+        rules.push(`Please claim your signed communication letter at the ${CONFIG.location} during your scheduled 5-minute pickup slot.`);
     } else if (booking.isDropoff) {
         rules.push('Once your manuscript is checked, you will receive an email notification to schedule your 5-minute Retrieval of Manuscript.');
     }
