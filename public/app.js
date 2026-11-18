@@ -44,9 +44,9 @@
             color: 'sky',
             requiresAllMembers: true,
             reasonOptional: true,
-            bannerNote: 'Schedule once notified by email. All members must be present.',
-            policyHtml: '<strong>Attendance Requirement:</strong> Schedule this once you have received the email saying your manuscript is checked. <strong>All members must be present</strong>, otherwise you will not be accommodated.',
-            confirmHtml: '<strong>Important:</strong> All members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
+            bannerNote: 'Schedule once notified by email. At least 2 or all members must be present.',
+            policyHtml: '<strong>Attendance Requirement:</strong> Schedule this once you have received the email saying your manuscript is checked. <strong>At least 2 or all members must be present</strong>, otherwise you will not be accommodated.',
+            confirmHtml: '<strong>Important:</strong> At least 2 or all members must be present during Manuscript Retrieval, otherwise you will not be accommodated.',
             reasonLabel: 'Notes for retrieval',
             reasonPlaceholder: 'e.g. Retrieving checked manuscript to discuss needed changes (optional)',
         },
@@ -99,6 +99,8 @@
             requiresAllMembers: true,
             reasonOptional: true,
             bannerNote: 'All members must be present during the defense.',
+            policyHtml: '<strong>Attendance Requirement:</strong> All registered group members must be present during your Capstone / Thesis Defense.',
+            confirmHtml: '<strong>Reminder:</strong> All group members must be present during your Capstone / Thesis Defense.',
             reasonLabel: 'Notes for your defense',
             reasonPlaceholder: 'e.g. Panel members attending, equipment you will bring, etc. (optional)',
         },
@@ -393,9 +395,60 @@
             badge.textContent = meta.badge;
             badge.className = `badge ${meta.color}`;
         }
+        const bannerNoteEl = $('#bannerPurposeNote');
+        if (bannerNoteEl) {
+            if (state.consultationPurpose === 'defense') {
+                bannerNoteEl.innerHTML = '';
+                bannerNoteEl.appendChild(document.createTextNode(`${meta.bannerNote} Need to switch course level (1 hr vs 2 hrs)? `));
+                const switchCourseBtn = document.createElement('button');
+                switchCourseBtn.type = 'button';
+                switchCourseBtn.className = 'link-btn';
+                switchCourseBtn.textContent = 'Update course in Profile';
+                switchCourseBtn.addEventListener('click', () => openMyBookingsModal(true));
+                bannerNoteEl.appendChild(switchCourseBtn);
+                bannerNoteEl.appendChild(document.createTextNode('.'));
+                bannerNoteEl.classList.remove('hidden');
+            } else if (meta.bannerNote) {
+                bannerNoteEl.textContent = meta.bannerNote;
+                bannerNoteEl.classList.remove('hidden');
+            } else {
+                bannerNoteEl.textContent = '';
+                bannerNoteEl.classList.add('hidden');
+            }
+        }
+
+        // Step 3 policy callout
+        const policyEl = $('#step3PolicyCallout');
+        if (policyEl) {
+            if (meta.policyHtml) {
+                policyEl.className = `policy-callout ${meta.color}`;
+                policyEl.innerHTML = meta.policyHtml;
+                const emailSlot = policyEl.querySelector('[data-student-email]');
+                if (emailSlot) {
+                    emailSlot.textContent = state.student?.email || 'your university email';
+                }
+            } else {
+                policyEl.innerHTML = '';
+                policyEl.classList.add('hidden');
+            }
+        }
 
         setBookingType('group');
-        setText('#membersFieldLabel', 'Members');
+        setText('#membersFieldLabel', 'Members attending');
+        const membersHintEl = $('#membersFieldHint');
+        if (membersHintEl) {
+            const totalSaved = Array.isArray(state.student?.members) ? state.student.members.length : 1;
+            if (meta.requiresAllMembers) {
+                membersHintEl.textContent = state.consultationPurpose === 'retrieval'
+                    ? 'Your registered group is listed below (at least 2 or all members must attend).'
+                    : 'All registered group members are required to attend this schedule.';
+            } else if (totalSaved > 1) {
+                membersHintEl.textContent = 'Pre-filled with your group. Click × to remove any member who will not attend this session.';
+            } else {
+                membersHintEl.textContent = '';
+            }
+            membersHintEl.classList.toggle('hidden', !membersHintEl.textContent);
+        }
         setText('#reasonLabelText', meta.reasonLabel);
         setText('#reasonOptionalHint', meta.reasonOptional ? '(optional)' : '');
         const reasonEl = $('#reasonInput');
@@ -1242,13 +1295,17 @@
         const labelSpan = document.createElement('span');
         labelSpan.textContent = `Start time (${levelInfo.durationLabel})`;
 
+        const helperHint = document.createElement('small');
+        helperHint.className = 'muted field-hint';
+        helperHint.textContent = `Tap a suggested time below, or type any start time in ${data.startStep || 5}-minute increments (e.g. ${formatMinute(fittingGaps[0].earliestStartMinute)}) that fits inside the open window.`;
+
         const timeInput = document.createElement('input');
         timeInput.type = 'text';
         timeInput.id = 'defenseStartInput';
         timeInput.placeholder = `e.g. ${formatMinute(fittingGaps[0].earliestStartMinute)} or 2:30`;
         timeInput.autocomplete = 'off';
 
-        label.append(labelSpan, timeInput);
+        label.append(labelSpan, helperHint, timeInput);
         inputCard.appendChild(label);
 
         if (suggestions.length) {
@@ -1727,6 +1784,17 @@
         setText('#cReason', b.reason);
         setText('#cRef', b.reference);
 
+        const confirmCallout = $('#cConfirmCallout');
+        if (confirmCallout) {
+            if (meta.confirmHtml) {
+                confirmCallout.className = `policy-callout ${meta.color}`;
+                confirmCallout.innerHTML = meta.confirmHtml;
+            } else {
+                confirmCallout.innerHTML = '';
+                confirmCallout.classList.add('hidden');
+            }
+        }
+
         const emailAddr = b.studentEmail || state.student?.email || '';
         setText(
             '#cEmailNotice',
@@ -1937,6 +2005,45 @@
         }
     }
 
+    function renderStep1EligibilityBadges() {
+        const retrievalBadge = $('#retrievalStatusBadge');
+        const letterPickupBadge = $('#letterPickupStatusBadge');
+        if (!state.student) {
+            retrievalBadge?.classList.add('hidden');
+            letterPickupBadge?.classList.add('hidden');
+            return;
+        }
+
+        const applyBadge = (el, purpose) => {
+            if (!el) return;
+            if (state.pickupEligibility === null) {
+                el.classList.add('hidden');
+                return;
+            }
+            const status = getPickupEligibilityDetails(purpose);
+            if (status.canBook) {
+                el.textContent = 'Ready to book ✓';
+                el.className = 'badge teal';
+            } else if (status.hasUpcoming) {
+                el.textContent = 'Scheduled ✓';
+                el.className = 'badge sky';
+            } else if (status.alreadyBooked) {
+                el.textContent = 'Booked for latest notice';
+                el.className = 'badge muted-badge';
+            } else {
+                el.textContent = 'Awaiting email notice';
+                el.className = 'badge amber';
+            }
+        };
+
+        applyBadge(retrievalBadge, 'retrieval');
+        if (state.student.instructorRole === 'adviser') {
+            applyBadge(letterPickupBadge, 'letter_pickup');
+        } else {
+            letterPickupBadge?.classList.add('hidden');
+        }
+    }
+
     async function loadMyBookings() {
         if (!state.student) {
             state.myBookings = [];
@@ -1945,6 +2052,7 @@
             $('#myBookingsBtn')?.classList.add('hidden');
             $('#profileCancelDot')?.classList.add('hidden');
             $('#cancelledAlertBanner')?.classList.add('hidden');
+            renderStep1EligibilityBadges();
             return;
         }
         $('#myAppointmentsLink')?.classList.remove('hidden');
@@ -1963,6 +2071,7 @@
                 countEl.classList.toggle('hidden', upcomingCount === 0);
             }
             renderCancelledAlertBanner();
+            renderStep1EligibilityBadges();
         } catch {
             /* ignore background fetch error */
         }
@@ -2327,6 +2436,7 @@
     /* ---------------- student account ---------------- */
     function updateRoleVisibility() {
         const isAdviser = state.student?.instructorRole === 'adviser';
+        const isPanel = state.student?.instructorRole === 'panel';
         const letterCard = $('#letterChoiceCard');
         if (letterCard) {
             letterCard.classList.toggle('hidden', !isAdviser);
@@ -2335,6 +2445,11 @@
         if (letterPickupCard) {
             letterPickupCard.classList.toggle('hidden', !isAdviser);
         }
+        const panelHint = $('#panelRoleHint');
+        if (panelHint) {
+            panelHint.classList.toggle('hidden', !isPanel);
+        }
+        renderStep1EligibilityBadges();
         if (!isAdviser && (state.consultationPurpose === 'letter' || state.consultationPurpose === 'letter_pickup')) {
             state.consultationPurpose = null;
             state.beninsigConfirmed = false;
@@ -2708,8 +2823,10 @@
         clearFormFieldErrors('#forgotForm');
         setAuthError('');
         const email = $('#forgotEmail').value.trim().toLowerCase();
-        if (!email) {
-            setFieldError('#forgotEmail', 'Please enter your university email.');
+        const domains = state.config?.allowedEmailDomains || [];
+        if (!email || (domains.length && !domains.some((d) => email.endsWith(`@${d}`) || email.endsWith(`.${d}`)))) {
+            const hint = domains.length ? ` (${domains.map((d) => '@' + d).join(' or ')})` : '';
+            setFieldError('#forgotEmail', `Please enter your university email${hint}.`);
             return;
         }
         runAuth($('#forgotBtn'), 'Sending code…', async () => {
@@ -2948,6 +3065,7 @@
         // Student profile modal events
         $('#myBookingsBtn')?.addEventListener('click', () => openMyBookingsModal(false));
         $('#sidebarEditProfileBtn')?.addEventListener('click', () => openMyBookingsModal(true));
+        $('#panelRoleSwitchHintBtn')?.addEventListener('click', () => openMyBookingsModal(true));
         $('#openEditProfileBtn')?.addEventListener('click', () => {
             populateProfileEditForm();
             setProfileModalView('edit');

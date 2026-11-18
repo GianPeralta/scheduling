@@ -11,14 +11,16 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
 - **Consultations & Capstone / Thesis Defense**:
   1. **System Consultation** (`15 minutes`): All members must be present.
   2. **Drop-off Manuscript** (`Drop-off only · 0 min`): Deducts 0 minutes from the schedule; students are notified via their school email once their manuscript is checked.
-  3. **Retrieval of Manuscript** (`5 minutes`): Scheduled once students receive the email saying their manuscript is checked; all members must be present or they will not be accommodated.
+  3. **Retrieval of Manuscript** (`5 minutes`): Scheduled once students receive the email saying their manuscript is checked; at least 2 or all members must be present or they will not be accommodated.
   4. **Communication Letter Signature** (`5 minutes`, **shown only to students who registered Arnemie Gayyed as Adviser**): Interactive prerequisite check verifying the letter already bears the initial of **Ma'am Melinda Beninsig** before continuing.
-  5. **Capstone / Thesis Defense** (`1 hour` for **Capstone 1 / Thesis 1**, `2 hours` for **Capstone 2 / Thesis 2**): Students can confirm or update their course level when booking, view available defense windows, and type their preferred start time (e.g. `2:30` → automatically reserves `2:30 PM – 3:30 PM` for Capstone 1 or `2:30 PM – 4:30 PM` for Capstone 2) or tap a suggested start time.
-- **Weekly consultation schedule (Tuesday – Thursday)** until **December 10**:
+  5. **Pickup of Communication Letter** (`5 minutes`, **shown only to students who registered Arnemie Gayyed as Adviser**): Scheduled once students receive the email notification that their signed communication letter is ready for pickup, using instructor-configured pickup windows.
+  6. **Other Consultations** (`10 minutes`): Available for all students for other Capstone or Thesis concerns.
+  7. **Capstone / Thesis Defense** (`1 hour` for **Capstone 1 / Thesis 1**, `2 hours` for **Capstone 2 / Thesis 2**): Students can confirm or update their course level, view available defense windows, and type their preferred start time (e.g. `2:30` → automatically reserves `2:30 PM – 3:30 PM` for Capstone 1 or `2:30 PM – 4:30 PM` for Capstone 2) or tap a suggested start time.
+- **Weekly consultation schedule (Tuesday – Thursday)** until the configured booking cutoff date (defaults to **November 30**, configurable live in the Admin Dashboard):
   - **Tuesday**: 2:10 PM – 3:30 PM
   - **Wednesday**: 12:50 PM – 2:10 PM
   - **Thursday**: 2:10 PM – 3:30 PM
-- **Weekly defense schedule (Monday – Saturday)** until **December 10**:
+- **Weekly defense schedule (Monday – Saturday)** until the configured booking cutoff date:
   - **Monday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM
   - **Tuesday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 6:10 PM
   - **Wednesday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM
@@ -57,7 +59,7 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
    | `SESSION_DAYS` | | Default `7` |
    | `MEETING_LOCATION` | | Default `Faculty Office` |
    | `TIMEZONE` | | Default `Asia/Manila` |
-   | `BOOKING_END_DATE` | | Default `YYYY-12-10` (December 10) |
+   | `BOOKING_END_DATE` | | Default `YYYY-11-30` (November 30, or updated live in `/admin.html`) |
 
 3. **Run locally**
    ```bash

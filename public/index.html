@@ -301,7 +301,10 @@
                                 <div class="type-choice-icon sky">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
                                 </div>
-                                <span class="type-duration-pill sky">5 minutes</span>
+                                <div class="badge-row">
+                                    <span class="badge muted-badge hidden" id="retrievalStatusBadge"></span>
+                                    <span class="type-duration-pill sky">5 minutes</span>
+                                </div>
                             </div>
                             <div class="type-choice-content">
                                 <h4>Retrieval of Manuscript</h4>
@@ -309,7 +312,7 @@
                                 <div class="type-note sky">
                                     <strong>Requirements:</strong>
                                     <ul>
-                                        <li>Make sure you were notified by me that your Manuscript is ready for retrieval before scheduling.</li>
+                                        <li>Make sure you were notified by email that your Manuscript is checked and ready for retrieval before scheduling.</li>
                                         <li>At least 2 or all members must be present, otherwise you will not be accommodated.</li>
                                     </ul>
                                 </div>
@@ -338,7 +341,10 @@
                                 <div class="type-choice-icon violet">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                                 </div>
-                                <span class="type-duration-pill violet">5 minutes</span>
+                                <div class="badge-row">
+                                    <span class="badge muted-badge hidden" id="letterPickupStatusBadge"></span>
+                                    <span class="type-duration-pill violet">5 minutes</span>
+                                </div>
                             </div>
                             <div class="type-choice-content">
                                 <h4>Pickup of Communication Letter</h4>
@@ -380,6 +386,11 @@
                             </div>
                         </button>
                     </div>
+
+                    <p class="muted small hidden" id="panelRoleHint">
+                        Registered with Arnemie Gayyed as <strong>Panel Member</strong>. Need <strong>Communication Letter Signature / Pickup</strong> (for Adviser groups only)?
+                        <button type="button" class="link-btn" id="panelRoleSwitchHintBtn">Update your role in Profile</button>.
+                    </p>
                 </div>
             </div>
 
@@ -391,6 +402,7 @@
                             <strong id="bannerPurposeTitle">System Consultation</strong>
                             <span class="badge teal" id="bannerPurposeBadge">15 minutes</span>
                         </div>
+                        <p class="active-purpose-note" id="bannerPurposeNote"></p>
                     </div>
                     <button type="button" class="change-purpose-btn" id="changePurposeBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -449,6 +461,8 @@
                     </button>
                     <h3 id="bookingFormTitle">Confirm booking</h3>
 
+                    <div class="policy-callout teal hidden" id="step3PolicyCallout"></div>
+
                     <div class="form-error hidden" id="formError" role="alert"></div>
 
                     <label class="field">
@@ -459,7 +473,8 @@
                     <!-- Capstone / Thesis members (1 to 3) -->
                     <div id="groupFields" class="group-fields">
                         <div class="field" id="bookingMembersField">
-                            <span><span id="membersFieldLabel">Members</span> <small class="muted" id="memberCount"></small></span>
+                            <span><span id="membersFieldLabel">Members attending</span> <small class="muted" id="memberCount"></small></span>
+                            <small class="muted field-hint" id="membersFieldHint"></small>
                             <div class="member-list" id="memberList"></div>
                             <button type="button" class="add-member" id="addMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -502,6 +517,8 @@
                         <div class="ticket-row ticket-reason"><span>Notes</span><p id="cReason"></p></div>
                         <div class="ticket-ref">Reference <code id="cRef"></code></div>
                     </div>
+
+                    <div class="policy-callout teal hidden" id="cConfirmCallout"></div>
 
                     <p class="muted small email-confirm-note" id="cEmailNotice"></p>
 

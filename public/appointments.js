@@ -744,8 +744,34 @@
                         });
                     if (firstOpen) {
                         await selectRescheduleDate(firstOpen, true);
-                    } else if (initInfo?.bookable && !initInfo.blocked && initialDateToSelect === b.date) {
-                        await selectRescheduleDate(initialDateToSelect, true);
+                    } else {
+                        const maxKey = maxReschedMonthKeyForPurpose(purpose, state.config);
+                        if (key < maxKey) {
+                            let nextM = state.reschedViewMonth + 1;
+                            let nextY = state.reschedViewYear;
+                            if (nextM > 11) {
+                                nextM = 0;
+                                nextY += 1;
+                            }
+                            if (monthKey(nextY, nextM) <= maxKey) {
+                                state.reschedViewMonth = nextM;
+                                state.reschedViewYear = nextY;
+                                await loadRescheduleMonth(null);
+                                const nextOpen = Object.keys(state.reschedMonthDays)
+                                    .sort()
+                                    .find((d) => {
+                                        const info = state.reschedMonthDays[d];
+                                        return info?.bookable && !info.blocked && info.open > 0;
+                                    });
+                                if (nextOpen) {
+                                    await selectRescheduleDate(nextOpen, true);
+                                    return;
+                                }
+                            }
+                        }
+                        if (initInfo?.bookable && !initInfo.blocked && initialDateToSelect === b.date) {
+                            await selectRescheduleDate(initialDateToSelect, true);
+                        }
                     }
                 }
             }
@@ -1336,14 +1362,18 @@
         const labelSpan = document.createElement('span');
         labelSpan.textContent = `New start time (${levelInfo.durationLabel})`;
 
+        const firstSuggested = suggestions[0] ?? fittingGaps[0].earliestStartMinute;
+        const helperHint = document.createElement('small');
+        helperHint.className = 'muted field-hint';
+        helperHint.textContent = `Tap a suggested time below, or type any start time in ${data.startStep || 5}-minute increments (e.g. ${formatMinute(firstSuggested)}) that fits inside the open window.`;
+
         const timeInput = document.createElement('input');
         timeInput.type = 'text';
         timeInput.id = 'reschedDefenseStartInput';
-        const firstSuggested = suggestions[0] ?? fittingGaps[0].earliestStartMinute;
         timeInput.placeholder = `e.g. ${formatMinute(firstSuggested)} or 2:30`;
         timeInput.autocomplete = 'off';
 
-        label.append(labelSpan, timeInput);
+        label.append(labelSpan, helperHint, timeInput);
         inputCard.appendChild(label);
 
         if (suggestions.length) {

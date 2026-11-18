@@ -813,7 +813,11 @@
     async function notifyLetterReady(b, btn) {
         const target = b.studentEmail || 'student';
         const again = b.notifiedAt ? ' again' : '';
-        if (!confirm(`Send "Communication Letter Ready for Pickup" notification email${again} to ${target}?`)) return;
+        const hasOpenPickupWindows = state.letterPickupSchedules.some(isActiveLetterPickup);
+        const noWindowWarning = hasOpenPickupWindows
+            ? ''
+            : '\n\nNote: You currently have 0 upcoming Letter Pickup windows configured. Remember to add a pickup date/time in "Letter Pickup Schedule" so the student can book a slot.';
+        if (!confirm(`Send "Communication Letter Ready for Pickup" notification email${again} to ${target}?${noWindowWarning}`)) return;
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'Sending…';
@@ -822,7 +826,12 @@
             b.notifiedAt = notifiedAt;
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'letter_notified', bookingId: b.id, date: b.date });
-            toast(`Notification emailed to ${target}.`, 'success');
+            toast(
+                hasOpenPickupWindows
+                    ? `Notification emailed to ${target}.`
+                    : `Notification emailed to ${target}. Add a window in "Letter Pickup Schedule" so they can book.`,
+                'success'
+            );
         } catch (err) {
             btn.disabled = false;
             btn.textContent = prevText;
@@ -938,7 +947,13 @@
         });
 
         const hintEl = $('#emailTemplateHint');
-        if (hintEl) hintEl.textContent = nextMeta.hint;
+        if (hintEl) {
+            if (normalized === 'letter_ready' && !state.letterPickupSchedules.some(isActiveLetterPickup)) {
+                hintEl.textContent = `${nextMeta.hint} (Tip: You currently have 0 upcoming Letter Pickup windows configured — add one in "Letter Pickup Schedule" so the student can book a slot.)`;
+            } else {
+                hintEl.textContent = nextMeta.hint;
+            }
+        }
 
         const msgLabel = $('#emailMessageLabel');
         if (msgLabel) {

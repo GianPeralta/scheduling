@@ -75,7 +75,7 @@ const CONSULTATION_TYPES = {
         id: 'retrieval',
         title: 'Retrieval of Manuscript',
         description: 'Once notified by email that your manuscript is checked, schedule this to discuss the needed changes.',
-        note: 'All members must be present, otherwise you will not be accommodated.',
+        note: 'At least 2 or all members must be present, otherwise you will not be accommodated.',
         durationMinutes: RETRIEVAL_DURATION,
         durationLabel: '5 minutes',
     },
@@ -840,6 +840,26 @@ async function findStudentByEmail(email) {
     return data;
 }
 
+async function findStudentByCapstoneTitle(capstoneTitle, excludeStudentId = null) {
+    const clean = cleanName(capstoneTitle);
+    if (!clean) return null;
+    const escaped = clean.replace(/[%_\\]/g, (m) => `\\${m}`);
+    let query = db()
+        .from(STUDENTS_TABLE)
+        .select('id, full_name, email, capstone_title')
+        .ilike('capstone_title', escaped);
+    if (excludeStudentId) {
+        query = query.neq('id', excludeStudentId);
+    }
+    const { data, error } = await query.limit(5);
+    if (error) {
+        if (['42703', 'PGRST204'].includes(error.code)) return null;
+        throw error;
+    }
+    const normTarget = clean.toLowerCase();
+    return (data || []).find((row) => cleanName(row.capstone_title).toLowerCase() === normTarget) || null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Date & Time helpers (computed in the teacher's timezone)            */
 /* ------------------------------------------------------------------ */
@@ -1442,6 +1462,14 @@ app.post('/api/auth/register/start', async (req, res) => {
         return res.status(409).json({ field: 'regEmail', error: 'This email is already registered. Please log in instead.' });
     }
 
+    const existingTitleGroup = await findStudentByCapstoneTitle(capstoneTitle);
+    if (existingTitleGroup) {
+        return res.status(409).json({
+            field: 'regCapstone',
+            error: `A group account with this Capstone / Thesis title is already registered by ${existingTitleGroup.full_name}. Only one representative per group should register.`,
+        });
+    }
+
     // The account is only created after the code is verified, so keep the details with the code.
     const passwordHash = await hashPassword(password);
     const payload = { name, capstoneTitle, instructorRole, projectLevel, members, passwordHash };
@@ -1456,6 +1484,16 @@ app.post('/api/auth/register/verify', async (req, res) => {
     const { name, capstoneTitle, instructorRole, projectLevel, members, passwordHash } = row.payload || {};
     if (!name || !passwordHash) {
         return res.status(400).json({ error: 'Registration details were lost. Please register again.' });
+    }
+
+    if (capstoneTitle) {
+        const existingTitleGroup = await findStudentByCapstoneTitle(capstoneTitle);
+        if (existingTitleGroup) {
+            return res.status(409).json({
+                field: 'regCapstone',
+                error: `A group account with this Capstone / Thesis title is already registered by ${existingTitleGroup.full_name}. Only one representative per group should register.`,
+            });
+        }
     }
 
     const { data: student, error } = await db()
@@ -1938,6 +1976,14 @@ async function handleStudentProfileUpdate(req, res) {
 
     const { name, email, capstoneTitle, instructorRole, projectLevel, members } = validation.values;
     await assertNoAdviserOnlyRoleConflict(student.id, instructorRole);
+
+    const existingTitleGroup = await findStudentByCapstoneTitle(capstoneTitle, student.id);
+    if (existingTitleGroup) {
+        return res.status(409).json({
+            field: 'profileCapstone',
+            error: `Another group account (${existingTitleGroup.full_name}) is already registered with this Capstone / Thesis title.`,
+        });
+    }
 
     const emailChanged = email !== normalizeEmail(student.email);
 
@@ -3486,7 +3532,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
             .from(TABLE)
             .select('*')
             .order('appointment_date', { ascending: true })
-            .order('start_hour', { ascending: true }),
+            .order('start_minute', { ascending: true }),
         fetchBlockedByDateRange('1970-01-01', '9999-12-31'),
         fetchLetterPickupByDateRange('1970-01-01', '9999-12-31'),
         db()
@@ -4578,8 +4624,10 @@ function buildBookingSummaryHtmlCard(booking, { includeStudentEmail = true, acce
 
 function studentPolicyReminderText(booking) {
     const rules = [];
-    if (['system', 'retrieval', 'defense'].includes(booking.consultationType)) {
+    if (['system', 'defense'].includes(booking.consultationType)) {
         rules.push('All group members must be present during this schedule.');
+    } else if (booking.consultationType === 'retrieval') {
+        rules.push('At least 2 or all group members must be present during manuscript retrieval; otherwise, your group will not be accommodated.');
     } else if (booking.consultationType === 'letter') {
         rules.push("Please bring your printed communication letter that already bears Ma'am Melinda Beninsig's initial.");
     } else if (booking.consultationType === 'letter_pickup') {

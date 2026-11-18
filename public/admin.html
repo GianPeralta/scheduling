@@ -406,6 +406,15 @@
             <form class="modal-body" id="cancelBookingForm" novalidate>
                 <div class="cancel-target-summary" id="cancelTargetSummary"></div>
 
+                <div class="quick-reasons">
+                    <span class="muted small">Quick reasons</span>
+                    <div class="quick-reason-chips">
+                        <button type="button" class="reason-chip" data-reason="Faculty meeting / official school business — please reschedule for another available slot.">Faculty meeting</button>
+                        <button type="button" class="reason-chip" data-reason="Instructor unavailable on this date/time — please reschedule for another available slot.">Instructor unavailable</button>
+                        <button type="button" class="reason-chip" data-reason="Out sick — please reschedule for another available slot.">Out sick</button>
+                    </div>
+                </div>
+
                 <label class="field" id="cancelReasonField">
                     <span>Reason for cancellation</span>
                     <textarea id="cancelReasonInput" rows="3" maxlength="500" placeholder="Enter reason for cancellation…"></textarea>

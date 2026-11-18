@@ -1748,6 +1748,11 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     border: 1px solid var(--violet-border);
     color: var(--violet-text);
 }
+.policy-callout.rose {
+    background-color: var(--rose-soft);
+    border: 1px solid var(--rose-border);
+    color: var(--rose-text);
+}
 
 /* ---------- Inline Field Errors & Password Visibility ---------- */
 .field input.input-invalid,
