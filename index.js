@@ -964,12 +964,15 @@ async function saveBookingEndDateSetting(dateStr) {
         }
     } else {
         // Clean up any legacy sentinel row if scheduler_settings succeeded
-        await db()
-            .from(BLOCKED_TABLE)
-            .delete()
-            .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
-            .like('reason', `${BLOCKED_SETTING_PREFIX}%`)
-            .catch(() => {});
+        try {
+            await db()
+                .from(BLOCKED_TABLE)
+                .delete()
+                .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
+                .like('reason', `${BLOCKED_SETTING_PREFIX}%`);
+        } catch {
+            // Ignore legacy sentinel cleanup errors
+        }
     }
 
     cachedBookingEndDate = clean;
@@ -1323,22 +1326,30 @@ async function fetchLetterPickupByDate(date) {
     return data || [];
 }
 
+async function loadLatestLetterPickupDate() {
+    try {
+        const { data, error } = await db()
+            .from(LETTER_PICKUP_TABLE)
+            .select('available_date')
+            .order('available_date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (!error && data?.available_date) return data.available_date;
+    } catch {
+        // Ignore lookup errors so /api/config always responds
+    }
+    return null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 app.get('/api/config', async (req, res) => {
     const now = nowInTz();
-    const [, latestPickupRes] = await Promise.all([
+    const [, latestLetterPickupDate] = await Promise.all([
         loadBookingEndDateSetting(),
-        db()
-            .from(LETTER_PICKUP_TABLE)
-            .select('available_date')
-            .order('available_date', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-            .catch(() => ({ data: null })),
+        loadLatestLetterPickupDate(),
     ]);
-    const latestLetterPickupDate = latestPickupRes?.data?.available_date || null;
     res.json({
         teacherName: TEACHER_NAME,
         teacherEmail: TEACHER_EMAIL,
