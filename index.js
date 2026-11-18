@@ -2164,7 +2164,7 @@ function toBooking(r, now, studentOrLookup = null) {
         cancellationReason: r.cancellation_reason || null,
         cancelledAt: r.cancelled_at || null,
         notifiedAt: r.notified_at || null,
-        reminderSentAt: r.reminder_sent_at || (r.consultation_type !== 'dropoff' ? r.notified_at : null) || null,
+        reminderSentAt: r.reminder_sent_at || (!['dropoff', 'letter'].includes(r.consultation_type) ? r.notified_at : null) || null,
         studentReminderSentAt: r.student_reminder_sent_at || null,
         attendedMembers,
         revisionNotes,
@@ -3291,6 +3291,76 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     res.json({ ok: true, notifiedAt });
 });
 
+// Send email notification to student that their communication letter has been signed and is ready for pickup
+app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
+
+    const { data: row, error: fetchErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('id', req.params.id)
+        .maybeSingle();
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!row) return res.status(404).json({ error: 'Booking not found.' });
+    if (!row.student_email) {
+        return res.status(400).json({ error: 'This booking does not have a student email on file.' });
+    }
+
+    const title = row.capstone_title || row.team_name || 'your Capstone / Thesis group';
+    const greeting = `Dear ${row.student_name},`;
+    const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
+    const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
+    const subject = 'Communication Letter Ready for Pickup';
+    const letterReason = typeof row.reason === 'string' && row.reason.trim() ? row.reason.trim() : '';
+
+    const bodyText = [
+        greeting,
+        '',
+        `Good day. This is to inform you that the communication letter for ${title} has been signed by ${TEACHER_NAME} and is now ready for pickup at ${CONFIG.location}.`,
+        ...(letterReason ? ['', `Letter Details: ${letterReason}`] : []),
+        ...(appointmentsUrl ? ['', `View your appointments: ${appointmentsUrl}`] : []),
+        '',
+        'Thank you.',
+    ].join('\n');
+
+    const letterReasonHtml = letterReason
+        ? `<p style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:8px;font-size:14px;color:#334155"><strong>Letter Details:</strong> ${escapeHtml(letterReason)}</p>`
+        : '';
+    const portalBtnHtml = appointmentsUrl
+        ? `<p style="margin:22px 0"><a href="${escapeHtml(appointmentsUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">View My Appointments</a></p>`
+        : '';
+
+    const bodyHtml = `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;color:#0f172a;line-height:1.6">
+            <p>${escapeHtml(greeting)}</p>
+            <p>Good day. This is to inform you that the communication letter for <strong>${escapeHtml(title)}</strong> has been signed by <strong>${escapeHtml(TEACHER_NAME)}</strong> and is now <strong>ready for pickup</strong> at <strong>${escapeHtml(CONFIG.location)}</strong>.</p>
+            ${letterReasonHtml}
+            ${portalBtnHtml}
+            <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+        </div>`;
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: row.student_email,
+            subject,
+            text: bodyText,
+            html: bodyHtml,
+        });
+    } catch (err) {
+        console.error('Failed to send communication letter ready notification email:', err);
+        if (err.status) throw err;
+        throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
+    }
+
+    const notifiedAt = new Date().toISOString();
+    const { error: updateErr } = await db().from(TABLE).update({ notified_at: notifiedAt }).eq('id', row.id);
+    if (updateErr) throw updateErr;
+    const rtPromise = notifyRealtimeListeners({ type: 'letter_notified', bookingId: row.id, date: row.appointment_date });
+    if (process.env.VERCEL) await rtPromise;
+    res.json({ ok: true, notifiedAt });
+});
+
 // Cancel an appointment with an instructor reason visible in the student's profile
 app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
@@ -3919,7 +3989,7 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
             if (minsUntil < 0) { info.result = 'already started'; continue; }
 
             const booking = toBooking(r, now);
-            const alreadyNotifiedTeacher = Boolean(r.reminder_sent_at || (r.consultation_type !== 'dropoff' && r.notified_at));
+            const alreadyNotifiedTeacher = Boolean(r.reminder_sent_at || (!['dropoff', 'letter'].includes(r.consultation_type) && r.notified_at));
 
             // 1. Teacher reminder (10 minutes before)
             if (alreadyNotifiedTeacher) {
@@ -3939,7 +4009,7 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
                         .update({ reminder_sent_at: sentAt })
                         .eq('id', r.id);
 
-                    if (updateErr && ['42703', 'PGRST204'].includes(updateErr.code) && r.consultation_type !== 'dropoff') {
+                    if (updateErr && ['42703', 'PGRST204'].includes(updateErr.code) && !['dropoff', 'letter'].includes(r.consultation_type)) {
                         await db().from(TABLE).update({ notified_at: sentAt }).eq('id', r.id);
                     } else if (updateErr) {
                         console.error(`Could not record reminder_sent_at for appointment ${r.id}:`, updateErr);

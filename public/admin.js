@@ -495,6 +495,26 @@
         }
     }
 
+    async function notifyLetterReady(b, btn) {
+        const target = b.studentEmail || 'student';
+        const again = b.notifiedAt ? ' again' : '';
+        if (!confirm(`Send "Communication Letter Ready for Pickup" notification email${again} to ${target}?`)) return;
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = 'Sending…';
+        try {
+            const { notifiedAt } = await api(`/api/admin/bookings/${b.id}/notify-letter-ready`, { method: 'POST' });
+            b.notifiedAt = notifiedAt;
+            render();
+            window.SchedulerRealtime?.notifyLocal({ type: 'letter_notified', bookingId: b.id, date: b.date });
+            toast(`Notification emailed to ${target}.`, 'success');
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = prevText;
+            toast(err.message, 'error');
+        }
+    }
+
     const LEVEL_LABELS = {
         capstone1: 'Capstone 1',
         capstone2: 'Capstone 2',
@@ -1376,6 +1396,9 @@
                 if (b.notifiedAt && (b.isDropoff || b.consultationType === 'dropoff')) {
                     header.appendChild(el('span', 'badge teal', 'Checked ✓'));
                 }
+                if (b.notifiedAt && b.consultationType === 'letter') {
+                    header.appendChild(el('span', 'badge teal', 'Ready for Pickup ✓'));
+                }
                 if ((b.rescheduledCount > 0 || b.rescheduledAt) && !isCancelled(b)) {
                     const reschedBadge = el('span', 'badge violet', 'Rescheduled');
                     if (b.previousDate && b.previousLabel) {
@@ -1489,6 +1512,16 @@
                     notifyBtn.type = 'button';
                     notifyBtn.addEventListener('click', () => notifyManuscriptChecked(b, notifyBtn));
                     actions.appendChild(notifyBtn);
+                }
+                if (!isCancelled(b) && b.consultationType === 'letter' && b.studentEmail) {
+                    const notifyLetterBtn = el(
+                        'button',
+                        'btn btn-ghost btn-sm',
+                        b.notifiedAt ? 'Resend Email' : 'Notify Ready for Pickup'
+                    );
+                    notifyLetterBtn.type = 'button';
+                    notifyLetterBtn.addEventListener('click', () => notifyLetterReady(b, notifyLetterBtn));
+                    actions.appendChild(notifyLetterBtn);
                 }
                 if (state.tab === 'upcoming' && !isCancelled(b)) {
                     const btn = el('button', 'btn btn-danger-soft', 'Cancel');
