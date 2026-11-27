@@ -1806,12 +1806,19 @@
             }
         }
 
-        const emailAddr = b.studentEmail || state.student?.email || '';
+        const allRecipients = [
+            b.studentEmail || state.student?.email || '',
+            ...(Array.isArray(b.memberEmails) ? b.memberEmails : (state.student?.memberEmails || [])),
+        ]
+            .map((e) => String(e || '').trim().toLowerCase())
+            .filter((e, idx, arr) => e && arr.indexOf(e) === idx);
         setText(
             '#cEmailNotice',
-            emailAddr
-                ? `Confirmation & calendar invite sent to ${emailAddr}.`
-                : 'Confirmation & calendar invite sent to your school email.'
+            allRecipients.length > 1
+                ? `Confirmation & calendar invite sent to ${allRecipients.join(', ')}.`
+                : allRecipients.length === 1
+                    ? `Confirmation & calendar invite sent to ${allRecipients[0]}.`
+                    : 'Confirmation & calendar invite sent to your school email.'
         );
         const outlookCalBtn = $('#cOutlookCalBtn');
         if (outlookCalBtn) {
@@ -2012,12 +2019,56 @@
         if (chipsWrap) {
             chipsWrap.innerHTML = '';
             const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
+            const memberEmails = Array.isArray(s.memberEmails) ? s.memberEmails : [s.email];
+            let missingGroupmateEmails = 0;
+
             members.forEach((m, idx) => {
-                const chip = document.createElement('span');
-                chip.className = 'member-chip';
-                chip.textContent = idx === 0 ? `${m} (Rep)` : m;
-                chipsWrap.appendChild(chip);
+                const row = document.createElement('div');
+                row.className = 'profile-member-row';
+
+                const info = document.createElement('div');
+                info.className = 'profile-member-info';
+
+                const nameEl = document.createElement('strong');
+                nameEl.textContent = idx === 0 ? `${m} (Rep)` : m;
+
+                const emailVal = idx === 0 ? (s.email || '') : (memberEmails[idx] || '');
+                const emailEl = document.createElement('span');
+                emailEl.className = emailVal ? 'muted small' : 'muted small is-missing-email';
+                emailEl.textContent = emailVal || 'No student email added yet';
+                if (idx > 0 && !emailVal) missingGroupmateEmails += 1;
+
+                info.append(nameEl, emailEl);
+
+                const badge = document.createElement('span');
+                badge.className = idx === 0
+                    ? 'badge teal'
+                    : emailVal
+                        ? 'badge sky'
+                        : 'badge muted-badge';
+                badge.textContent = idx === 0 ? 'OTP & Updates' : (emailVal ? 'Updates ✓' : 'No email');
+
+                row.append(info, badge);
+                chipsWrap.appendChild(row);
             });
+
+            if (missingGroupmateEmails > 0) {
+                const promptBtn = document.createElement('button');
+                promptBtn.type = 'button';
+                promptBtn.className = 'link-btn profile-add-emails-link';
+                promptBtn.textContent = `+ Add groupmate student email${missingGroupmateEmails > 1 ? 's' : ''} to receive consultation updates`;
+                promptBtn.addEventListener('click', () => {
+                    populateProfileEditForm();
+                    setProfileModalView('edit');
+                    setTimeout(() => {
+                        const firstEmptyEmail = Array.from(document.querySelectorAll('#profileMemberList .member-email-input'))
+                            .slice(1)
+                            .find((inp) => !inp.value.trim());
+                        firstEmptyEmail?.focus();
+                    }, 40);
+                });
+                chipsWrap.appendChild(promptBtn);
+            }
         }
     }
 
@@ -2141,62 +2192,160 @@
         setText('#myBookingsTitle', titles[view] || 'Profile');
     }
 
+    function getGroupmateEmailPlaceholder(idx) {
+        const domains = state.config?.allowedEmailDomains || [];
+        const example = domains.length ? `member${idx + 1}@${domains[0]}` : `member${idx + 1}@university.edu.ph`;
+        return `${example} (student email for updates)`;
+    }
+
+    function validateMemberEmailsClient(primaryEmail, members, emailInputs, fieldSel) {
+        const domains = state.config?.allowedEmailDomains || [];
+        const domainHintText = domains.length ? ` (${domains.map((d) => '@' + d).join(' or ')})` : '';
+        const cleanPrimary = String(primaryEmail || '').trim().toLowerCase();
+        const seen = new Set(cleanPrimary ? [cleanPrimary] : []);
+        const aligned = [cleanPrimary];
+
+        for (let i = 1; i < members.length; i += 1) {
+            const inp = emailInputs[i];
+            const val = (inp?.value || '').trim().toLowerCase();
+            if (!val) {
+                aligned.push('');
+                continue;
+            }
+            const basicValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)
+                && (!domains.length || domains.some((d) => val.endsWith(`@${d}`) || val.endsWith(`.${d}`)));
+            if (!basicValid) {
+                setFieldError(
+                    fieldSel,
+                    `Please enter a valid university student email${domainHintText} for ${members[i] || `Member ${i + 1}`}, or leave it blank.`,
+                    inp
+                );
+                return null;
+            }
+            if (seen.has(val)) {
+                setFieldError(
+                    fieldSel,
+                    val === cleanPrimary
+                        ? `Groupmate email (${val}) cannot be the same as the representative’s email.`
+                        : `Duplicate email (${val}). Each group member must use their own university email.`,
+                    inp
+                );
+                return null;
+            }
+            seen.add(val);
+            aligned.push(val);
+        }
+
+        return aligned;
+    }
+
     function getProfileMemberInputs() {
-        return Array.from(document.querySelectorAll('#profileMemberList input'));
+        return Array.from(document.querySelectorAll('#profileMemberList .member-name-input'));
+    }
+
+    function getProfileMemberEmailInputs() {
+        return Array.from(document.querySelectorAll('#profileMemberList .member-email-input'));
     }
 
     function syncProfileMemberControls() {
-        const rows = Array.from(document.querySelectorAll('#profileMemberList .member-row'));
+        const rows = Array.from(document.querySelectorAll('#profileMemberList .member-entry-card'));
         const repName = $('#profileName')?.value.trim() || '';
+        const repEmail = $('#profileEmail')?.value.trim().toLowerCase() || '';
         rows.forEach((row, idx) => {
-            const input = row.querySelector('input');
+            const titleEl = row.querySelector('.member-entry-title');
+            const badgeEl = row.querySelector('.member-entry-badge');
+            const nameInput = row.querySelector('.member-name-input');
+            const emailInput = row.querySelector('.member-email-input');
             const removeBtn = row.querySelector('.remove-member');
             if (idx === 0) {
-                input.readOnly = true;
-                input.value = repName;
-                input.placeholder = 'Member 1 (You) — auto-filled from your name above';
+                if (titleEl) titleEl.textContent = 'Member 1 (Representative · You)';
+                if (badgeEl) {
+                    badgeEl.className = 'badge teal member-entry-badge';
+                    badgeEl.textContent = 'OTP & Updates';
+                }
+                nameInput.readOnly = true;
+                nameInput.value = repName;
+                nameInput.placeholder = 'Auto-filled from your full name above';
+                emailInput.readOnly = true;
+                emailInput.value = repEmail;
+                emailInput.placeholder = 'Auto-filled from your university email above';
+                removeBtn.classList.add('hidden');
                 removeBtn.disabled = true;
-                removeBtn.title = 'You are always Member 1';
             } else {
-                input.readOnly = false;
-                input.placeholder = `Member ${idx + 1} — full name`;
+                if (titleEl) titleEl.textContent = `Member ${idx + 1} (Groupmate)`;
+                if (badgeEl) {
+                    badgeEl.className = 'badge sky member-entry-badge';
+                    badgeEl.textContent = 'Updates via Email';
+                }
+                nameInput.readOnly = false;
+                nameInput.placeholder = `Member ${idx + 1} — full name`;
+                emailInput.readOnly = false;
+                emailInput.placeholder = getGroupmateEmailPlaceholder(idx);
+                removeBtn.classList.remove('hidden');
                 removeBtn.disabled = false;
-                removeBtn.title = 'Remove member';
+                removeBtn.title = `Remove Member ${idx + 1}`;
             }
         });
         setText('#profileMemberCount', `(${rows.length}/${MAX_MEMBERS})`);
         $('#profileAddMemberBtn')?.classList.toggle('hidden', rows.length >= MAX_MEMBERS);
     }
 
-    function addProfileMemberRow(initialValue = '', shouldFocus = false) {
+    function addProfileMemberRow(initialValue = '', initialEmail = '', shouldFocus = false) {
         const list = $('#profileMemberList');
         if (!list || list.children.length >= MAX_MEMBERS) return;
 
-        const row = document.createElement('div');
-        row.className = 'member-row';
+        const card = document.createElement('div');
+        card.className = 'member-entry-card';
 
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.maxLength = 100;
-        input.value = initialValue;
-        input.addEventListener('input', () => clearFieldError('#profileMembersField'));
+        const head = document.createElement('div');
+        head.className = 'member-entry-head';
+
+        const headLeft = document.createElement('div');
+        headLeft.className = 'member-entry-head-left';
+        const titleEl = document.createElement('span');
+        titleEl.className = 'member-entry-title';
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'badge sky member-entry-badge';
+        headLeft.append(titleEl, badgeEl);
 
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
-        removeBtn.className = 'remove-member';
-        removeBtn.setAttribute('aria-label', 'Remove member');
+        removeBtn.className = 'remove-member member-card-remove';
+        removeBtn.setAttribute('aria-label', 'Remove groupmate');
         removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
         removeBtn.addEventListener('click', () => {
             if (list.children.length <= MIN_MEMBERS) return;
-            row.remove();
+            card.remove();
             clearFieldError('#profileMembersField');
             syncProfileMemberControls();
         });
 
-        row.append(input, removeBtn);
-        list.appendChild(row);
+        head.append(headLeft, removeBtn);
+
+        const inputsWrap = document.createElement('div');
+        inputsWrap.className = 'member-entry-inputs';
+
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'member-name-input';
+        nameInput.maxLength = 100;
+        nameInput.value = initialValue;
+        nameInput.addEventListener('input', () => clearFieldError('#profileMembersField'));
+
+        const emailInput = document.createElement('input');
+        emailInput.type = 'email';
+        emailInput.className = 'member-email-input';
+        emailInput.maxLength = 254;
+        emailInput.inputMode = 'email';
+        emailInput.autocomplete = 'email';
+        emailInput.value = initialEmail;
+        emailInput.addEventListener('input', () => clearFieldError('#profileMembersField'));
+
+        inputsWrap.append(nameInput, emailInput);
+        card.append(head, inputsWrap);
+        list.appendChild(card);
         syncProfileMemberControls();
-        if (shouldFocus) input.focus();
+        if (shouldFocus) nameInput.focus();
     }
 
     function syncProfileSaveButtonLabel() {
@@ -2230,7 +2379,10 @@
         if (list) {
             list.innerHTML = '';
             const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name || ''];
-            members.slice(0, MAX_MEMBERS).forEach((m) => addProfileMemberRow(m));
+            const emails = Array.isArray(s.memberEmails) ? s.memberEmails : [s.email || ''];
+            members.slice(0, MAX_MEMBERS).forEach((m, idx) => {
+                addProfileMemberRow(m, emails[idx] || '');
+            });
         }
         syncProfileMemberControls();
         syncProfileSaveButtonLabel();
@@ -2292,9 +2444,17 @@
                     if (ok && date) selectDate(date, false, true);
                 });
             }
+            if (state.currentStep === 3) {
+                renderStep3RecipientsNote();
+            }
         } else if (state.consultationPurpose) {
             updatePurposeUI();
             updateSelectionBox();
+            if (state.currentStep === 3) {
+                renderStep3RecipientsNote();
+            }
+        } else if (state.currentStep === 3) {
+            renderStep3RecipientsNote();
         }
     }
 
@@ -2346,6 +2506,13 @@
         }
         const otherMembers = memberInputs.slice(1).map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS - 1);
         const members = [name, ...otherMembers];
+        const memberEmails = validateMemberEmailsClient(
+            email,
+            members,
+            getProfileMemberEmailInputs(),
+            '#profileMembersField'
+        );
+        if (!memberEmails) return;
 
         const emailChanged = email !== (state.student.email || '').toLowerCase();
         const btn = $('#saveProfileBtn');
@@ -2355,7 +2522,7 @@
         try {
             const data = await api('/api/profile/update', {
                 method: 'POST',
-                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, projectLevel, members }),
+                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, projectLevel, members, memberEmails }),
             });
             if (data.otpRequired) {
                 state.profileOtpEmail = data.email;
@@ -2503,6 +2670,26 @@
                     '#projectMembersText',
                     `${count} ${count === 1 ? 'member' : 'members'} · ${state.student.members?.join(', ') || state.student.name}`
                 );
+                const emailsStatusEl = $('#projectEmailsStatus');
+                const editBtn = $('#sidebarEditProfileBtn');
+                if (emailsStatusEl) {
+                    const mEmails = Array.isArray(state.student.memberEmails) ? state.student.memberEmails : [];
+                    const configuredCount = [state.student.email, ...mEmails.slice(1)].filter(Boolean).length;
+                    if (count > 1) {
+                        emailsStatusEl.classList.remove('hidden');
+                        emailsStatusEl.textContent = configuredCount >= count
+                            ? `Email updates active for all ${count} members ✓`
+                            : `Email updates active for ${configuredCount} of ${count} members`;
+                    } else {
+                        emailsStatusEl.classList.add('hidden');
+                        emailsStatusEl.textContent = '';
+                    }
+                    if (editBtn) {
+                        editBtn.textContent = count > 1 && configuredCount < count
+                            ? 'Edit info / add groupmate emails'
+                            : 'Edit info';
+                    }
+                }
                 projBox.classList.remove('hidden');
             } else {
                 projBox.classList.add('hidden');
@@ -2558,6 +2745,34 @@
         syncMemberControls();
     }
 
+    function renderStep3RecipientsNote() {
+        const noteEl = $('#step3RecipientsNote');
+        if (!noteEl || !state.student) return;
+        noteEl.innerHTML = '';
+        const members = Array.isArray(state.student.members) && state.student.members.length
+            ? state.student.members
+            : [state.student.name];
+        const mEmails = Array.isArray(state.student.memberEmails) ? state.student.memberEmails : [];
+        const activeEmails = [state.student.email, ...mEmails.slice(1)]
+            .map((e) => String(e || '').trim().toLowerCase())
+            .filter((e, idx, arr) => e && arr.indexOf(e) === idx);
+
+        const textSpan = document.createElement('span');
+        textSpan.textContent = activeEmails.length > 1
+            ? `Email updates & calendar invites will be sent to: ${activeEmails.join(', ')}. `
+            : `Email updates & calendar invites will be sent to: ${activeEmails[0] || 'your university email'}. `;
+
+        const editLink = document.createElement('button');
+        editLink.type = 'button';
+        editLink.className = 'link-btn';
+        editLink.textContent = members.length > 1 && activeEmails.length < members.length
+            ? '+ Add groupmates’ emails'
+            : 'Manage group emails';
+        editLink.addEventListener('click', () => openMyBookingsModal(true));
+
+        noteEl.append(textSpan, editLink);
+    }
+
     function renderStep3() {
         if (!state.student) {
             showAuthGate();
@@ -2577,6 +2792,7 @@
         }
         updatePurposeUI();
         syncMemberControls();
+        renderStep3RecipientsNote();
     }
 
     function setAuthMode(mode) {
@@ -2699,70 +2915,121 @@
         });
     }
 
-    /* ---------------- registration members UI (1 to 3 members) ---------------- */
+    /* ---------------- registration members UI (1 to 3 members + groupmate emails) ---------------- */
     function getRegMemberInputs() {
-        return Array.from(document.querySelectorAll('#regMemberList input'));
+        return Array.from(document.querySelectorAll('#regMemberList .member-name-input'));
+    }
+
+    function getRegMemberEmailInputs() {
+        return Array.from(document.querySelectorAll('#regMemberList .member-email-input'));
     }
 
     function syncRegMemberControls() {
-        const rows = Array.from(document.querySelectorAll('#regMemberList .member-row'));
+        const rows = Array.from(document.querySelectorAll('#regMemberList .member-entry-card'));
         const repName = $('#regName')?.value.trim() || '';
+        const repEmail = $('#regEmail')?.value.trim().toLowerCase() || '';
         rows.forEach((row, idx) => {
-            const input = row.querySelector('input');
+            const titleEl = row.querySelector('.member-entry-title');
+            const badgeEl = row.querySelector('.member-entry-badge');
+            const nameInput = row.querySelector('.member-name-input');
+            const emailInput = row.querySelector('.member-email-input');
             const removeBtn = row.querySelector('.remove-member');
             if (idx === 0) {
-                input.readOnly = true;
-                input.value = repName;
-                input.placeholder = 'Member 1 (You) — auto-filled from your name above';
+                if (titleEl) titleEl.textContent = 'Member 1 (Representative · You)';
+                if (badgeEl) {
+                    badgeEl.className = 'badge teal member-entry-badge';
+                    badgeEl.textContent = 'OTP & Updates';
+                }
+                nameInput.readOnly = true;
+                nameInput.value = repName;
+                nameInput.placeholder = 'Auto-filled from your full name above';
+                emailInput.readOnly = true;
+                emailInput.value = repEmail;
+                emailInput.placeholder = 'Auto-filled from your university email above';
+                removeBtn.classList.add('hidden');
                 removeBtn.disabled = true;
-                removeBtn.title = 'You are always Member 1';
             } else {
-                input.readOnly = false;
-                input.placeholder = `Member ${idx + 1} — full name`;
+                if (titleEl) titleEl.textContent = `Member ${idx + 1} (Groupmate)`;
+                if (badgeEl) {
+                    badgeEl.className = 'badge sky member-entry-badge';
+                    badgeEl.textContent = 'Updates via Email';
+                }
+                nameInput.readOnly = false;
+                nameInput.placeholder = `Member ${idx + 1} — full name`;
+                emailInput.readOnly = false;
+                emailInput.placeholder = getGroupmateEmailPlaceholder(idx);
+                removeBtn.classList.remove('hidden');
                 removeBtn.disabled = false;
-                removeBtn.title = 'Remove member';
+                removeBtn.title = `Remove Member ${idx + 1}`;
             }
         });
         setText('#regMemberCount', `(${rows.length}/${MAX_MEMBERS})`);
         $('#regAddMemberBtn')?.classList.toggle('hidden', rows.length >= MAX_MEMBERS);
     }
 
-    function addRegMemberRow(initialValue = '', shouldFocus = false) {
+    function addRegMemberRow(initialValue = '', initialEmail = '', shouldFocus = false) {
         const list = $('#regMemberList');
         if (!list || list.children.length >= MAX_MEMBERS) return;
 
-        const row = document.createElement('div');
-        row.className = 'member-row';
+        const card = document.createElement('div');
+        card.className = 'member-entry-card';
 
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.maxLength = 100;
-        input.value = initialValue;
-        input.addEventListener('input', () => clearFieldError('#regMembersField'));
+        const head = document.createElement('div');
+        head.className = 'member-entry-head';
+
+        const headLeft = document.createElement('div');
+        headLeft.className = 'member-entry-head-left';
+        const titleEl = document.createElement('span');
+        titleEl.className = 'member-entry-title';
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'badge sky member-entry-badge';
+        headLeft.append(titleEl, badgeEl);
 
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
-        removeBtn.className = 'remove-member';
-        removeBtn.setAttribute('aria-label', 'Remove member');
+        removeBtn.className = 'remove-member member-card-remove';
+        removeBtn.setAttribute('aria-label', 'Remove groupmate');
         removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
         removeBtn.addEventListener('click', () => {
             if (list.children.length <= MIN_MEMBERS) return;
-            row.remove();
+            card.remove();
             clearFieldError('#regMembersField');
             syncRegMemberControls();
         });
 
-        row.append(input, removeBtn);
-        list.appendChild(row);
+        head.append(headLeft, removeBtn);
+
+        const inputsWrap = document.createElement('div');
+        inputsWrap.className = 'member-entry-inputs';
+
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'member-name-input';
+        nameInput.maxLength = 100;
+        nameInput.value = initialValue;
+        nameInput.addEventListener('input', () => clearFieldError('#regMembersField'));
+
+        const emailInput = document.createElement('input');
+        emailInput.type = 'email';
+        emailInput.className = 'member-email-input';
+        emailInput.maxLength = 254;
+        emailInput.inputMode = 'email';
+        emailInput.autocomplete = 'email';
+        emailInput.value = initialEmail;
+        emailInput.addEventListener('input', () => clearFieldError('#regMembersField'));
+
+        inputsWrap.append(nameInput, emailInput);
+        card.append(head, inputsWrap);
+        list.appendChild(card);
         syncRegMemberControls();
-        if (shouldFocus) input.focus();
+        if (shouldFocus) nameInput.focus();
     }
 
     function resetRegMembers() {
         const list = $('#regMemberList');
         if (!list) return;
         list.innerHTML = '';
-        addRegMemberRow($('#regName')?.value.trim() || '');
+        addRegMemberRow($('#regName')?.value.trim() || '', $('#regEmail')?.value.trim().toLowerCase() || '');
     }
 
     function handleRegister(e) {
@@ -2814,6 +3081,13 @@
         }
         const otherMembers = regInputs.slice(1).map((el) => el.value.trim()).filter(Boolean).slice(0, MAX_MEMBERS - 1);
         const members = [name, ...otherMembers];
+        const memberEmails = validateMemberEmailsClient(
+            email,
+            members,
+            getRegMemberEmailInputs(),
+            '#regMembersField'
+        );
+        if (!memberEmails) return;
 
         if (password.length < 8) {
             setFieldError('#regPassword', 'Password must be at least 8 characters long.');
@@ -2827,7 +3101,7 @@
         runAuth($('#registerBtn'), 'Sending code…', async () => {
             const data = await api('/api/auth/register/start', {
                 method: 'POST',
-                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, projectLevel, members, password }),
+                body: JSON.stringify({ name, email, capstoneTitle, instructorRole, projectLevel, members, memberEmails, password }),
             });
             showOtpStep('register', data.email, data.resendSeconds);
             toast('Verification code sent. Check your inbox or spam folder.', 'success');
@@ -2958,7 +3232,8 @@
         $('#loginForm').addEventListener('submit', handleLogin);
         $('#registerForm').addEventListener('submit', handleRegister);
         $('#regName')?.addEventListener('input', syncRegMemberControls);
-        $('#regAddMemberBtn')?.addEventListener('click', () => addRegMemberRow('', true));
+        $('#regEmail')?.addEventListener('input', syncRegMemberControls);
+        $('#regAddMemberBtn')?.addEventListener('click', () => addRegMemberRow('', '', true));
         resetRegMembers();
 
         $('#forgotForm').addEventListener('submit', handleForgot);
@@ -2994,6 +3269,8 @@
         if ($('#profileEmailHint')) {
             $('#profileEmailHint').textContent = `Must end with ${domainText}. Changing your email will send a 6-digit OTP verification code to the new address.`;
         }
+        syncRegMemberControls();
+        syncProfileMemberControls();
     }
 
     /* ---------------- init ---------------- */
@@ -3091,8 +3368,11 @@
             setProfileModalView('summary');
         });
         $('#profileName')?.addEventListener('input', syncProfileMemberControls);
-        $('#profileEmail')?.addEventListener('input', syncProfileSaveButtonLabel);
-        $('#profileAddMemberBtn')?.addEventListener('click', () => addProfileMemberRow('', true));
+        $('#profileEmail')?.addEventListener('input', () => {
+            syncProfileMemberControls();
+            syncProfileSaveButtonLabel();
+        });
+        $('#profileAddMemberBtn')?.addEventListener('click', () => addProfileMemberRow('', '', true));
         $('#profileEditForm')?.addEventListener('submit', handleProfileUpdate);
 
         $('#profileOtpForm')?.addEventListener('submit', handleProfileOtpVerify);

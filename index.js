@@ -644,14 +644,20 @@ async function recordStudentPickupNotification({ studentId = null, email = null,
     }
     if (!studentRow) return null;
 
-    const prevHistory = Array.isArray(studentRow.change_history) ? studentRow.change_history : [];
+    const rawHistory = Array.isArray(studentRow.change_history) ? studentRow.change_history : [];
+    const memberEmailsMeta = rawHistory.find((h) => h && h.type === 'member_emails');
+    const prevHistory = rawHistory.filter((h) => h && h.type !== 'member_emails');
     const notifEntry = {
         id: crypto.randomUUID(),
         type: 'notification',
         kind,
         notifiedAt,
     };
-    const nextHistory = [notifEntry, ...prevHistory].slice(0, 50);
+    const nextHistory = [
+        ...(memberEmailsMeta ? [memberEmailsMeta] : []),
+        notifEntry,
+        ...prevHistory,
+    ].slice(0, 50);
     const colName = kind === 'manuscript_ready' ? 'manuscript_notified_at' : 'letter_notified_at';
 
     let { error } = await db()
@@ -675,10 +681,91 @@ async function recordStudentPickupNotification({ studentId = null, email = null,
     return studentRow;
 }
 
+function extractStudentMemberEmails(studentRow) {
+    if (!studentRow) return [];
+    const primary = normalizeEmail(studentRow.email);
+    const members = Array.isArray(studentRow.members) && studentRow.members.length
+        ? studentRow.members
+        : (studentRow.full_name ? [studentRow.full_name] : []);
+    const targetLen = Math.max(1, Math.min(MAX_MEMBERS, members.length || 1));
+
+    let rawSource = null;
+    if (Array.isArray(studentRow.member_emails) && studentRow.member_emails.length > 0) {
+        rawSource = studentRow.member_emails;
+    } else if (Array.isArray(studentRow.change_history)) {
+        const metaEntry = studentRow.change_history.find(
+            (h) => h && h.type === 'member_emails' && Array.isArray(h.memberEmails)
+        );
+        if (metaEntry) rawSource = metaEntry.memberEmails;
+    }
+
+    const out = [primary || ''];
+    for (let i = 1; i < targetLen; i += 1) {
+        const candidate = normalizeEmail(rawSource?.[i] || '');
+        out.push(candidate && EMAIL_RE.test(candidate) && candidate !== primary ? candidate : '');
+    }
+    return out;
+}
+
+function validateAndAlignMemberEmails(primaryEmail, members, rawMemberEmails, errorField = 'regMembers') {
+    const cleanPrimary = normalizeEmail(primaryEmail);
+    const aligned = [cleanPrimary];
+    const seen = new Set(cleanPrimary ? [cleanPrimary] : []);
+    const rawArr = Array.isArray(rawMemberEmails) ? rawMemberEmails : [];
+
+    for (let i = 1; i < members.length; i += 1) {
+        const mEmail = normalizeEmail(rawArr[i] ?? '');
+        if (!mEmail) {
+            aligned.push('');
+            continue;
+        }
+        if (!isUniversityEmail(mEmail)) {
+            return {
+                field: errorField,
+                error: `Please enter a valid university email (${domainHint()}) for ${members[i] || `Member ${i + 1}`}, or leave it blank.`,
+            };
+        }
+        if (seen.has(mEmail)) {
+            return {
+                field: errorField,
+                error: mEmail === cleanPrimary
+                    ? `Groupmate email (${mEmail}) cannot be the same as the main representative's email.`
+                    : `Duplicate groupmate email (${mEmail}). Each member must use their own university email.`,
+            };
+        }
+        seen.add(mEmail);
+        aligned.push(mEmail);
+    }
+
+    return { memberEmails: aligned };
+}
+
+function getGroupRecipientEmails({ primaryEmail = null, memberEmails = null, studentRow = null, booking = null } = {}) {
+    const seen = new Set();
+    const recipients = [];
+    const addEmail = (raw) => {
+        const clean = normalizeEmail(raw);
+        if (!clean || clean.length > 254 || !EMAIL_RE.test(clean) || seen.has(clean)) return;
+        seen.add(clean);
+        recipients.push(clean);
+    };
+
+    addEmail(primaryEmail);
+    addEmail(booking?.studentEmail);
+    addEmail(studentRow?.email);
+    if (Array.isArray(memberEmails)) memberEmails.forEach(addEmail);
+    if (Array.isArray(booking?.memberEmails)) booking.memberEmails.forEach(addEmail);
+    if (studentRow) extractStudentMemberEmails(studentRow).forEach(addEmail);
+
+    return recipients;
+}
+
 const publicStudent = (s) => {
     const { manuscriptNotifiedAt, letterNotifiedAt } = extractStudentNotificationTimestamps(s);
     const filteredHistory = (Array.isArray(s.change_history) ? s.change_history : [])
-        .filter((h) => h && h.type !== 'notification');
+        .filter((h) => h && h.type !== 'notification' && h.type !== 'member_emails');
+    const members = Array.isArray(s.members) && s.members.length ? s.members : [s.full_name];
+    const memberEmails = extractStudentMemberEmails(s);
     return {
         id: s.id,
         name: s.full_name,
@@ -686,7 +773,8 @@ const publicStudent = (s) => {
         capstoneTitle: s.capstone_title || null,
         instructorRole: s.instructor_role || null,
         projectLevel: normalizeDefenseLevel(s.project_level),
-        members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
+        members,
+        memberEmails,
         updatedAt: s.updated_at || null,
         manuscriptNotifiedAt,
         letterNotifiedAt,
@@ -781,7 +869,7 @@ async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
 
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     const now = Date.now();
-    const rowData = {
+    const baseOtpRow = {
         email,
         student_name: name || payload?.name || null,
         capstone_title: payload?.capstoneTitle || null,
@@ -796,16 +884,28 @@ async function issueOtp(email, purpose, { payload = null, name = null } = {}) {
         created_at: new Date(now).toISOString(),
         expires_at: new Date(now + AUTH.otpMinutes * 60 * 1000).toISOString(),
     };
+    const rowData = Array.isArray(payload?.memberEmails)
+        ? { ...baseOtpRow, member_emails: payload.memberEmails }
+        : baseOtpRow;
 
     let { data: inserted, error: insertErr } = await db()
         .from(OTP_TABLE)
         .insert([rowData])
         .select('id')
         .single();
+    if (insertErr && ['42703', 'PGRST204'].includes(insertErr.code)) {
+        const retryWithoutCol = await db()
+            .from(OTP_TABLE)
+            .insert([baseOtpRow])
+            .select('id')
+            .single();
+        inserted = retryWithoutCol.data;
+        insertErr = retryWithoutCol.error;
+    }
     if (insertErr && insertErr.code === '23514' && purpose === 'email_change') {
         const fallbackRes = await db()
             .from(OTP_TABLE)
-            .insert([{ ...rowData, purpose: 'register' }])
+            .insert([{ ...baseOtpRow, purpose: 'register' }])
             .select('id')
             .single();
         inserted = fallbackRes.data;
@@ -1851,6 +1951,12 @@ app.post('/api/auth/register/start', async (req, res) => {
         return res.status(400).json({ field: 'regMembers', error: 'Each member needs a full name (2–100 characters).' });
     }
 
+    const emailCheck = validateAndAlignMemberEmails(email, members, body.memberEmails, 'regMembers');
+    if (emailCheck.error) {
+        return res.status(400).json({ field: emailCheck.field, error: emailCheck.error });
+    }
+    const { memberEmails } = emailCheck;
+
     const pwError = validatePassword(password);
     if (pwError) return res.status(400).json({ field: 'regPassword', error: pwError });
 
@@ -1866,9 +1972,9 @@ app.post('/api/auth/register/start', async (req, res) => {
         });
     }
 
-    // The account is only created after the code is verified, so keep the details with the code.
+    // OTP is sent ONLY to the main representative (`email`); groupmate emails receive consultation updates once registered.
     const passwordHash = await hashPassword(password);
-    const payload = { name, capstoneTitle, instructorRole, projectLevel, members, passwordHash };
+    const payload = { name, capstoneTitle, instructorRole, projectLevel, members, memberEmails, passwordHash };
     await issueOtp(email, 'register', { payload, name });
     res.json({ ok: true, email, expiresInMinutes: AUTH.otpMinutes, resendSeconds: AUTH.otpResendSeconds });
 });
@@ -1877,7 +1983,7 @@ app.post('/api/auth/register/start', async (req, res) => {
 app.post('/api/auth/register/verify', async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const row = await consumeOtp(email, 'register', req.body?.code);
-    const { name, capstoneTitle, instructorRole, projectLevel, members, passwordHash } = row.payload || {};
+    const { name, capstoneTitle, instructorRole, projectLevel, members, memberEmails, passwordHash } = row.payload || {};
     if (!name || !passwordHash) {
         return res.status(400).json({ error: 'Registration details were lost. Please register again.' });
     }
@@ -1892,20 +1998,58 @@ app.post('/api/auth/register/verify', async (req, res) => {
         }
     }
 
-    const { data: student, error } = await db()
+    const finalMembers = Array.isArray(members) && members.length ? members : [name];
+    const alignedEmails = validateAndAlignMemberEmails(email, finalMembers, memberEmails, 'regMembers').memberEmails || [email];
+    const nowIso = new Date().toISOString();
+    const memberEmailsMeta = {
+        id: crypto.randomUUID(),
+        type: 'member_emails',
+        memberEmails: alignedEmails,
+        updatedAt: nowIso,
+    };
+
+    const baseStudentRow = {
+        email,
+        full_name: name,
+        capstone_title: capstoneTitle || null,
+        instructor_role: instructorRole || null,
+        project_level: normalizeDefenseLevel(projectLevel),
+        members: finalMembers,
+        password_hash: passwordHash,
+        last_login_at: nowIso,
+    };
+
+    let { data: student, error } = await db()
         .from(STUDENTS_TABLE)
         .insert([{
-            email,
-            full_name: name,
-            capstone_title: capstoneTitle || null,
-            instructor_role: instructorRole || null,
-            project_level: normalizeDefenseLevel(projectLevel),
-            members: Array.isArray(members) && members.length ? members : [name],
-            password_hash: passwordHash,
-            last_login_at: new Date().toISOString(),
+            ...baseStudentRow,
+            member_emails: alignedEmails,
+            change_history: [memberEmailsMeta],
         }])
         .select('*')
         .single();
+
+    if (error && ['42703', 'PGRST204'].includes(error.code)) {
+        const retryWithHistory = await db()
+            .from(STUDENTS_TABLE)
+            .insert([{
+                ...baseStudentRow,
+                change_history: [memberEmailsMeta],
+            }])
+            .select('*')
+            .single();
+        student = retryWithHistory.data;
+        error = retryWithHistory.error;
+    }
+    if (error && ['42703', 'PGRST204'].includes(error.code)) {
+        const retryBase = await db()
+            .from(STUDENTS_TABLE)
+            .insert([baseStudentRow])
+            .select('*')
+            .single();
+        student = retryBase.data;
+        error = retryBase.error;
+    }
     if (error) {
         if (error.code === '23505') {
             return res.status(409).json({ error: 'This email is already registered. Please log in instead.' });
@@ -2078,8 +2222,13 @@ function validateStudentProfileFields(body) {
         return { field: 'profileMembers', error: 'Each member needs a full name (2–100 characters).' };
     }
 
+    const emailCheck = validateAndAlignMemberEmails(email, members, body?.memberEmails, 'profileMembers');
+    if (emailCheck.error) {
+        return { field: emailCheck.field, error: emailCheck.error };
+    }
+
     return {
-        values: { name, email, capstoneTitle, instructorRole, projectLevel, members },
+        values: { name, email, capstoneTitle, instructorRole, projectLevel, members, memberEmails: emailCheck.memberEmails },
     };
 }
 
@@ -2101,6 +2250,12 @@ function computeStudentProfileDiff(current, next) {
     const nextMembers = Array.isArray(next.members) && next.members.length
         ? next.members
         : [next.name];
+
+    const prevGroupmateEmails = extractStudentMemberEmails(current).slice(1).filter(Boolean);
+    const nextGroupmateEmails = (Array.isArray(next.memberEmails) ? next.memberEmails : [])
+        .slice(1, nextMembers.length)
+        .map(normalizeEmail)
+        .filter(Boolean);
 
     const comparisons = [
         {
@@ -2150,6 +2305,14 @@ function computeStudentProfileDiff(current, next) {
             nextRaw: JSON.stringify(nextMembers),
             from: prevMembers.join(', '),
             to: nextMembers.join(', '),
+        },
+        {
+            field: 'member_emails',
+            label: 'Groupmate emails',
+            prevRaw: JSON.stringify(prevGroupmateEmails),
+            nextRaw: JSON.stringify(nextGroupmateEmails),
+            from: prevGroupmateEmails.length ? prevGroupmateEmails.join(', ') : 'None',
+            to: nextGroupmateEmails.length ? nextGroupmateEmails.join(', ') : 'None',
         },
     ];
 
@@ -2210,7 +2373,7 @@ async function assertNoAdviserOnlyRoleConflict(studentId, nextInstructorRole) {
 
 async function applyStudentProfileUpdate(
     currentStudentRow,
-    { name, email, capstoneTitle, instructorRole, projectLevel, members },
+    { name, email, capstoneTitle, instructorRole, projectLevel, members, memberEmails },
     { verifiedViaOtp = false } = {}
 ) {
     const studentId = currentStudentRow.id;
@@ -2218,6 +2381,13 @@ async function applyStudentProfileUpdate(
 
     const normalizedMembers = Array.isArray(members) && members.length ? members : [name];
     const normalizedLevel = normalizeDefenseLevel(projectLevel);
+    const alignedEmails = validateAndAlignMemberEmails(
+        email,
+        normalizedMembers,
+        Array.isArray(memberEmails) ? memberEmails : extractStudentMemberEmails(currentStudentRow),
+        'profileMembers'
+    ).memberEmails || [normalizeEmail(email)];
+
     const diff = computeStudentProfileDiff(currentStudentRow, {
         name,
         email,
@@ -2225,6 +2395,7 @@ async function applyStudentProfileUpdate(
         instructorRole,
         projectLevel: normalizedLevel,
         members: normalizedMembers,
+        memberEmails: alignedEmails,
     });
 
     const nowIso = new Date().toISOString();
@@ -2257,19 +2428,46 @@ async function applyStudentProfileUpdate(
         );
     }
 
-    const prevHistory = Array.isArray(currentStudentRow.change_history) ? currentStudentRow.change_history : [];
-    const nextHistory = logEntry ? [logEntry, ...prevHistory].slice(0, 50) : prevHistory;
+    const prevHistory = (Array.isArray(currentStudentRow.change_history) ? currentStudentRow.change_history : [])
+        .filter((h) => h && h.type !== 'member_emails');
+    const memberEmailsMeta = {
+        id: crypto.randomUUID(),
+        type: 'member_emails',
+        memberEmails: alignedEmails,
+        updatedAt: nowIso,
+    };
+    const nextHistory = [
+        memberEmailsMeta,
+        ...(logEntry ? [logEntry, ...prevHistory] : prevHistory),
+    ].slice(0, 50);
 
     let { data: updated, error } = await db()
         .from(STUDENTS_TABLE)
-        .update(
-            diff.hasChanges
-                ? { ...coreUpdate, updated_at: nowIso, change_history: nextHistory }
-                : coreUpdate
-        )
+        .update({
+            ...coreUpdate,
+            member_emails: alignedEmails,
+            ...(diff.hasChanges ? { updated_at: nowIso } : {}),
+            change_history: nextHistory,
+        })
         .eq('id', studentId)
         .select('*')
         .single();
+
+    // Fallback if member_emails hasn't been added via schema.sql yet (change_history still stores memberEmailsMeta)
+    if (error && ['42703', 'PGRST204'].includes(error.code)) {
+        const retryWithHistory = await db()
+            .from(STUDENTS_TABLE)
+            .update({
+                ...coreUpdate,
+                ...(diff.hasChanges ? { updated_at: nowIso } : {}),
+                change_history: nextHistory,
+            })
+            .eq('id', studentId)
+            .select('*')
+            .single();
+        updated = retryWithHistory.data;
+        error = retryWithHistory.error;
+    }
 
     // Fallback if updated_at / change_history columns haven't been added via schema.sql yet
     if (error && ['42703', 'PGRST204'].includes(error.code)) {
@@ -2370,7 +2568,7 @@ async function handleStudentProfileUpdate(req, res) {
         return res.status(400).json({ field: validation.field, error: validation.error });
     }
 
-    const { name, email, capstoneTitle, instructorRole, projectLevel, members } = validation.values;
+    const { name, email, capstoneTitle, instructorRole, projectLevel, members, memberEmails } = validation.values;
     await assertNoAdviserOnlyRoleConflict(student.id, instructorRole);
 
     const existingTitleGroup = await findStudentByCapstoneTitle(capstoneTitle, student.id);
@@ -2400,6 +2598,7 @@ async function handleStudentProfileUpdate(req, res) {
             instructorRole,
             projectLevel,
             members,
+            memberEmails,
         };
         await issueOtp(email, 'email_change', { payload, name });
         return res.json({
@@ -2420,6 +2619,7 @@ async function handleStudentProfileUpdate(req, res) {
             instructorRole,
             projectLevel,
             members,
+            memberEmails,
         },
         { verifiedViaOtp: false }
     );
@@ -2465,6 +2665,9 @@ app.post('/api/profile/email/verify', requireStudent, async (req, res) => {
             members: Array.isArray(payload.members) && payload.members.length
                 ? payload.members
                 : (Array.isArray(student.members) && student.members.length ? student.members : [student.full_name]),
+            memberEmails: Array.isArray(payload.memberEmails)
+                ? payload.memberEmails
+                : extractStudentMemberEmails(student),
         },
         { verifiedViaOtp: true }
     );
@@ -3005,6 +3208,10 @@ function toBooking(r, now, studentOrLookup = null) {
         ? (normalizeDefenseLevel(r.defense_level) || normalizeDefenseLevel(matchedStudent?.project_level) || null)
         : (normalizeDefenseLevel(matchedStudent?.project_level) || normalizeDefenseLevel(r.defense_level) || null);
     const defenseLevel = consultationType === 'defense' ? projectLevel : null;
+    const primaryEmail = r.student_email || matchedStudent?.email || null;
+    const memberEmails = matchedStudent
+        ? extractStudentMemberEmails({ ...matchedStudent, email: primaryEmail || matchedStudent.email })
+        : (primaryEmail ? [normalizeEmail(primaryEmail)] : []);
     const booking = {
         id: r.id,
         reference: r.id.slice(0, 8).toUpperCase(),
@@ -3020,7 +3227,8 @@ function toBooking(r, now, studentOrLookup = null) {
         durationLabel: formatDurationLabel(consultationType, durationMinutes),
         studentId: r.student_id || matchedStudent?.id || null,
         name: r.student_name || matchedStudent?.full_name || '',
-        studentEmail: r.student_email || matchedStudent?.email || null,
+        studentEmail: primaryEmail,
+        memberEmails,
         capstoneTitle: r.capstone_title || r.team_name || matchedStudent?.capstone_title || null,
         instructorRole: r.instructor_role || matchedStudent?.instructor_role || null,
         teamName: r.team_name || matchedStudent?.capstone_title || null,
@@ -3979,7 +4187,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     for (const s of studentRows) {
         if (!Array.isArray(s.change_history)) continue;
         for (const h of s.change_history) {
-            if (!h || h.type === 'notification' || (h.id && seenLogIds.has(h.id))) continue;
+            if (!h || h.type === 'notification' || h.type === 'member_emails' || (h.id && seenLogIds.has(h.id))) continue;
             if (h.id) seenLogIds.add(h.id);
             serializedLogs.push(h);
             if (!logsByStudentId.has(s.id)) logsByStudentId.set(s.id, []);
@@ -4014,6 +4222,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
             projectLevel: level,
             projectLevelLabel: level ? DEFENSE_LEVELS[level].label : null,
             members: Array.isArray(s.members) && s.members.length ? s.members : [s.full_name],
+            memberEmails: extractStudentMemberEmails(s),
             lastLoginAt: s.last_login_at || null,
             updatedAt: s.updated_at || history[0]?.createdAt || null,
             createdAt: s.created_at || null,
@@ -4500,8 +4709,9 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
                     })
                     .in('id', toCancelIds)
                     .select('*');
-                if (Array.isArray(updatedRows)) {
-                    cancelledBookings = updatedRows.map((r) => toBooking(r, now));
+                if (Array.isArray(updatedRows) && updatedRows.length) {
+                    const cancelLookup = await buildStudentLookupForRows(updatedRows);
+                    cancelledBookings = updatedRows.map((r) => toBooking(r, now, cancelLookup));
                     const siteOrigin = resolveSiteOrigin(req);
                     const cancelEmailsPromise = Promise.allSettled(
                         cancelledBookings.map((b) =>
@@ -4860,7 +5070,7 @@ function buildManualStudentEmail({ template, studentName, capstoneTitle, subject
     return { subject: cleanSubject, text: bodyText, html: bodyHtml };
 }
 
-// Send email notification to student that their dropped-off manuscript has been checked
+// Send email notification to student (and groupmates) that their dropped-off manuscript has been checked
 app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
 
@@ -4875,10 +5085,16 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
         return res.status(400).json({ error: 'This booking does not have a student email on file.' });
     }
 
+    const studentRow = await fetchStudentForBooking(row);
+    const recipients = getGroupRecipientEmails({ primaryEmail: row.student_email, studentRow });
+    const membersGreeting = Array.isArray(row.members) && row.members.length > 1 && recipients.length > 1
+        ? row.members.join(', ')
+        : row.student_name;
+
     const title = row.capstone_title || row.team_name || 'your Capstone / Thesis manuscript';
     const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
     const emailContent = buildManuscriptReadyEmail({
-        studentName: row.student_name,
+        studentName: membersGreeting,
         title,
         siteOrigin,
     });
@@ -4886,7 +5102,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
-            to: row.student_email,
+            to: recipients,
             subject: emailContent.subject,
             text: emailContent.text,
             html: emailContent.html,
@@ -4908,10 +5124,10 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     });
     const rtPromise = notifyRealtimeListeners({ type: 'dropoff_notified', bookingId: row.id, date: row.appointment_date });
     if (process.env.VERCEL) await rtPromise;
-    res.json({ ok: true, notifiedAt });
+    res.json({ ok: true, notifiedAt, recipients });
 });
 
-// Send email notification to student that their communication letter has been signed and is ready for pickup
+// Send email notification to student (and groupmates) that their communication letter has been signed and is ready for pickup
 app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req, res) => {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id.' });
 
@@ -4926,10 +5142,16 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
         return res.status(400).json({ error: 'This booking does not have a student email on file.' });
     }
 
+    const studentRow = await fetchStudentForBooking(row);
+    const recipients = getGroupRecipientEmails({ primaryEmail: row.student_email, studentRow });
+    const membersGreeting = Array.isArray(row.members) && row.members.length > 1 && recipients.length > 1
+        ? row.members.join(', ')
+        : row.student_name;
+
     const title = row.capstone_title || row.team_name || 'your Capstone / Thesis group';
     const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
     const emailContent = buildLetterReadyEmail({
-        studentName: row.student_name,
+        studentName: membersGreeting,
         title,
         siteOrigin,
         reason: row.reason,
@@ -4938,7 +5160,7 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
-            to: row.student_email,
+            to: recipients,
             subject: emailContent.subject,
             text: emailContent.text,
             html: emailContent.html,
@@ -4960,10 +5182,10 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
     });
     const rtPromise = notifyRealtimeListeners({ type: 'letter_notified', bookingId: row.id, date: row.appointment_date });
     if (process.env.VERCEL) await rtPromise;
-    res.json({ ok: true, notifiedAt });
+    res.json({ ok: true, notifiedAt, recipients });
 });
 
-// Manually send an email to a student (including groups who have not booked an appointment)
+// Manually send an email to a student group (including groupmate emails when enabled)
 app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
     const body = req.body || {};
     const rawStudentId = String(body.studentId || '').trim();
@@ -4974,7 +5196,7 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
         }
         const { data, error: studentErr } = await db()
             .from(STUDENTS_TABLE)
-            .select('id, full_name, email, capstone_title')
+            .select('*')
             .eq('id', rawStudentId)
             .maybeSingle();
         if (studentErr) return res.status(500).json({ error: studentErr.message });
@@ -4987,7 +5209,16 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
         return res.status(400).json({ field: 'emailRecipientInput', error: 'Please enter a valid recipient email address.' });
     }
 
-    const studentName = cleanName(body.studentName || studentRow?.full_name || '').slice(0, 100);
+    const includeGroupmates = body.includeGroupmates !== false
+        && Boolean(studentRow && recipientEmail === normalizeEmail(studentRow.email));
+    const recipients = includeGroupmates
+        ? getGroupRecipientEmails({ primaryEmail: recipientEmail, studentRow })
+        : [recipientEmail];
+
+    const baseName = cleanName(body.studentName || studentRow?.full_name || '').slice(0, 100);
+    const groupNames = includeGroupmates && recipients.length > 1 && Array.isArray(studentRow?.members) && studentRow.members.length > 1
+        ? studentRow.members.join(', ')
+        : baseName;
     const capstoneTitle = cleanName(body.capstoneTitle || studentRow?.capstone_title || '').slice(0, 200);
     const template = ['manuscript_ready', 'letter_ready', 'schedule_reminder', 'custom'].includes(body.template)
         ? body.template
@@ -5013,7 +5244,7 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
     const siteOrigin = resolveSiteOrigin(req) || `${req.protocol}://${req.get('host')}`;
     const emailContent = buildManualStudentEmail({
         template,
-        studentName,
+        studentName: groupNames,
         capstoneTitle,
         subject: rawSubject,
         message: rawMessage,
@@ -5023,7 +5254,7 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
-            to: recipientEmail,
+            to: recipients,
             subject: emailContent.subject,
             text: emailContent.text,
             html: emailContent.html,
@@ -5052,21 +5283,54 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
 
     res.json({
         ok: true,
-        to: recipientEmail,
+        to: recipients.join(', '),
+        recipients,
         sentAt,
     });
 });
 
-// Fetch the student account linked to a booking row so serialized bookings retain student-level metadata.
+// Fetch the student account linked to a booking row so serialized bookings retain student-level metadata & groupmate emails.
 async function fetchStudentForBooking(row) {
-    if (!row?.student_id) return null;
-    const { data, error } = await db()
-        .from(STUDENTS_TABLE)
-        .select('*')
-        .eq('id', row.student_id)
-        .maybeSingle();
-    if (error) return null;
-    return data || null;
+    if (!row) return null;
+    if (row.student_id) {
+        const { data, error } = await db()
+            .from(STUDENTS_TABLE)
+            .select('*')
+            .eq('id', row.student_id)
+            .maybeSingle();
+        if (!error && data) return data;
+    }
+    if (row.student_email) {
+        return findStudentByEmail(normalizeEmail(row.student_email)).catch(() => null);
+    }
+    return null;
+}
+
+async function buildStudentLookupForRows(rows = []) {
+    const byId = new Map();
+    const byEmail = new Map();
+    const ids = [...new Set((rows || []).map((r) => r?.student_id).filter(Boolean))];
+    const emails = [...new Set((rows || []).map((r) => normalizeEmail(r?.student_email)).filter(Boolean))];
+    try {
+        if (ids.length) {
+            const { data } = await db().from(STUDENTS_TABLE).select('*').in('id', ids);
+            for (const s of data || []) {
+                byId.set(s.id, s);
+                if (s.email) byEmail.set(s.email.toLowerCase(), s);
+            }
+        }
+        const missingEmails = emails.filter((e) => !byEmail.has(e));
+        if (missingEmails.length) {
+            const { data } = await db().from(STUDENTS_TABLE).select('*').in('email', missingEmails);
+            for (const s of data || []) {
+                byId.set(s.id, s);
+                if (s.email) byEmail.set(s.email.toLowerCase(), s);
+            }
+        }
+    } catch {
+        // Ignore transient lookup errors and fall back to row.student_email
+    }
+    return { byId, byEmail };
 }
 
 // Cancel an appointment with an instructor reason visible in the student's profile
@@ -5322,7 +5586,8 @@ function buildBookingSummaryTextLines(booking, { includeStudentEmail = true } = 
         `Group Members: ${membersList}`,
     ];
     if (includeStudentEmail) {
-        lines.push(`Student Email: ${booking.studentEmail || '—'}`);
+        const allEmails = getGroupRecipientEmails({ booking });
+        lines.push(`Student Email(s): ${allEmails.length ? allEmails.join(', ') : (booking.studentEmail || '—')}`);
     }
     lines.push(`Details: ${booking.reason || '—'}`);
     lines.push(`Reference: #${booking.reference}`);
@@ -5331,11 +5596,13 @@ function buildBookingSummaryTextLines(booking, { includeStudentEmail = true } = 
 
 function buildBookingSummaryHtmlCard(booking, { includeStudentEmail = true, accentColor = '#0f766e' } = {}) {
     const { projectOrStudent, dateLabel, courseLabel, roleLabel, membersList } = buildBookingSummaryData(booking);
+    const allEmails = includeStudentEmail ? getGroupRecipientEmails({ booking }) : [];
+    const emailDisplay = allEmails.length ? allEmails.join(', ') : (booking.studentEmail || '—');
     const studentEmailRow = includeStudentEmail
         ? `
                     <tr>
-                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">Student Email</td>
-                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(booking.studentEmail || '—')}</td>
+                        <td style="padding:4px 10px 4px 0;color:#64748b;vertical-align:top">${allEmails.length > 1 ? 'Group Emails' : 'Student Email'}</td>
+                        <td style="padding:4px 0;color:#0f172a">${escapeHtml(emailDisplay)}</td>
                     </tr>`
         : '';
 
@@ -5404,10 +5671,18 @@ function buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl = '') {
             </div>`;
 }
 
+function formatStudentGroupGreeting(booking, recipientsCount = 1) {
+    if (recipientsCount > 1 && Array.isArray(booking?.members) && booking.members.length > 1) {
+        return `Hi ${booking.members.join(', ')},`;
+    }
+    return `Hi ${booking?.name || 'Student'},`;
+}
+
 async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
-    if (!booking?.studentEmail) return;
+    const recipients = getGroupRecipientEmails({ booking });
+    if (!recipients.length) return;
     const { dateLabel } = buildBookingSummaryData(booking);
-    const greeting = `Hi ${booking.name || 'Student'},`;
+    const greeting = formatStudentGroupGreeting(booking, recipients.length);
     const subject = `Confirmed: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
     const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
@@ -5446,7 +5721,7 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
 
     await mailer().sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: booking.studentEmail,
+        to: recipients,
         subject,
         text: textLines.join('\n'),
         html,
@@ -5461,13 +5736,14 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
 }
 
 async function sendStudentRescheduleEmail(booking, previousBooking = null, siteOrigin = '') {
-    if (!booking?.studentEmail) return;
+    const recipients = getGroupRecipientEmails({ booking });
+    if (!recipients.length) return;
     const { dateLabel } = buildBookingSummaryData(booking);
     const prevDateLabel = previousBooking?.date ? formatLongDateStr(previousBooking.date) : null;
     const prevSummary = prevDateLabel && previousBooking?.label
         ? `${prevDateLabel} (${previousBooking.label})`
         : null;
-    const greeting = `Hi ${booking.name || 'Student'},`;
+    const greeting = formatStudentGroupGreeting(booking, recipients.length);
     const subject = `Rescheduled: ${booking.consultationTitle} moved to ${dateLabel} (${booking.label}) — #${booking.reference}`;
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
     const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
@@ -5516,7 +5792,7 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
 
     await mailer().sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: booking.studentEmail,
+        to: recipients,
         subject,
         text: textLines.join('\n'),
         html,
@@ -5531,9 +5807,10 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
 }
 
 async function sendStudentCancellationEmail(booking, siteOrigin = '') {
-    if (!booking?.studentEmail) return;
+    const recipients = getGroupRecipientEmails({ booking });
+    if (!recipients.length) return;
     const { dateLabel } = buildBookingSummaryData(booking);
-    const greeting = `Hi ${booking.name || 'Student'},`;
+    const greeting = formatStudentGroupGreeting(booking, recipients.length);
     const reason = booking.cancellationReason || 'Instructor unavailable.';
     const subject = `Cancelled: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
     const bookingUrl = siteOrigin ? `${siteOrigin}/` : '';
@@ -5569,7 +5846,7 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '') {
 
     await mailer().sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: booking.studentEmail,
+        to: recipients,
         subject,
         text: textLines.join('\n'),
         html,
@@ -5588,11 +5865,12 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '') {
 }
 
 async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
-    if (!booking?.studentEmail) return;
+    const recipients = getGroupRecipientEmails({ booking });
+    if (!recipients.length) return;
     const timeText = formatTimeUntilLabel(minsUntil);
     const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
-    const greeting = `Hi ${booking.name || 'Student'},`;
+    const greeting = formatStudentGroupGreeting(booking, recipients.length);
     const subject = `Reminder: Your ${booking.consultationTitle} is in ${timeText} (${booking.label}) — #${booking.reference}`;
     const rules = studentPolicyReminderText(booking);
 
@@ -5626,7 +5904,7 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
 
     await mailer().sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: booking.studentEmail,
+        to: recipients,
         subject,
         text: textLines.join('\n'),
         html,
@@ -5697,6 +5975,8 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
             .neq('status', 'cancelled');
         if (error) throw error;
 
+        const studentLookup = await buildStudentLookupForRows(data || []);
+
         for (const r of data || []) {
             const [startMinute] = rowInterval(r);
             const minsUntil = minutesUntilBooking(r.appointment_date, startMinute, now);
@@ -5706,7 +5986,7 @@ async function checkAndSendAppointmentReminders(siteOrigin = resolveSiteOrigin()
             if (!isActiveRow(r)) { info.result = 'cancelled'; continue; }
             if (minsUntil < 0) { info.result = 'already started'; continue; }
 
-            const booking = toBooking(r, now);
+            const booking = toBooking(r, now, studentLookup);
             const alreadyNotifiedTeacher = Boolean(r.reminder_sent_at || (!['dropoff', 'letter'].includes(r.consultation_type) && r.notified_at));
 
             // 1. Teacher reminder (10 minutes before)

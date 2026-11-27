@@ -1488,19 +1488,34 @@
         }
     }
 
+    function getBookingRecipientEmails(b) {
+        const seen = new Set();
+        const list = [];
+        [b?.studentEmail, ...(Array.isArray(b?.memberEmails) ? b.memberEmails : [])].forEach((raw) => {
+            const clean = String(raw || '').trim().toLowerCase();
+            if (clean && !seen.has(clean)) {
+                seen.add(clean);
+                list.push(clean);
+            }
+        });
+        return list;
+    }
+
     async function notifyManuscriptChecked(b, btn) {
-        const target = b.studentEmail || 'student';
+        const recipients = getBookingRecipientEmails(b);
+        const target = recipients.length ? recipients.join(', ') : (b.studentEmail || 'student');
         const again = b.notifiedAt ? ' again' : '';
         if (!confirm(`Send "Manuscript Ready for Pickup" notification email${again} to ${target}?`)) return;
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'Sending…';
         try {
-            const { notifiedAt } = await api(`/api/admin/bookings/${b.id}/notify-checked`, { method: 'POST' });
-            b.notifiedAt = notifiedAt;
+            const res = await api(`/api/admin/bookings/${b.id}/notify-checked`, { method: 'POST' });
+            b.notifiedAt = res.notifiedAt;
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'manuscript_checked', bookingId: b.id, date: b.date });
-            toast(`Notification emailed to ${target}.`, 'success');
+            const sentList = Array.isArray(res.recipients) && res.recipients.length ? res.recipients.join(', ') : target;
+            toast(`Notification emailed to ${sentList}.`, 'success');
         } catch (err) {
             btn.disabled = false;
             btn.textContent = prevText;
@@ -1509,7 +1524,8 @@
     }
 
     async function notifyLetterReady(b, btn) {
-        const target = b.studentEmail || 'student';
+        const recipients = getBookingRecipientEmails(b);
+        const target = recipients.length ? recipients.join(', ') : (b.studentEmail || 'student');
         const again = b.notifiedAt ? ' again' : '';
         const hasOpenPickupWindows = hasUpcomingLetterPickupWindow();
         const noWindowWarning = hasOpenPickupWindows
@@ -1520,14 +1536,15 @@
         const prevText = btn.textContent;
         btn.textContent = 'Sending…';
         try {
-            const { notifiedAt } = await api(`/api/admin/bookings/${b.id}/notify-letter-ready`, { method: 'POST' });
-            b.notifiedAt = notifiedAt;
+            const res = await api(`/api/admin/bookings/${b.id}/notify-letter-ready`, { method: 'POST' });
+            b.notifiedAt = res.notifiedAt;
             render();
             window.SchedulerRealtime?.notifyLocal({ type: 'letter_notified', bookingId: b.id, date: b.date });
+            const sentList = Array.isArray(res.recipients) && res.recipients.length ? res.recipients.join(', ') : target;
             toast(
                 hasOpenPickupWindows
-                    ? `Notification emailed to ${target}.`
-                    : `Notification emailed to ${target}. Open a Letter Pickup date in "Schedule & Availability" so they can book.`,
+                    ? `Notification emailed to ${sentList}.`
+                    : `Notification emailed to ${sentList}. Open a Letter Pickup date in "Schedule & Availability" so they can book.`,
                 'success'
             );
         } catch (err) {
@@ -1617,6 +1634,27 @@
         });
     }
 
+    function syncEmailGroupmatesOption() {
+        const wrap = $('#emailGroupmatesWrap');
+        const textEl = $('#emailGroupmatesText');
+        const checkEl = $('#emailIncludeGroupmates');
+        if (!wrap || !textEl || !checkEl) return;
+
+        const selectedId = $('#emailStudentSelect')?.value || '';
+        const student = state.students.find((s) => s.id === selectedId);
+        const currentRecipient = ($('#emailRecipientInput')?.value || '').trim().toLowerCase();
+        const extraEmails = (Array.isArray(student?.memberEmails) ? student.memberEmails.slice(1) : [])
+            .map((e) => String(e || '').trim().toLowerCase())
+            .filter((e) => e && e !== currentRecipient);
+
+        if (student && currentRecipient === String(student.email || '').toLowerCase() && extraEmails.length > 0) {
+            textEl.textContent = `Also send to groupmate${extraEmails.length > 1 ? 's' : ''} (${extraEmails.join(', ')})`;
+            wrap.classList.remove('hidden');
+        } else {
+            wrap.classList.add('hidden');
+        }
+    }
+
     function applySelectedEmailStudent(clearIfEmpty = false) {
         const select = $('#emailStudentSelect');
         if (!select) return;
@@ -1626,11 +1664,13 @@
             if ($('#emailRecipientInput')) $('#emailRecipientInput').value = student.email || '';
             if ($('#emailStudentNameInput')) $('#emailStudentNameInput').value = student.name || '';
             if ($('#emailCapstoneInput')) $('#emailCapstoneInput').value = student.capstoneTitle || '';
+            if ($('#emailIncludeGroupmates')) $('#emailIncludeGroupmates').checked = true;
         } else if (clearIfEmpty) {
             if ($('#emailRecipientInput')) $('#emailRecipientInput').value = '';
             if ($('#emailStudentNameInput')) $('#emailStudentNameInput').value = '';
             if ($('#emailCapstoneInput')) $('#emailCapstoneInput').value = '';
         }
+        syncEmailGroupmatesOption();
         setSendEmailError('');
     }
 
@@ -1698,6 +1738,8 @@
             if ($('#emailMessageCount')) $('#emailMessageCount').textContent = '0';
         }
 
+        if ($('#emailIncludeGroupmates')) $('#emailIncludeGroupmates').checked = true;
+        syncEmailGroupmatesOption();
         setEmailTemplate(defaultTemplate, true);
         setSendEmailError('');
         $('#sendEmailModal')?.classList.remove('hidden');
@@ -1761,11 +1803,15 @@
         if (closeBtn) closeBtn.disabled = true;
 
         try {
+            const includeGroupmates = Boolean(
+                !$('#emailGroupmatesWrap')?.classList.contains('hidden') && $('#emailIncludeGroupmates')?.checked
+            );
             const res = await api('/api/admin/send-email', {
                 method: 'POST',
                 body: JSON.stringify({
                     studentId: studentId || null,
                     email,
+                    includeGroupmates,
                     studentName,
                     capstoneTitle,
                     template,
@@ -2225,6 +2271,7 @@
         if (Array.isArray(b.revisionChecklist) && b.revisionChecklist.some((item) => item.text && item.text.toLowerCase().includes(q))) return true;
         if (b.reference && b.reference.toLowerCase().includes(q)) return true;
         if (b.studentEmail && b.studentEmail.toLowerCase().includes(q)) return true;
+        if (Array.isArray(b.memberEmails) && b.memberEmails.some((e) => e && e.toLowerCase().includes(q))) return true;
         return false;
     }
 
@@ -2235,6 +2282,7 @@
         instructor_role: 'Instructor role',
         project_level: 'Course',
         members: 'Group members',
+        member_emails: 'Groupmate emails',
     };
 
     function formatTimestamp(iso) {
@@ -2276,6 +2324,7 @@
         if (levelLabel && levelLabel.toLowerCase().includes(q)) return true;
         if (s.instructorRole && s.instructorRole.toLowerCase().includes(q)) return true;
         if (Array.isArray(s.members) && s.members.some((m) => m.toLowerCase().includes(q))) return true;
+        if (Array.isArray(s.memberEmails) && s.memberEmails.some((e) => e && e.toLowerCase().includes(q))) return true;
         return false;
     }
 
@@ -2439,11 +2488,16 @@
             card.append(top, projectTitle);
 
             const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
+            const memberEmails = Array.isArray(s.memberEmails) ? s.memberEmails : [];
             const membersSection = el('div', 'student-members-block');
             membersSection.appendChild(el('span', 'student-field-label', `Group Members (${members.length})`));
             const membersWrap = el('div', 'booking-members');
             members.forEach((m, mIdx) => {
-                membersWrap.appendChild(el('span', 'member-chip', mIdx === 0 ? `${m} (Rep)` : m));
+                const labelBase = mIdx === 0 ? `${m} (Rep)` : m;
+                const mEmail = mIdx > 0 ? (memberEmails[mIdx] || '') : '';
+                const chip = el('span', 'member-chip', mEmail ? `${labelBase} · ${mEmail}` : labelBase);
+                if (mEmail) chip.title = `Receives consultation email updates: ${mEmail}`;
+                membersWrap.appendChild(chip);
             });
             membersSection.appendChild(membersWrap);
             card.appendChild(membersSection);
@@ -2957,9 +3011,11 @@
     document.querySelectorAll('input[name="emailTemplate"]').forEach((r) => {
         r.addEventListener('change', (e) => setEmailTemplate(e.target.value));
     });
-    ['#emailRecipientInput', '#emailSubjectInput'].forEach((sel) => {
-        $(sel)?.addEventListener('input', () => setSendEmailError(''));
+    $('#emailRecipientInput')?.addEventListener('input', () => {
+        syncEmailGroupmatesOption();
+        setSendEmailError('');
     });
+    $('#emailSubjectInput')?.addEventListener('input', () => setSendEmailError(''));
     $('#emailMessageInput')?.addEventListener('input', (e) => {
         if ($('#emailMessageCount')) $('#emailMessageCount').textContent = String(e.target.value.length);
         setSendEmailError('');

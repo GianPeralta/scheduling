@@ -138,6 +138,7 @@ create table if not exists public.students (
     capstone_title   text        check (capstone_title is null or char_length(capstone_title) between 2 and 200),
     instructor_role  text        check (instructor_role is null or instructor_role in ('adviser', 'panel')),
     members          text[]      not null default '{}' check (cardinality(members) <= 3),
+    member_emails    text[]      not null default '{}' check (cardinality(member_emails) <= 3),
     password_hash    text        not null,
     failed_logins    smallint    not null default 0,
     locked_until     timestamptz,
@@ -154,6 +155,10 @@ alter table public.students add column if not exists members text[] not null def
 alter table public.students drop constraint if exists students_members_check;
 alter table public.students add constraint students_members_check
     check (cardinality(members) <= 3) not valid;
+alter table public.students add column if not exists member_emails text[] not null default '{}';
+alter table public.students drop constraint if exists students_member_emails_check;
+alter table public.students add constraint students_member_emails_check
+    check (cardinality(member_emails) <= 3) not valid;
 
 -- The group's current course (chosen at registration, updated when they book a defense)
 alter table public.students add column if not exists project_level text;
@@ -189,6 +194,7 @@ create table if not exists public.email_otps (
     capstone_title   text,
     instructor_role  text,
     members          text[],
+    member_emails    text[],
     purpose          text        not null check (purpose in ('register', 'reset', 'email_change')),
     otp_code         text,
     code_hash        text        not null,
@@ -221,6 +227,7 @@ alter table public.email_otps add column if not exists student_name text;
 alter table public.email_otps add column if not exists capstone_title text;
 alter table public.email_otps add column if not exists instructor_role text;
 alter table public.email_otps add column if not exists members text[];
+alter table public.email_otps add column if not exists member_emails text[];
 alter table public.email_otps add column if not exists otp_code text;
 alter table public.email_otps add column if not exists status text not null default 'pending';
 alter table public.email_otps drop constraint if exists email_otps_status_check;

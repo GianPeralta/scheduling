@@ -62,6 +62,7 @@
                     </div>
                     <p class="project-box-title" id="projectTitleText"></p>
                     <p class="muted small" id="projectMembersText"></p>
+                    <p class="muted small hidden" id="projectEmailsStatus"></p>
                     <button type="button" class="link-btn project-profile-link" id="sidebarEditProfileBtn">Edit info</button>
                 </div>
 
@@ -130,7 +131,7 @@
                     <!-- Register -->
                     <form class="auth-form hidden" id="registerForm" novalidate>
                         <div class="group-register-notice">
-                            Only <strong>one representative</strong> per Capstone / Thesis group (1–3 members) may register. Please check your inbox and <strong>spam/junk folder</strong> for the OTP code.
+                            Only <strong>one representative</strong> per Capstone / Thesis group (1–3 members) registers the account and receives the <strong>OTP code</strong>. Add your groupmates’ student emails below so they also receive consultation confirmations, reminders, and updates.
                         </div>
 
                         <label class="field">
@@ -181,11 +182,12 @@
                             </div>
                         </div>
                         <div class="field" id="regMembersField">
-                            <span>Members <small class="muted" id="regMemberCount"></small></span>
-                            <div class="member-list" id="regMemberList"></div>
+                            <span>Group members &amp; student emails <small class="muted" id="regMemberCount"></small></span>
+                            <small class="muted field-hint" id="regMembersEmailHint">OTP verification is sent only to Member 1 (you). Groupmates’ emails receive consultation confirmations, reminders &amp; updates.</small>
+                            <div class="member-list member-cards-list" id="regMemberList"></div>
                             <button type="button" class="add-member" id="regAddMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-                                Add member (max 3)
+                                Add groupmate (max 3)
                             </button>
                         </div>
                         <label class="field">
@@ -481,6 +483,7 @@
                                 Add member (max 3)
                             </button>
                         </div>
+                        <div class="booking-recipients-note" id="step3RecipientsNote"></div>
                     </div>
 
                     <label class="field">
@@ -667,8 +670,8 @@
                         <span class="muted" id="profileRepEmail"></span>
                     </div>
                     <div class="profile-members-wrap">
-                        <span class="selection-label">Group members</span>
-                        <div class="booking-members" id="profileMemberChips"></div>
+                        <span class="selection-label">Group members &amp; email updates</span>
+                        <div class="profile-member-list" id="profileMemberChips"></div>
                     </div>
                 </div>
 
@@ -732,11 +735,12 @@
                     </div>
                 </div>
                 <div class="field" id="profileMembersField">
-                    <span>Members <small class="muted" id="profileMemberCount"></small></span>
-                    <div class="member-list" id="profileMemberList"></div>
+                    <span>Group members &amp; student emails <small class="muted" id="profileMemberCount"></small></span>
+                    <small class="muted field-hint" id="profileMembersEmailHint">OTP verification is only sent if you change your own email (Member 1). Adding or updating groupmates’ emails saves immediately and sends them consultation updates.</small>
+                    <div class="member-list member-cards-list" id="profileMemberList"></div>
                     <button type="button" class="add-member" id="profileAddMemberBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-                        Add member (max 3)
+                        Add groupmate (max 3)
                     </button>
                 </div>
 
