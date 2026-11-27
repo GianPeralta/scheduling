@@ -385,7 +385,13 @@ begin
     if v_duration = 0 then
         if not exists (
             select 1
-              from generate_series(p_new_start_minute::int, (p_new_start_minute + 79)::int) as m
+              from generate_series(
+                  p_new_start_minute::int,
+                  (case
+                      when to_char(p_new_date, 'MM-DD') between '12-07' and '12-12' then 1019
+                      else p_new_start_minute + 79
+                   end)::int
+              ) as m
              where not exists (
                  select 1
                    from public.blocked_schedules b

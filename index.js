@@ -163,11 +163,25 @@ const WINDOWS_BY_DAY = {
     ],
 };
 
+// Special date-range schedule overrides (inclusive MM-DD bounds; applies to consultations & defenses)
+// Dec 7 – Dec 12: 10:00 AM – 5:00 PM
+const SPECIAL_DATE_WINDOWS = [
+    {
+        startMmDd: '12-07',
+        endMmDd: '12-12',
+        windows: [[hm(10, 0), hm(17, 0)]],
+    },
+];
+
+const DEFAULT_BOOKING_END_MM_DD = '12-12';
+// Ignore stale pre-Dec-12 cutoff values saved before the Dec 7–12 schedule window was added
+const SCHEDULE_CUTOFF_BUMPED_AT_MS = Date.parse('2026-11-27T00:25:00Z');
+
 const CONFIG = {
     location: process.env.MEETING_LOCATION || 'Faculty Office',
     timezone: process.env.TIMEZONE || 'Asia/Manila',
     workingDays: [2, 3, 4],
-    bookingEndDate: process.env.BOOKING_END_DATE || null, // defaults to Nov 30 of current year
+    bookingEndDate: process.env.BOOKING_END_DATE || null, // defaults to Dec 12 of current year
 };
 
 const TABLE = 'appointments';
@@ -886,7 +900,15 @@ function nowInTz() {
     };
 }
 
-let cachedBookingEndDate = (CONFIG.bookingEndDate && DATE_RE.test(CONFIG.bookingEndDate))
+function defaultLastBookableDate(now = nowInTz()) {
+    return `${now.date.slice(0, 4)}-${DEFAULT_BOOKING_END_MM_DD}`;
+}
+
+let cachedBookingEndDate = (
+    CONFIG.bookingEndDate
+    && DATE_RE.test(CONFIG.bookingEndDate)
+    && CONFIG.bookingEndDate.slice(5) >= DEFAULT_BOOKING_END_MM_DD
+)
     ? CONFIG.bookingEndDate
     : null;
 let lastSettingsLoadedAt = 0;
@@ -895,14 +917,19 @@ async function loadBookingEndDateSetting({ force = false } = {}) {
     if (!force && lastSettingsLoadedAt && Date.now() - lastSettingsLoadedAt < 5000) {
         return cachedBookingEndDate;
     }
+    const minDefault = defaultLastBookableDate();
     try {
         const { data, error } = await db()
             .from(SETTINGS_TABLE)
-            .select('value')
+            .select('value, updated_at')
             .eq('key', BOOKING_END_DATE_KEY)
             .maybeSingle();
         if (!error && data?.value && parseDate(String(data.value).trim())) {
-            cachedBookingEndDate = String(data.value).trim();
+            const val = String(data.value).trim();
+            const updatedMs = data.updated_at ? Date.parse(data.updated_at) : 0;
+            cachedBookingEndDate = (val < minDefault && (!Number.isFinite(updatedMs) || updatedMs < SCHEDULE_CUTOFF_BUMPED_AT_MS))
+                ? minDefault
+                : val;
             lastSettingsLoadedAt = Date.now();
             return cachedBookingEndDate;
         }
@@ -917,7 +944,10 @@ async function loadBookingEndDateSetting({ force = false } = {}) {
         if (!bErr && Array.isArray(sentinelRows) && sentinelRows.length) {
             const candidate = String(sentinelRows[0].reason || '').slice(BLOCKED_SETTING_PREFIX.length).trim();
             if (parseDate(candidate)) {
-                cachedBookingEndDate = candidate;
+                const createdMs = sentinelRows[0].created_at ? Date.parse(sentinelRows[0].created_at) : 0;
+                cachedBookingEndDate = (candidate < minDefault && (!Number.isFinite(createdMs) || createdMs < SCHEDULE_CUTOFF_BUMPED_AT_MS))
+                    ? minDefault
+                    : candidate;
                 lastSettingsLoadedAt = Date.now();
                 return cachedBookingEndDate;
             }
@@ -981,13 +1011,14 @@ async function saveBookingEndDateSetting(dateStr) {
 }
 
 function getLastBookableDate(now = nowInTz()) {
+    const defaultEnd = defaultLastBookableDate(now);
     if (cachedBookingEndDate && parseDate(cachedBookingEndDate)) {
         return cachedBookingEndDate;
     }
     if (CONFIG.bookingEndDate && parseDate(CONFIG.bookingEndDate)) {
-        return CONFIG.bookingEndDate;
+        return CONFIG.bookingEndDate >= defaultEnd ? CONFIG.bookingEndDate : defaultEnd;
     }
-    return `${now.date.slice(0, 4)}-11-30`;
+    return defaultEnd;
 }
 
 function parseDate(str) {
@@ -1074,8 +1105,7 @@ function isTimedRow(r) {
 function rowInterval(r) {
     const start = Number.isFinite(r.start_minute) ? r.start_minute : (Number(r.start_hour) || 0) * 60;
     if (!isTimedRow(r)) {
-        const dt = parseDate(r.appointment_date);
-        const windows = (dt && WINDOWS_BY_DAY[dt.getUTCDay()]) || [];
+        const windows = windowsForDate(r.appointment_date, 'dropoff');
         const matched = windows.find(([ws, we]) => start >= ws && start < we) || windows[0];
         return [start, matched ? matched[1] : start + 80];
     }
@@ -1097,6 +1127,13 @@ function getFirstBookableDate(now = nowInTz()) {
     return addDays(now.date, 1);
 }
 
+function specialWindowsForDate(dateStr) {
+    if (!parseDate(dateStr)) return null;
+    const mmdd = dateStr.slice(5);
+    const matched = SPECIAL_DATE_WINDOWS.find((r) => mmdd >= r.startMmDd && mmdd <= r.endMmDd);
+    return matched ? matched.windows : null;
+}
+
 /** Time windows open on a given date for this purpose (defenses use their own weekly schedule; letter pickups use instructor-configured windows). */
 function windowsForDate(dateStr, purpose = 'system', customWindows = null) {
     if (purpose === 'letter_pickup') {
@@ -1104,6 +1141,8 @@ function windowsForDate(dateStr, purpose = 'system', customWindows = null) {
     }
     const dt = parseDate(dateStr);
     if (!dt) return [];
+    const special = specialWindowsForDate(dateStr);
+    if (special) return special;
     const table = purpose === 'defense' ? DEFENSE_WINDOWS_BY_DAY : WINDOWS_BY_DAY;
     return table[dt.getUTCDay()] || [];
 }
@@ -1381,6 +1420,11 @@ app.get('/api/config', async (req, res) => {
                 wins.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
             ])
         ),
+        specialDateWindows: SPECIAL_DATE_WINDOWS.map((r) => ({
+            startMmDd: r.startMmDd,
+            endMmDd: r.endMmDd,
+            windows: r.windows.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
+        })),
         realtime: {
             supabaseUrl: process.env.SUPABASE_URL || null,
             supabaseAnonKey: process.env.SUPABASE_ANON_KEY || null,

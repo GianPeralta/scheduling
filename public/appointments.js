@@ -699,7 +699,7 @@
     }
 
     function maxReschedMonthKeyForPurpose(purpose, config) {
-        const lastBookable = config?.lastBookableDate || '2026-11-30';
+        const lastBookable = config?.lastBookableDate || '2026-12-12';
         if (purpose === 'letter_pickup') {
             const decFallback = `${lastBookable.slice(0, 4)}-12`;
             const latestPickupKey = config?.latestLetterPickupDate
@@ -792,7 +792,7 @@
         const config = state.config || {
             today: state.serverToday || '2026-11-14',
             firstBookableDate: '2026-11-01',
-            lastBookableDate: '2026-11-30',
+            lastBookableDate: '2026-12-12',
         };
         const purpose = getReschedPurpose();
 
@@ -905,7 +905,7 @@
         const config = state.config || {
             today: state.serverToday || '2026-11-14',
             firstBookableDate: '2026-11-01',
-            lastBookableDate: '2026-11-30',
+            lastBookableDate: '2026-12-12',
         };
         const minMonthKey = (config.firstBookableDate || config.today || '2026-11-01').slice(0, 7);
         const lastKey = maxReschedMonthKeyForPurpose(getReschedPurpose(), config);

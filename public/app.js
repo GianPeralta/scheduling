@@ -462,7 +462,7 @@
                 state.config = c;
                 setText('#location', c.location);
                 if (c.lastBookableDate) {
-                    setText('#deadlineMeta', `Tue–Thu · Until ${formatShortDate(c.lastBookableDate)}`);
+                    setText('#deadlineMeta', `Until ${formatShortDate(c.lastBookableDate)}`);
                 }
                 const startRef = c.firstBookableDate || c.today;
                 const [y, m] = startRef.split('-').map(Number);
@@ -714,7 +714,7 @@
 
     function maxMonthKeyForPurpose(purpose = state.consultationPurpose) {
         if (!state.config) return '';
-        const lastBookable = state.config.lastBookableDate || `${state.config.today.slice(0, 4)}-11-30`;
+        const lastBookable = state.config.lastBookableDate || `${state.config.today.slice(0, 4)}-12-12`;
         if (purpose === 'letter_pickup') {
             const decFallback = `${lastBookable.slice(0, 4)}-12`;
             const latestPickupKey = state.config.latestLetterPickupDate
@@ -3146,7 +3146,7 @@
                     const freshConfig = await api('/api/config');
                     state.config = freshConfig;
                     if (freshConfig.lastBookableDate) {
-                        setText('#deadlineMeta', `Tue–Thu · Until ${formatShortDate(freshConfig.lastBookableDate)}`);
+                        setText('#deadlineMeta', `Until ${formatShortDate(freshConfig.lastBookableDate)}`);
                     }
                 } catch { /* ignore */ }
             }

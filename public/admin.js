@@ -212,7 +212,7 @@
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
-            state.bookingEndDate = data.bookingEndDate || state.config?.lastBookableDate || `${data.today.slice(0, 4)}-11-30`;
+            state.bookingEndDate = data.bookingEndDate || state.config?.lastBookableDate || `${data.today.slice(0, 4)}-12-12`;
             if (!$('#letterPickupScheduleModal')?.classList.contains('hidden')) {
                 renderLetterPickupModalList();
             }
@@ -298,7 +298,7 @@
         const year = Number((state.today || new Date().toISOString()).slice(0, 4)) || 2026;
         const presets = [
             { label: `Nov 30, ${year}`, date: `${year}-11-30` },
-            { label: `Dec 10, ${year}`, date: `${year}-12-10` },
+            { label: `Dec 12, ${year}`, date: `${year}-12-12` },
             { label: `Dec 18, ${year}`, date: `${year}-12-18` },
             { label: `Dec 31, ${year}`, date: `${year}-12-31` },
         ];
@@ -316,7 +316,7 @@
     }
 
     function openCutoffModal() {
-        const current = state.bookingEndDate || state.config?.lastBookableDate || (state.today ? `${state.today.slice(0, 4)}-11-30` : '');
+        const current = state.bookingEndDate || state.config?.lastBookableDate || (state.today ? `${state.today.slice(0, 4)}-12-12` : '');
         if ($('#cutoffCurrentText')) {
             $('#cutoffCurrentText').textContent = current ? longDate(current) : '—';
         }
