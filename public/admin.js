@@ -55,6 +55,12 @@
         bookingEndDate: '',
         sendingEmail: false,
         emailTemplate: 'manuscript_ready',
+        emailLogs: [],
+        emailSenderFilter: 'all', // 'all' | 'instructor' | 'system'
+        emailCategoryFilter: 'all', // 'all' | 'reminder' | 'others' | 'pickup_notice' | 'booking_updates' | 'custom' | 'otp'
+        emailSearch: '',
+        emailVisibleLimit: 20,
+        expandedEmailLogIds: new Set(),
     };
 
     const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -192,6 +198,8 @@
         state.schedSelectedDates = new Set();
         state.students = [];
         state.studentUpdateLogs = [];
+        state.emailLogs = [];
+        state.expandedEmailLogIds = new Set();
         showLogin();
     }
 
@@ -232,6 +240,7 @@
             };
             state.students = data.students || [];
             state.studentUpdateLogs = data.studentUpdateLogs || [];
+            state.emailLogs = data.emailLogs || [];
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
@@ -1532,6 +1541,7 @@
             const res = await api(`/api/admin/bookings/${b.id}/notify-checked`, { method: 'POST' });
             b.notifiedAt = res.notifiedAt;
             render();
+            loadBookings();
             window.SchedulerRealtime?.notifyLocal({ type: 'manuscript_checked', bookingId: b.id, date: b.date });
             const sentList = Array.isArray(res.recipients) && res.recipients.length ? res.recipients.join(', ') : target;
             toast(`Notification emailed to ${sentList}.`, 'success');
@@ -1558,6 +1568,7 @@
             const res = await api(`/api/admin/bookings/${b.id}/notify-letter-ready`, { method: 'POST' });
             b.notifiedAt = res.notifiedAt;
             render();
+            loadBookings();
             window.SchedulerRealtime?.notifyLocal({ type: 'letter_notified', bookingId: b.id, date: b.date });
             const sentList = Array.isArray(res.recipients) && res.recipients.length ? res.recipients.join(', ') : target;
             toast(
@@ -1840,6 +1851,11 @@
             });
             state.sendingEmail = false;
             closeSendEmailModal();
+            if (res.emailLog) {
+                state.emailLogs = [res.emailLog, ...state.emailLogs.filter((x) => x.id !== res.emailLog.id)];
+                renderEmailLogsSection();
+            }
+            loadBookings();
             if (template === 'manuscript_ready' || template === 'letter_ready') {
                 window.SchedulerRealtime?.notifyLocal({
                     type: 'student_pickup_notified',
@@ -2567,6 +2583,228 @@
         });
     }
 
+    /* ---------------- email activity & sent logs ---------------- */
+    const EMAIL_TYPE_BADGES = {
+        student_reminder: { label: 'Reminder · Student (1 hr)', cls: 'amber' },
+        instructor_reminder: { label: 'Reminder · Instructor (10m)', cls: 'amber' },
+        schedule_reminder: { label: 'Reminder · Set Appointment', cls: 'amber' },
+        manuscript_ready: { label: 'Pickup · Manuscript Ready', cls: 'violet' },
+        letter_ready: { label: 'Pickup · Comm. Letter Ready', cls: 'violet' },
+        booking_confirmed: { label: 'Booking Confirmed', cls: 'teal' },
+        booking_rescheduled: { label: 'Booking Rescheduled', cls: 'sky' },
+        booking_cancelled_admin: { label: 'Cancelled (Instructor)', cls: 'rose' },
+        booking_cancelled_student: { label: 'Cancelled (Student)', cls: 'rose' },
+        booking_cancelled: { label: 'Cancellation Notice', cls: 'rose' },
+        custom: { label: 'Custom Message', cls: 'sky' },
+        otp_register: { label: 'Registration OTP', cls: 'muted-badge' },
+        otp_reset: { label: 'Password Reset OTP', cls: 'muted-badge' },
+        otp_email_change: { label: 'Email Change OTP', cls: 'muted-badge' },
+    };
+
+    const EMAIL_CATEGORY_FALLBACK = {
+        reminder: { label: 'Reminder', cls: 'amber' },
+        pickup_notice: { label: 'Pickup Notice', cls: 'violet' },
+        booking: { label: 'Booking Update', cls: 'teal' },
+        cancellation: { label: 'Cancellation Notice', cls: 'rose' },
+        custom: { label: 'Custom Message', cls: 'sky' },
+        otp: { label: 'Verification Code', cls: 'muted-badge' },
+    };
+
+    function matchesEmailCategoryFilter(log, catFilter) {
+        if (!catFilter || catFilter === 'all') return true;
+        if (catFilter === 'others') return log.category !== 'reminder';
+        if (catFilter === 'booking_updates') return log.category === 'booking' || log.category === 'cancellation';
+        return log.category === catFilter;
+    }
+
+    function matchesEmailSearch(log, q) {
+        if (!q) return true;
+        if (log.subject && log.subject.toLowerCase().includes(q)) return true;
+        if (log.recipientName && log.recipientName.toLowerCase().includes(q)) return true;
+        if (log.capstoneTitle && log.capstoneTitle.toLowerCase().includes(q)) return true;
+        if (log.bodyPreview && log.bodyPreview.toLowerCase().includes(q)) return true;
+        if (log.emailType && log.emailType.toLowerCase().includes(q)) return true;
+        const typeLabel = EMAIL_TYPE_BADGES[log.emailType]?.label || EMAIL_CATEGORY_FALLBACK[log.category]?.label || '';
+        if (typeLabel && typeLabel.toLowerCase().includes(q)) return true;
+        if (Array.isArray(log.recipients) && log.recipients.some((r) => r && r.toLowerCase().includes(q))) return true;
+        return false;
+    }
+
+    function renderEmailLogsSection() {
+        const container = $('#emailLogsList');
+        if (!container) return;
+
+        const allLogs = Array.isArray(state.emailLogs) ? state.emailLogs : [];
+        const meCount = allLogs.filter((l) => l.sentBy === 'instructor').length;
+        const sysCount = allLogs.filter((l) => l.sentBy === 'system').length;
+
+        if ($('#countEmailsAll')) $('#countEmailsAll').textContent = allLogs.length;
+        if ($('#countEmailsMe')) $('#countEmailsMe').textContent = meCount;
+        if ($('#countEmailsSystem')) $('#countEmailsSystem').textContent = sysCount;
+
+        const bySender = state.emailSenderFilter === 'all'
+            ? allLogs
+            : allLogs.filter((l) => l.sentBy === state.emailSenderFilter);
+
+        // Update category pill counts scoped to the active sender filter
+        const catCounts = {
+            all: bySender.length,
+            reminder: bySender.filter((l) => l.category === 'reminder').length,
+            others: bySender.filter((l) => l.category !== 'reminder').length,
+            pickup_notice: bySender.filter((l) => l.category === 'pickup_notice').length,
+            booking_updates: bySender.filter((l) => l.category === 'booking' || l.category === 'cancellation').length,
+            custom: bySender.filter((l) => l.category === 'custom').length,
+            otp: bySender.filter((l) => l.category === 'otp').length,
+        };
+        if ($('#countEmailCatAll')) $('#countEmailCatAll').textContent = catCounts.all;
+        if ($('#countEmailCatReminder')) $('#countEmailCatReminder').textContent = catCounts.reminder;
+        if ($('#countEmailCatOthers')) $('#countEmailCatOthers').textContent = catCounts.others;
+        if ($('#countEmailCatPickup')) $('#countEmailCatPickup').textContent = catCounts.pickup_notice;
+        if ($('#countEmailCatBooking')) $('#countEmailCatBooking').textContent = catCounts.booking_updates;
+        if ($('#countEmailCatCustom')) $('#countEmailCatCustom').textContent = catCounts.custom;
+        if ($('#countEmailCatOtp')) $('#countEmailCatOtp').textContent = catCounts.otp;
+
+        document.querySelectorAll('.email-sender-tab[data-email-sender]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.emailSender === state.emailSenderFilter);
+        });
+        document.querySelectorAll('#emailCategoryFilters [data-email-cat]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.emailCat === state.emailCategoryFilter);
+        });
+
+        const q = state.emailSearch.toLowerCase();
+        const filtered = bySender.filter(
+            (l) => matchesEmailCategoryFilter(l, state.emailCategoryFilter) && matchesEmailSearch(l, q)
+        );
+
+        container.innerHTML = '';
+        if (!filtered.length) {
+            const empty = el('div', 'empty-state');
+            empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>';
+            const hasFilter = q || state.emailSenderFilter !== 'all' || state.emailCategoryFilter !== 'all';
+            empty.appendChild(
+                el('p', '', hasFilter ? 'No emails match your current filter.' : 'No sent emails recorded yet.')
+            );
+            if (hasFilter) {
+                const resetBtn = el('button', 'btn btn-ghost btn-sm', 'Reset email filters');
+                resetBtn.type = 'button';
+                resetBtn.style.marginTop = '8px';
+                resetBtn.addEventListener('click', () => {
+                    state.emailSenderFilter = 'all';
+                    state.emailCategoryFilter = 'all';
+                    state.emailSearch = '';
+                    state.emailVisibleLimit = 20;
+                    if ($('#emailLogSearchInput')) $('#emailLogSearchInput').value = '';
+                    renderEmailLogsSection();
+                });
+                empty.appendChild(resetBtn);
+            }
+            container.appendChild(empty);
+            return;
+        }
+
+        const visible = filtered.slice(0, state.emailVisibleLimit);
+        visible.forEach((log, idx) => {
+            const item = el('div', 'email-log-item' + (log.status === 'failed' ? ' is-failed' : ''));
+            item.style.animationDelay = `${Math.min(idx, 10) * 18}ms`;
+
+            const top = el('div', 'email-log-top');
+            const badges = el('div', 'badge-row');
+
+            if (log.sentBy === 'instructor') {
+                badges.appendChild(el('span', 'badge teal', 'Sent by You'));
+            } else {
+                badges.appendChild(el('span', 'badge sky', 'System'));
+            }
+
+            const typeMeta = EMAIL_TYPE_BADGES[log.emailType]
+                || EMAIL_CATEGORY_FALLBACK[log.category]
+                || { label: 'Notification', cls: 'muted-badge' };
+            badges.appendChild(el('span', `badge ${typeMeta.cls}`, typeMeta.label));
+
+            if (log.status === 'failed') {
+                badges.appendChild(el('span', 'badge danger', 'Delivery Failed'));
+            }
+
+            const recipients = Array.isArray(log.recipients) ? log.recipients.filter(Boolean) : [];
+            if (recipients.length > 1) {
+                badges.appendChild(el('span', 'badge muted-badge', `${recipients.length} recipients`));
+            }
+
+            top.appendChild(badges);
+            const timeText = formatTimestamp(log.createdAt);
+            if (timeText) {
+                top.appendChild(el('span', 'email-log-time muted small', timeText));
+            }
+            item.appendChild(top);
+
+            const mainRow = el('div', 'email-log-main');
+            const infoCol = el('div', 'email-log-info');
+            infoCol.appendChild(el('strong', 'email-log-subject', log.subject || '(No subject)'));
+
+            const metaLine = el('div', 'email-log-meta');
+            const toText = recipients.length ? `To: ${recipients.join(', ')}` : 'To: —';
+            metaLine.appendChild(el('span', 'email-log-to', toText));
+
+            const groupParts = [];
+            if (log.capstoneTitle) groupParts.push(log.capstoneTitle);
+            if (log.recipientName && log.recipientName !== log.capstoneTitle) groupParts.push(log.recipientName);
+            if (groupParts.length) {
+                metaLine.appendChild(el('span', 'email-log-dot muted', '·'));
+                metaLine.appendChild(el('span', 'email-log-group muted', groupParts.join(' — ')));
+            }
+            infoCol.appendChild(metaLine);
+            mainRow.appendChild(infoCol);
+
+            const isExpanded = state.expandedEmailLogIds.has(log.id);
+            if (log.bodyPreview) {
+                const toggleBtn = el('button', 'btn btn-ghost btn-sm email-preview-toggle', isExpanded ? 'Hide details' : 'View details');
+                toggleBtn.type = 'button';
+                toggleBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                toggleBtn.addEventListener('click', () => {
+                    if (state.expandedEmailLogIds.has(log.id)) {
+                        state.expandedEmailLogIds.delete(log.id);
+                    } else {
+                        state.expandedEmailLogIds.add(log.id);
+                    }
+                    renderEmailLogsSection();
+                });
+                mainRow.appendChild(toggleBtn);
+            }
+            item.appendChild(mainRow);
+
+            if (log.status === 'failed' && log.errorMessage) {
+                const errBox = el('div', 'cancel-reason-box email-error-box');
+                errBox.appendChild(el('strong', '', 'SMTP Error:'));
+                errBox.appendChild(el('p', '', log.errorMessage));
+                item.appendChild(errBox);
+            }
+
+            if (log.bodyPreview && isExpanded) {
+                const previewBox = el('pre', 'email-log-preview', log.bodyPreview);
+                item.appendChild(previewBox);
+            }
+
+            container.appendChild(item);
+        });
+
+        if (filtered.length > state.emailVisibleLimit) {
+            const remaining = filtered.length - state.emailVisibleLimit;
+            const moreWrap = el('div', 'email-log-more-wrap');
+            const moreBtn = el(
+                'button',
+                'btn btn-ghost btn-sm',
+                `Show more emails (${remaining} remaining)`
+            );
+            moreBtn.type = 'button';
+            moreBtn.addEventListener('click', () => {
+                state.emailVisibleLimit += 25;
+                renderEmailLogsSection();
+            });
+            moreWrap.appendChild(moreBtn);
+            container.appendChild(moreWrap);
+        }
+    }
+
     /* ---------------- render ---------------- */
     function render() {
         if ($('#countScheduleOpen')) {
@@ -2589,6 +2827,7 @@
         $('#countPast').textContent = past.length;
         if ($('#countCancelled')) $('#countCancelled').textContent = cancelled.length;
 
+        renderEmailLogsSection();
         renderStudentsSection();
 
         const isScheduleTab = state.tab === 'schedule';
@@ -3017,6 +3256,32 @@
     $('#revisionNotesInput')?.addEventListener('input', (e) => {
         if ($('#revisionNotesCount')) $('#revisionNotesCount').textContent = String(e.target.value.length);
         setNotesFormError('');
+    });
+
+    // Email Activity & Sent Logs bindings
+    document.querySelectorAll('.email-sender-tab[data-email-sender]').forEach((tab) => {
+        tab.addEventListener('click', () => {
+            state.emailSenderFilter = tab.dataset.emailSender || 'all';
+            state.emailVisibleLimit = 20;
+            renderEmailLogsSection();
+        });
+    });
+    document.querySelectorAll('#emailCategoryFilters [data-email-cat]').forEach((pill) => {
+        pill.addEventListener('click', () => {
+            state.emailCategoryFilter = pill.dataset.emailCat || 'all';
+            state.emailVisibleLimit = 20;
+            renderEmailLogsSection();
+        });
+    });
+    $('#emailLogSearchInput')?.addEventListener('input', (e) => {
+        state.emailSearch = e.target.value.trim();
+        state.emailVisibleLimit = 20;
+        renderEmailLogsSection();
+    });
+    $('#composeEmailFromLogsBtn')?.addEventListener('click', () => openSendEmailModal());
+    $('#jumpToEmailLogsBtn')?.addEventListener('click', () => {
+        closeSendEmailModal();
+        $('#emailLogsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
     // Manual Send Email modal bindings

@@ -415,6 +415,44 @@
                 </div>
             </div>
 
+            <!-- Separate Section: Sent Emails & System Email Activity -->
+            <div class="admin-section-head admin-section-head-row" id="emailLogsSection">
+                <div>
+                    <h2>Email Activity</h2>
+                    <p class="muted small">Track all emails sent by you or automatically by the system, and filter between reminders and other notifications.</p>
+                </div>
+                <button type="button" class="btn btn-primary-soft btn-sm" id="composeEmailFromLogsBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                    Send Email
+                </button>
+            </div>
+
+            <div class="card bookings-card email-logs-card">
+                <div class="toolbar">
+                    <div class="tabs email-sender-tabs" role="tablist" aria-label="Filter emails by sender">
+                        <button type="button" class="tab email-sender-tab active" data-email-sender="all">All Emails <span class="count" id="countEmailsAll">0</span></button>
+                        <button type="button" class="tab email-sender-tab" data-email-sender="instructor">Sent by Me <span class="count" id="countEmailsMe">0</span></button>
+                        <button type="button" class="tab email-sender-tab" data-email-sender="system">Sent by System <span class="count" id="countEmailsSystem">0</span></button>
+                    </div>
+                    <label class="search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                        <input type="search" id="emailLogSearchInput" placeholder="Search recipient, group, subject…" />
+                    </label>
+                </div>
+                <div class="email-filter-bar">
+                    <div class="profile-filter-pills" id="emailCategoryFilters" role="group" aria-label="Filter emails by category">
+                        <button type="button" class="profile-pill active" data-email-cat="all">All Types <span class="pill-count" id="countEmailCatAll">0</span></button>
+                        <button type="button" class="profile-pill" data-email-cat="reminder">Reminders <span class="pill-count" id="countEmailCatReminder">0</span></button>
+                        <button type="button" class="profile-pill" data-email-cat="others">Others (No Reminders) <span class="pill-count" id="countEmailCatOthers">0</span></button>
+                        <button type="button" class="profile-pill" data-email-cat="pickup_notice">Pickup Notices <span class="pill-count" id="countEmailCatPickup">0</span></button>
+                        <button type="button" class="profile-pill" data-email-cat="booking_updates">Bookings &amp; Cancellations <span class="pill-count" id="countEmailCatBooking">0</span></button>
+                        <button type="button" class="profile-pill" data-email-cat="custom">Custom Messages <span class="pill-count" id="countEmailCatCustom">0</span></button>
+                        <button type="button" class="profile-pill" data-email-cat="otp">Verification Codes <span class="pill-count" id="countEmailCatOtp">0</span></button>
+                    </div>
+                </div>
+                <div class="email-logs-list" id="emailLogsList"></div>
+            </div>
+
             <!-- Separate Section: Registered Students & Groups -->
             <div class="admin-section-head">
                 <div>
@@ -446,9 +484,12 @@
         <div class="modal-card modal-wide">
             <div class="modal-head">
                 <h3 id="sendEmailModalTitle">Send Email to Student</h3>
-                <button type="button" class="icon-btn" id="closeSendEmailModalBtn" aria-label="Close">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
+                <div class="modal-head-actions">
+                    <button type="button" class="link-btn" id="jumpToEmailLogsBtn">View sent emails ↓</button>
+                    <button type="button" class="icon-btn" id="closeSendEmailModalBtn" aria-label="Close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
             </div>
             <form class="modal-body" id="sendEmailForm" novalidate>
                 <label class="field">

@@ -302,6 +302,31 @@ alter table public.scheduler_settings enable row level security;
 
 
 -- ---------------------------------------------------------------------------
+-- Outgoing Email Activity Log (emails sent by the instructor or by the system)
+-- ---------------------------------------------------------------------------
+create table if not exists public.email_logs (
+    id              uuid primary key default gen_random_uuid(),
+    sent_by         text        not null check (sent_by in ('instructor', 'system')),
+    category        text        not null check (category in ('reminder', 'pickup_notice', 'booking', 'cancellation', 'custom', 'otp')),
+    email_type      text        not null,
+    status          text        not null default 'sent' check (status in ('sent', 'failed')),
+    subject         text        not null,
+    recipients      text[]      not null default '{}',
+    recipient_name  text,
+    capstone_title  text,
+    student_id      uuid references public.students (id) on delete set null,
+    booking_id      uuid references public.appointments (id) on delete set null,
+    body_preview    text,
+    error_message   text,
+    created_at      timestamptz not null default now()
+);
+
+create index if not exists email_logs_created_idx on public.email_logs (created_at desc);
+create index if not exists email_logs_sender_cat_idx on public.email_logs (sent_by, category, created_at desc);
+alter table public.email_logs enable row level security;
+
+
+-- ---------------------------------------------------------------------------
 -- OPTIONAL: only needed if you keep using SUPABASE_ANON_KEY on the server
 -- instead of SUPABASE_SERVICE_ROLE_KEY. Uncomment and run.
 -- (The anon key stays on the server, but anyone who obtains it could then

@@ -372,6 +372,10 @@ function startServerRealtimeSubscription() {
 const STUDENTS_TABLE = 'students';
 const STUDENT_LOGS_TABLE = 'student_update_logs';
 const OTP_TABLE = 'email_otps';
+const EMAIL_LOGS_TABLE = 'email_logs';
+const EMAIL_LOGS_FALLBACK_KEY = 'email_logs_v1';
+const MAX_EMAIL_LOGS_RETURNED = 300;
+const MAX_FALLBACK_EMAIL_LOGS = 250;
 const SESSION_COOKIE = 'sid';
 
 function intEnv(name, fallback) {
@@ -804,6 +808,123 @@ const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 
+/* ---------- outgoing email activity tracking (instructor + system) ---------- */
+const VALID_EMAIL_CATEGORIES = new Set(['reminder', 'pickup_notice', 'booking', 'cancellation', 'custom', 'otp']);
+const recentMemoryEmailLogs = [];
+
+function normalizeEmailLogRow(r) {
+    if (!r || typeof r !== 'object') return null;
+    const sentBy = r.sent_by === 'instructor' || r.sentBy === 'instructor' ? 'instructor' : 'system';
+    const rawCat = r.category || 'custom';
+    const category = VALID_EMAIL_CATEGORIES.has(rawCat) ? rawCat : 'custom';
+    const recipientsRaw = Array.isArray(r.recipients)
+        ? r.recipients
+        : typeof r.recipients === 'string' && r.recipients
+            ? r.recipients.split(',')
+            : [];
+    const recipients = [...new Set(recipientsRaw.map((e) => normalizeEmail(e)).filter(Boolean))];
+    return {
+        id: String(r.id || crypto.randomUUID()),
+        sentBy,
+        category,
+        emailType: String(r.email_type || r.emailType || category),
+        status: (r.status === 'failed') ? 'failed' : 'sent',
+        subject: String(r.subject || '(No subject)').slice(0, 300),
+        recipients,
+        recipientName: r.recipient_name ?? r.recipientName ?? null,
+        capstoneTitle: r.capstone_title ?? r.capstoneTitle ?? null,
+        studentId: r.student_id ?? r.studentId ?? null,
+        bookingId: r.booking_id ?? r.bookingId ?? null,
+        bodyPreview: r.body_preview ?? r.bodyPreview ?? null,
+        errorMessage: r.error_message ?? r.errorMessage ?? null,
+        createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    };
+}
+
+async function appendFallbackEmailLog(dbRow) {
+    try {
+        const { data } = await db()
+            .from(SETTINGS_TABLE)
+            .select('value')
+            .eq('key', EMAIL_LOGS_FALLBACK_KEY)
+            .maybeSingle();
+        let existing = [];
+        if (data?.value) {
+            try {
+                const parsed = JSON.parse(data.value);
+                if (Array.isArray(parsed)) existing = parsed;
+            } catch { /* ignore malformed json */ }
+        }
+        const next = [dbRow, ...existing.filter((x) => x && x.id !== dbRow.id)].slice(0, MAX_FALLBACK_EMAIL_LOGS);
+        await db()
+            .from(SETTINGS_TABLE)
+            .upsert(
+                [{ key: EMAIL_LOGS_FALLBACK_KEY, value: JSON.stringify(next), updated_at: new Date().toISOString() }],
+                { onConflict: 'key' }
+            );
+    } catch (err) {
+        console.warn('Fallback email log save skipped:', err.message || err);
+    }
+}
+
+async function recordEmailLog(entry = {}, { emitRealtime = true } = {}) {
+    const recipientsInput = Array.isArray(entry.recipients)
+        ? entry.recipients
+        : entry.to
+            ? (Array.isArray(entry.to) ? entry.to : [entry.to])
+            : [];
+    const recipients = [...new Set(recipientsInput.map((e) => normalizeEmail(e)).filter(Boolean))];
+    const sentBy = entry.sentBy === 'instructor' ? 'instructor' : 'system';
+    const category = VALID_EMAIL_CATEGORIES.has(entry.category) ? entry.category : 'custom';
+    const uuidRe = /^[0-9a-f-]{36}$/i;
+    const dbRow = {
+        id: crypto.randomUUID(),
+        sent_by: sentBy,
+        category,
+        email_type: String(entry.emailType || category).slice(0, 64),
+        status: entry.status === 'failed' ? 'failed' : 'sent',
+        subject: String(entry.subject || '(No subject)').trim().slice(0, 300),
+        recipients,
+        recipient_name: entry.recipientName ? String(entry.recipientName).trim().slice(0, 200) : null,
+        capstone_title: entry.capstoneTitle ? String(entry.capstoneTitle).trim().slice(0, 200) : null,
+        student_id: entry.studentId && uuidRe.test(String(entry.studentId)) ? String(entry.studentId) : null,
+        booking_id: entry.bookingId && uuidRe.test(String(entry.bookingId)) ? String(entry.bookingId) : null,
+        body_preview: entry.bodyPreview ? String(entry.bodyPreview).trim().slice(0, 1500) : null,
+        error_message: entry.errorMessage ? String(entry.errorMessage).trim().slice(0, 500) : null,
+        created_at: entry.createdAt || new Date().toISOString(),
+    };
+
+    const serialized = normalizeEmailLogRow(dbRow);
+    recentMemoryEmailLogs.unshift(serialized);
+    if (recentMemoryEmailLogs.length > MAX_FALLBACK_EMAIL_LOGS) {
+        recentMemoryEmailLogs.length = MAX_FALLBACK_EMAIL_LOGS;
+    }
+
+    try {
+        const { error } = await db().from(EMAIL_LOGS_TABLE).insert([dbRow]);
+        if (error) {
+            if (['42P01', 'PGRST205', '42703', 'PGRST204'].includes(error.code)) {
+                await appendFallbackEmailLog(dbRow);
+            } else {
+                console.warn('Could not insert email_logs row:', error.message || error);
+            }
+        }
+    } catch (err) {
+        console.warn('Could not persist email log:', err.message || err);
+    }
+
+    if (emitRealtime) {
+        const rt = notifyRealtimeListeners({
+            type: 'email_logged',
+            sentBy: dbRow.sent_by,
+            category: dbRow.category,
+        });
+        if (process.env.VERCEL) await rt;
+    }
+
+    return serialized;
+}
+
 async function sendOtpEmail(to, code, purpose, name) {
     const isReset = purpose === 'reset';
     const isEmailChange = purpose === 'email_change';
@@ -812,6 +933,16 @@ async function sendOtpEmail(to, code, purpose, name) {
         : isEmailChange
             ? `${code} is your email verification code`
             : `${code} is your verification code`;
+    const maskedSubject = isReset
+        ? '•••••• is your password reset code'
+        : isEmailChange
+            ? '•••••• is your email verification code'
+            : '•••••• is your verification code';
+    const emailType = isReset
+        ? 'otp_reset'
+        : isEmailChange
+            ? 'otp_email_change'
+            : 'otp_register';
     const intro = isReset
         ? `Use the code below to reset your password for booking consultations with ${TEACHER_NAME}.`
         : isEmailChange
@@ -819,21 +950,47 @@ async function sendOtpEmail(to, code, purpose, name) {
             : `Use the code below to verify your university email and finish creating your account for booking consultations with ${TEACHER_NAME}.`;
     const greeting = name ? `Hi ${name},` : 'Hi,';
     const footer = `This code expires in ${AUTH.otpMinutes} minutes. If you didn't request it, you can ignore this email.`;
+    const maskedBodyPreview = `${greeting}\n\n${intro}\n\n    ••••••\n\n${footer}`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to,
-        subject,
-        text: `${greeting}\n\n${intro}\n\n    ${code}\n\n${footer}`,
-        html: `
-            <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:auto;color:#0f172a">
-                <p>${escapeHtml(greeting)}</p>
-                <p>${escapeHtml(intro)}</p>
-                <p style="font-size:32px;font-weight:700;letter-spacing:8px;text-align:center;
-                          background:#f0fdfa;color:#0f766e;padding:16px;border-radius:12px">${code}</p>
-                <p style="color:#64748b;font-size:13px">${escapeHtml(footer)}</p>
-            </div>`,
-    });
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to,
+            subject,
+            text: `${greeting}\n\n${intro}\n\n    ${code}\n\n${footer}`,
+            html: `
+                <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:auto;color:#0f172a">
+                    <p>${escapeHtml(greeting)}</p>
+                    <p>${escapeHtml(intro)}</p>
+                    <p style="font-size:32px;font-weight:700;letter-spacing:8px;text-align:center;
+                              background:#f0fdfa;color:#0f766e;padding:16px;border-radius:12px">${code}</p>
+                    <p style="color:#64748b;font-size:13px">${escapeHtml(footer)}</p>
+                </div>`,
+        });
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'otp',
+            emailType,
+            status: 'sent',
+            subject: maskedSubject,
+            recipients: [to],
+            recipientName: name || null,
+            bodyPreview: maskedBodyPreview,
+        });
+    } catch (err) {
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'otp',
+            emailType,
+            status: 'failed',
+            subject: maskedSubject,
+            recipients: [to],
+            recipientName: name || null,
+            bodyPreview: maskedBodyPreview,
+            errorMessage: err.message || String(err),
+        });
+        throw err;
+    }
 }
 
 /* ---------- one-time codes (stored permanently in Supabase) ---------- */
@@ -3442,7 +3599,7 @@ app.post('/api/bookings/:id/cancel', requireStudent, async (req, res) => {
     remindedStudentAppointmentIds.delete(row.id);
 
     const booking = toBooking(data, now, req.student);
-    const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
+    const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req), { cancelledBy: 'student' }).catch((err) => {
         console.error('Failed to send student cancellation email:', err.message || err);
     });
     const rtPromise = notifyRealtimeListeners({
@@ -4137,8 +4294,325 @@ async function fetchStudentUpdateLogs() {
     return data || [];
 }
 
+async function fetchStoredEmailLogs(limit = MAX_EMAIL_LOGS_RETURNED) {
+    const byId = new Map();
+    const addRow = (raw) => {
+        const normalized = normalizeEmailLogRow(raw);
+        if (normalized && !byId.has(normalized.id)) {
+            byId.set(normalized.id, normalized);
+        }
+    };
+
+    try {
+        const { data, error } = await db()
+            .from(EMAIL_LOGS_TABLE)
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+        if (!error && Array.isArray(data)) {
+            data.forEach(addRow);
+        } else if (error && ['42P01', 'PGRST205', '42703', 'PGRST204'].includes(error.code)) {
+            const { data: fallbackSetting } = await db()
+                .from(SETTINGS_TABLE)
+                .select('value')
+                .eq('key', EMAIL_LOGS_FALLBACK_KEY)
+                .maybeSingle();
+            if (fallbackSetting?.value) {
+                try {
+                    const parsed = JSON.parse(fallbackSetting.value);
+                    if (Array.isArray(parsed)) parsed.forEach(addRow);
+                } catch { /* ignore */ }
+            }
+        } else if (error) {
+            console.error('Could not fetch email_logs:', error);
+        }
+    } catch (err) {
+        console.warn('Email log query fallback:', err.message || err);
+    }
+
+    recentMemoryEmailLogs.forEach(addRow);
+    return [...byId.values()].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+}
+
+function buildCompleteEmailLogs({ storedLogs = [], rawAppointmentRows = [], bookings = [], studentRows = [] } = {}) {
+    const merged = [...storedLogs];
+    const recordedBookingTypes = new Set();
+    const recordedPickupTimes = [];
+
+    for (const log of storedLogs) {
+        if (log.bookingId) {
+            recordedBookingTypes.add(`${log.bookingId}|${log.emailType}`);
+            if (log.emailType.startsWith('booking_cancelled')) {
+                recordedBookingTypes.add(`${log.bookingId}|booking_cancelled`);
+            }
+        }
+        if (log.category === 'pickup_notice') {
+            recordedPickupTimes.push({
+                studentId: log.studentId || null,
+                primaryEmail: log.recipients?.[0] || null,
+                emailType: log.emailType,
+                ms: new Date(log.createdAt).getTime(),
+            });
+        }
+    }
+
+    const hasNearbyPickupLog = (studentId, primaryEmail, emailType, isoTime) => {
+        const ms = new Date(isoTime).getTime();
+        if (!Number.isFinite(ms)) return true;
+        return recordedPickupTimes.some((p) => {
+            if (p.emailType !== emailType) return false;
+            const sameTarget = (studentId && p.studentId && p.studentId === studentId)
+                || (primaryEmail && p.primaryEmail && p.primaryEmail === primaryEmail);
+            return sameTarget && Math.abs(p.ms - ms) <= 120 * 1000;
+        });
+    };
+
+    const rawById = new Map();
+    for (const r of rawAppointmentRows) {
+        if (r?.id) rawById.set(r.id, r);
+    }
+
+    const nowMs = Date.now();
+    const HISTORICAL_SETTLE_MS = 30 * 1000;
+
+    for (const b of bookings) {
+        const r = rawById.get(b.id);
+        if (!r) continue;
+        const recipients = getGroupRecipientEmails({ booking: b });
+        const groupDisplayName = Array.isArray(b.members) && b.members.length ? b.members.join(', ') : b.name;
+        const projectTitle = b.capstoneTitle || b.teamName || null;
+        const dateLabel = formatLongDateStr(b.date);
+
+        // 1. Instructor 10-min reminder
+        if (r.reminder_sent_at && !recordedBookingTypes.has(`${b.id}|instructor_reminder`)) {
+            merged.push({
+                id: `hist-t-rem-${b.id}`,
+                sentBy: 'system',
+                category: 'reminder',
+                emailType: 'instructor_reminder',
+                status: 'sent',
+                subject: `Reminder: ${b.consultationTitle} (${b.label}) — ${projectTitle || b.name}`,
+                recipients: TEACHER_EMAIL ? [TEACHER_EMAIL] : [],
+                recipientName: TEACHER_NAME,
+                capstoneTitle: projectTitle,
+                studentId: b.studentId || null,
+                bookingId: b.id,
+                bodyPreview: `Automated 10-minute reminder sent to ${TEACHER_NAME} for ${b.consultationTitle} on ${dateLabel} (${b.label}).`,
+                errorMessage: null,
+                createdAt: r.reminder_sent_at,
+            });
+        }
+
+        // 2. Student 1-hr reminder
+        if (r.student_reminder_sent_at && recipients.length && !recordedBookingTypes.has(`${b.id}|student_reminder`)) {
+            merged.push({
+                id: `hist-s-rem-${b.id}`,
+                sentBy: 'system',
+                category: 'reminder',
+                emailType: 'student_reminder',
+                status: 'sent',
+                subject: `Reminder: Your ${b.consultationTitle} (${b.label}) — #${b.reference}`,
+                recipients,
+                recipientName: groupDisplayName,
+                capstoneTitle: projectTitle,
+                studentId: b.studentId || null,
+                bookingId: b.id,
+                bodyPreview: `Automated appointment reminder sent to ${recipients.join(', ')} for ${b.consultationTitle} on ${dateLabel} (${b.label}).`,
+                errorMessage: null,
+                createdAt: r.student_reminder_sent_at,
+            });
+        }
+
+        // 3. Pickup notice sent from Drop-off / Comm. Letter card
+        if (r.notified_at && recipients.length && ['dropoff', 'letter'].includes(b.consultationType)) {
+            const pType = b.consultationType === 'letter' ? 'letter_ready' : 'manuscript_ready';
+            if (!recordedBookingTypes.has(`${b.id}|${pType}`) && !hasNearbyPickupLog(b.studentId, recipients[0], pType, r.notified_at)) {
+                const subj = pType === 'letter_ready'
+                    ? 'Communication Letter Ready for Pickup'
+                    : 'Manuscript Ready for Pickup — Please Schedule Your Retrieval';
+                merged.push({
+                    id: `hist-pickup-${b.id}`,
+                    sentBy: 'instructor',
+                    category: 'pickup_notice',
+                    emailType: pType,
+                    status: 'sent',
+                    subject: subj,
+                    recipients,
+                    recipientName: groupDisplayName,
+                    capstoneTitle: projectTitle,
+                    studentId: b.studentId || null,
+                    bookingId: b.id,
+                    bodyPreview: `Notification sent to ${recipients.join(', ')} for ${projectTitle || groupDisplayName}.`,
+                    errorMessage: null,
+                    createdAt: r.notified_at,
+                });
+                recordedPickupTimes.push({
+                    studentId: b.studentId || null,
+                    primaryEmail: recipients[0] || null,
+                    emailType: pType,
+                    ms: new Date(r.notified_at).getTime(),
+                });
+            }
+        }
+
+        // 4. Historical booking confirmation / reschedule / cancellation (>30s old so in-flight sends aren't duplicated)
+        if (recipients.length && r.created_at && (nowMs - new Date(r.created_at).getTime() > HISTORICAL_SETTLE_MS)
+            && !recordedBookingTypes.has(`${b.id}|booking_confirmed`)) {
+            merged.push({
+                id: `hist-conf-${b.id}`,
+                sentBy: 'system',
+                category: 'booking',
+                emailType: 'booking_confirmed',
+                status: 'sent',
+                subject: `Confirmed: ${b.consultationTitle} on ${dateLabel} (${b.label}) — #${b.reference}`,
+                recipients,
+                recipientName: groupDisplayName,
+                capstoneTitle: projectTitle,
+                studentId: b.studentId || null,
+                bookingId: b.id,
+                bodyPreview: `Booking confirmation sent to ${recipients.join(', ')} for ${b.consultationTitle} on ${dateLabel} (${b.label}).`,
+                errorMessage: null,
+                createdAt: r.created_at,
+            });
+        }
+
+        if (recipients.length && r.rescheduled_at && (nowMs - new Date(r.rescheduled_at).getTime() > HISTORICAL_SETTLE_MS)
+            && !recordedBookingTypes.has(`${b.id}|booking_rescheduled`)) {
+            merged.push({
+                id: `hist-resched-${b.id}`,
+                sentBy: 'system',
+                category: 'booking',
+                emailType: 'booking_rescheduled',
+                status: 'sent',
+                subject: `Rescheduled: ${b.consultationTitle} moved to ${dateLabel} (${b.label}) — #${b.reference}`,
+                recipients,
+                recipientName: groupDisplayName,
+                capstoneTitle: projectTitle,
+                studentId: b.studentId || null,
+                bookingId: b.id,
+                bodyPreview: `Reschedule confirmation sent to ${recipients.join(', ')} for ${b.consultationTitle} on ${dateLabel} (${b.label}).`,
+                errorMessage: null,
+                createdAt: r.rescheduled_at,
+            });
+        }
+
+        if (recipients.length && b.status === 'cancelled' && r.cancelled_at
+            && (nowMs - new Date(r.cancelled_at).getTime() > HISTORICAL_SETTLE_MS)
+            && !recordedBookingTypes.has(`${b.id}|booking_cancelled`)) {
+            const isStuCancel = b.cancellationReason === 'Cancelled by student.';
+            merged.push({
+                id: `hist-canc-${b.id}`,
+                sentBy: 'system',
+                category: 'cancellation',
+                emailType: isStuCancel ? 'booking_cancelled_student' : 'booking_cancelled_admin',
+                status: 'sent',
+                subject: `Cancelled: ${b.consultationTitle} on ${dateLabel} (${b.label}) — #${b.reference}`,
+                recipients,
+                recipientName: groupDisplayName,
+                capstoneTitle: projectTitle,
+                studentId: b.studentId || null,
+                bookingId: b.id,
+                bodyPreview: `Cancellation notice sent to ${recipients.join(', ')}. Reason: ${b.cancellationReason || 'Instructor unavailable.'}`,
+                errorMessage: null,
+                createdAt: r.cancelled_at,
+            });
+        }
+    }
+
+    // 5. Historical manual pickup notifications stored in students.change_history
+    for (const s of studentRows) {
+        if (!Array.isArray(s.change_history)) continue;
+        const recipients = getGroupRecipientEmails({ primaryEmail: s.email, studentRow: s });
+        if (!recipients.length) continue;
+        const groupDisplayName = Array.isArray(s.members) && s.members.length ? s.members.join(', ') : s.full_name;
+        for (const h of s.change_history) {
+            if (!h || h.type !== 'notification' || !['manuscript_ready', 'letter_ready'].includes(h.kind) || !h.notifiedAt) continue;
+            if (hasNearbyPickupLog(s.id, recipients[0], h.kind, h.notifiedAt)) continue;
+            const subj = h.kind === 'letter_ready'
+                ? 'Communication Letter Ready for Pickup'
+                : 'Manuscript Ready for Pickup — Please Schedule Your Retrieval';
+            merged.push({
+                id: `hist-stu-notif-${h.id || `${s.id}-${h.notifiedAt}`}`,
+                sentBy: 'instructor',
+                category: 'pickup_notice',
+                emailType: h.kind,
+                status: 'sent',
+                subject: subj,
+                recipients,
+                recipientName: groupDisplayName,
+                capstoneTitle: s.capstone_title || null,
+                studentId: s.id,
+                bookingId: null,
+                bodyPreview: `Pickup notification emailed to ${recipients.join(', ')}.`,
+                errorMessage: null,
+                createdAt: h.notifiedAt,
+            });
+            recordedPickupTimes.push({
+                studentId: s.id,
+                primaryEmail: recipients[0],
+                emailType: h.kind,
+                ms: new Date(h.notifiedAt).getTime(),
+            });
+        }
+    }
+
+    merged.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    return merged.slice(0, MAX_EMAIL_LOGS_RETURNED);
+}
+
+app.get('/api/admin/email-logs', requireAdmin, async (req, res) => {
+    const [{ data: apptRows, error: apptErr }, studentsRes, storedLogs] = await Promise.all([
+        db().from(TABLE).select('*'),
+        db().from(STUDENTS_TABLE).select('*'),
+        fetchStoredEmailLogs(MAX_EMAIL_LOGS_RETURNED),
+    ]);
+    if (apptErr) return res.status(500).json({ error: apptErr.message });
+
+    const studentRows = Array.isArray(studentsRes?.data) ? studentsRes.data : [];
+    const studentLookup = { byId: new Map(), byEmail: new Map() };
+    studentRows.forEach((s) => {
+        studentLookup.byId.set(s.id, s);
+        if (s.email) studentLookup.byEmail.set(s.email.toLowerCase(), s);
+    });
+    const now = nowInTz();
+    const bookings = (apptRows || []).map((r) => toBooking(r, now, studentLookup));
+    let emailLogs = buildCompleteEmailLogs({
+        storedLogs,
+        rawAppointmentRows: apptRows || [],
+        bookings,
+        studentRows,
+    });
+
+    const sentByFilter = String(req.query.sentBy || '').trim().toLowerCase();
+    if (sentByFilter === 'instructor' || sentByFilter === 'system') {
+        emailLogs = emailLogs.filter((item) => item.sentBy === sentByFilter);
+    }
+
+    const catFilter = String(req.query.category || '').trim().toLowerCase();
+    if (catFilter === 'others') {
+        emailLogs = emailLogs.filter((item) => item.category !== 'reminder');
+    } else if (catFilter === 'booking_updates') {
+        emailLogs = emailLogs.filter((item) => item.category === 'booking' || item.category === 'cancellation');
+    } else if (VALID_EMAIL_CATEGORIES.has(catFilter)) {
+        emailLogs = emailLogs.filter((item) => item.category === catFilter);
+    }
+
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q) {
+        emailLogs = emailLogs.filter((item) =>
+            (item.subject && item.subject.toLowerCase().includes(q))
+            || (item.recipientName && item.recipientName.toLowerCase().includes(q))
+            || (item.capstoneTitle && item.capstoneTitle.toLowerCase().includes(q))
+            || (item.bodyPreview && item.bodyPreview.toLowerCase().includes(q))
+            || (Array.isArray(item.recipients) && item.recipients.some((r) => r.toLowerCase().includes(q)))
+        );
+    }
+
+    res.json({ ok: true, emailLogs });
+});
+
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
-    const [{ data, error }, blockedRows, pickupRows, studentsRes, rawUpdateLogs] = await Promise.all([
+    const [{ data, error }, blockedRows, pickupRows, studentsRes, rawUpdateLogs, storedEmailLogs] = await Promise.all([
         db()
             .from(TABLE)
             .select('*')
@@ -4151,6 +4625,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
             .select('*')
             .order('created_at', { ascending: false }),
         fetchStudentUpdateLogs(),
+        fetchStoredEmailLogs(MAX_EMAIL_LOGS_RETURNED),
         loadBookingEndDateSetting({ force: true }),
     ]);
     if (error) return res.status(500).json({ error: error.message });
@@ -4236,6 +4711,12 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
             changeHistory: history,
         };
     });
+    const emailLogs = buildCompleteEmailLogs({
+        storedLogs: storedEmailLogs,
+        rawAppointmentRows: data || [],
+        bookings,
+        studentRows,
+    });
     res.json({
         today: now.date,
         currentHour: now.hour,
@@ -4247,6 +4728,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         letterPickupSchedules,
         students,
         studentUpdateLogs: serializedLogs,
+        emailLogs,
     });
 });
 
@@ -4722,7 +5204,7 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
                     const siteOrigin = resolveSiteOrigin(req);
                     const cancelEmailsPromise = Promise.allSettled(
                         cancelledBookings.map((b) =>
-                            sendStudentCancellationEmail(b, siteOrigin).catch((err) => {
+                            sendStudentCancellationEmail(b, siteOrigin, { cancelledBy: 'instructor' }).catch((err) => {
                                 console.error(`Failed to send block cancellation email for ${b.id}:`, err.message || err);
                             })
                         )
@@ -5114,8 +5596,35 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
             text: emailContent.text,
             html: emailContent.html,
         });
+        await recordEmailLog({
+            sentBy: 'instructor',
+            category: 'pickup_notice',
+            emailType: 'manuscript_ready',
+            status: 'sent',
+            subject: emailContent.subject,
+            recipients,
+            recipientName: membersGreeting || row.student_name || null,
+            capstoneTitle: row.capstone_title || row.team_name || null,
+            studentId: row.student_id || studentRow?.id || null,
+            bookingId: row.id,
+            bodyPreview: emailContent.text,
+        }, { emitRealtime: false });
     } catch (err) {
         console.error('Failed to send manuscript checked notification email:', err);
+        await recordEmailLog({
+            sentBy: 'instructor',
+            category: 'pickup_notice',
+            emailType: 'manuscript_ready',
+            status: 'failed',
+            subject: emailContent.subject,
+            recipients,
+            recipientName: membersGreeting || row.student_name || null,
+            capstoneTitle: row.capstone_title || row.team_name || null,
+            studentId: row.student_id || studentRow?.id || null,
+            bookingId: row.id,
+            bodyPreview: emailContent.text,
+            errorMessage: err.message || String(err),
+        });
         if (err.status) throw err;
         throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
     }
@@ -5172,8 +5681,35 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
             text: emailContent.text,
             html: emailContent.html,
         });
+        await recordEmailLog({
+            sentBy: 'instructor',
+            category: 'pickup_notice',
+            emailType: 'letter_ready',
+            status: 'sent',
+            subject: emailContent.subject,
+            recipients,
+            recipientName: membersGreeting || row.student_name || null,
+            capstoneTitle: row.capstone_title || row.team_name || null,
+            studentId: row.student_id || studentRow?.id || null,
+            bookingId: row.id,
+            bodyPreview: emailContent.text,
+        }, { emitRealtime: false });
     } catch (err) {
         console.error('Failed to send communication letter ready notification email:', err);
+        await recordEmailLog({
+            sentBy: 'instructor',
+            category: 'pickup_notice',
+            emailType: 'letter_ready',
+            status: 'failed',
+            subject: emailContent.subject,
+            recipients,
+            recipientName: membersGreeting || row.student_name || null,
+            capstoneTitle: row.capstone_title || row.team_name || null,
+            studentId: row.student_id || studentRow?.id || null,
+            bookingId: row.id,
+            bodyPreview: emailContent.text,
+            errorMessage: err.message || String(err),
+        });
         if (err.status) throw err;
         throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
     }
@@ -5258,6 +5794,14 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
         siteOrigin,
     });
 
+    const manualLogCategory = template === 'schedule_reminder'
+        ? 'reminder'
+        : (template === 'manuscript_ready' || template === 'letter_ready')
+            ? 'pickup_notice'
+            : 'custom';
+    const sentAt = new Date().toISOString();
+    let emailLog = null;
+
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
@@ -5266,13 +5810,41 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
             text: emailContent.text,
             html: emailContent.html,
         });
+        emailLog = await recordEmailLog({
+            sentBy: 'instructor',
+            category: manualLogCategory,
+            emailType: template,
+            status: 'sent',
+            subject: emailContent.subject,
+            recipients,
+            recipientName: groupNames || baseName || null,
+            capstoneTitle: capstoneTitle || null,
+            studentId: studentRow?.id || null,
+            bookingId: null,
+            bodyPreview: emailContent.text,
+            createdAt: sentAt,
+        }, { emitRealtime: !(template === 'manuscript_ready' || template === 'letter_ready') });
     } catch (err) {
         console.error('Failed to send manual student notification email:', err);
+        await recordEmailLog({
+            sentBy: 'instructor',
+            category: manualLogCategory,
+            emailType: template,
+            status: 'failed',
+            subject: emailContent.subject,
+            recipients,
+            recipientName: groupNames || baseName || null,
+            capstoneTitle: capstoneTitle || null,
+            studentId: studentRow?.id || null,
+            bookingId: null,
+            bodyPreview: emailContent.text,
+            errorMessage: err.message || String(err),
+            createdAt: sentAt,
+        });
         if (err.status) throw err;
         throw httpError(502, 'Could not send notification email right now. Please check your SMTP configuration and try again.');
     }
 
-    const sentAt = new Date().toISOString();
     if (template === 'manuscript_ready' || template === 'letter_ready') {
         const updatedStudent = await recordStudentPickupNotification({
             studentId: studentRow?.id || null,
@@ -5293,6 +5865,7 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
         to: recipients.join(', '),
         recipients,
         sentAt,
+        emailLog,
     });
 });
 
@@ -5376,7 +5949,7 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
 
     const studentRow = await fetchStudentForBooking(data);
     const booking = toBooking(data, nowInTz(), studentRow);
-    const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req)).catch((err) => {
+    const emailPromise = sendStudentCancellationEmail(booking, resolveSiteOrigin(req), { cancelledBy: 'instructor' }).catch((err) => {
         console.error('Failed to send student cancellation email:', err.message || err);
     });
     const rtPromise = notifyRealtimeListeners({
@@ -5726,20 +6299,55 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
             <p style="margin-top:16px;color:#64748b;font-size:13px">A calendar file (<code>.ics</code>) is attached so you can open and save this event directly in your device’s calendar app.</p>
         </div>`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: recipients,
-        subject,
-        text: textLines.join('\n'),
-        html,
-        attachments: [
-            {
-                filename: `consultation-${booking.reference.toLowerCase()}.ics`,
-                content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: 0 }),
-                contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
-            },
-        ],
-    });
+    const bodyText = textLines.join('\n');
+    const recipientName = Array.isArray(booking.members) && booking.members.length ? booking.members.join(', ') : (booking.name || null);
+    const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: recipients,
+            subject,
+            text: bodyText,
+            html,
+            attachments: [
+                {
+                    filename: `consultation-${booking.reference.toLowerCase()}.ics`,
+                    content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: 0 }),
+                    contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
+                },
+            ],
+        });
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'booking',
+            emailType: 'booking_confirmed',
+            status: 'sent',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+        });
+    } catch (err) {
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'booking',
+            emailType: 'booking_confirmed',
+            status: 'failed',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+            errorMessage: err.message || String(err),
+        });
+        throw err;
+    }
 }
 
 async function sendStudentRescheduleEmail(booking, previousBooking = null, siteOrigin = '') {
@@ -5797,23 +6405,58 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
             <p style="margin-top:16px;color:#64748b;font-size:13px">An updated calendar file (<code>.ics</code>) is attached so you can update this event directly in your device’s calendar app.</p>
         </div>`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: recipients,
-        subject,
-        text: textLines.join('\n'),
-        html,
-        attachments: [
-            {
-                filename: `consultation-${booking.reference.toLowerCase()}.ics`,
-                content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence }),
-                contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
-            },
-        ],
-    });
+    const bodyText = textLines.join('\n');
+    const recipientName = Array.isArray(booking.members) && booking.members.length ? booking.members.join(', ') : (booking.name || null);
+    const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: recipients,
+            subject,
+            text: bodyText,
+            html,
+            attachments: [
+                {
+                    filename: `consultation-${booking.reference.toLowerCase()}.ics`,
+                    content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence }),
+                    contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
+                },
+            ],
+        });
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'booking',
+            emailType: 'booking_rescheduled',
+            status: 'sent',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+        });
+    } catch (err) {
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'booking',
+            emailType: 'booking_rescheduled',
+            status: 'failed',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+            errorMessage: err.message || String(err),
+        });
+        throw err;
+    }
 }
 
-async function sendStudentCancellationEmail(booking, siteOrigin = '') {
+async function sendStudentCancellationEmail(booking, siteOrigin = '', { cancelledBy = null } = {}) {
     const recipients = getGroupRecipientEmails({ booking });
     if (!recipients.length) return;
     const { dateLabel } = buildBookingSummaryData(booking);
@@ -5851,24 +6494,61 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '') {
             <p style="color:#64748b;font-size:13px">An updated calendar cancellation (<code>.ics</code>) is attached so it is removed from your calendar if you added it previously.</p>
         </div>`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: recipients,
-        subject,
-        text: textLines.join('\n'),
-        html,
-        attachments: [
-            {
-                filename: `consultation-${booking.reference.toLowerCase()}-cancelled.ics`,
-                content: buildBookingIcs(booking, {
-                    method: 'CANCEL',
-                    status: 'CANCELLED',
-                    sequence: (booking.rescheduledCount || 0) + 1,
-                }),
-                contentType: 'text/calendar; charset=utf-8; method=CANCEL',
-            },
-        ],
-    });
+    const bodyText = textLines.join('\n');
+    const recipientName = Array.isArray(booking.members) && booking.members.length ? booking.members.join(', ') : (booking.name || null);
+    const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+    const isStudentCancel = cancelledBy === 'student' || (!cancelledBy && reason === 'Cancelled by student.');
+    const cancelEmailType = isStudentCancel ? 'booking_cancelled_student' : 'booking_cancelled_admin';
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: recipients,
+            subject,
+            text: bodyText,
+            html,
+            attachments: [
+                {
+                    filename: `consultation-${booking.reference.toLowerCase()}-cancelled.ics`,
+                    content: buildBookingIcs(booking, {
+                        method: 'CANCEL',
+                        status: 'CANCELLED',
+                        sequence: (booking.rescheduledCount || 0) + 1,
+                    }),
+                    contentType: 'text/calendar; charset=utf-8; method=CANCEL',
+                },
+            ],
+        });
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'cancellation',
+            emailType: cancelEmailType,
+            status: 'sent',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+        });
+    } catch (err) {
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'cancellation',
+            emailType: cancelEmailType,
+            status: 'failed',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+            errorMessage: err.message || String(err),
+        });
+        throw err;
+    }
 }
 
 async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
@@ -5909,20 +6589,55 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
             </div>
         </div>`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: recipients,
-        subject,
-        text: textLines.join('\n'),
-        html,
-        attachments: [
-            {
-                filename: `consultation-${booking.reference.toLowerCase()}.ics`,
-                content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: booking.rescheduledCount || 0 }),
-                contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
-            },
-        ],
-    });
+    const bodyText = textLines.join('\n');
+    const recipientName = Array.isArray(booking.members) && booking.members.length ? booking.members.join(', ') : (booking.name || null);
+    const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: recipients,
+            subject,
+            text: bodyText,
+            html,
+            attachments: [
+                {
+                    filename: `consultation-${booking.reference.toLowerCase()}.ics`,
+                    content: buildBookingIcs(booking, { method: 'PUBLISH', status: 'CONFIRMED', sequence: booking.rescheduledCount || 0 }),
+                    contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
+                },
+            ],
+        });
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'reminder',
+            emailType: 'student_reminder',
+            status: 'sent',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+        }, { emitRealtime: false });
+    } catch (err) {
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'reminder',
+            emailType: 'student_reminder',
+            status: 'failed',
+            subject,
+            recipients,
+            recipientName,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+            errorMessage: err.message || String(err),
+        });
+        throw err;
+    }
 }
 
 async function sendTeacherReminderEmail(booking, minsUntil) {
@@ -5948,13 +6663,47 @@ async function sendTeacherReminderEmail(booking, minsUntil) {
             ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: true })}
         </div>`;
 
-    await mailer().sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: TEACHER_EMAIL,
-        subject,
-        text: textLines.join('\n'),
-        html,
-    });
+    const bodyText = textLines.join('\n');
+    const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+
+    try {
+        await mailer().sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: TEACHER_EMAIL,
+            subject,
+            text: bodyText,
+            html,
+        });
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'reminder',
+            emailType: 'instructor_reminder',
+            status: 'sent',
+            subject,
+            recipients: [TEACHER_EMAIL],
+            recipientName: TEACHER_NAME,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+        }, { emitRealtime: false });
+    } catch (err) {
+        await recordEmailLog({
+            sentBy: 'system',
+            category: 'reminder',
+            emailType: 'instructor_reminder',
+            status: 'failed',
+            subject,
+            recipients: [TEACHER_EMAIL],
+            recipientName: TEACHER_NAME,
+            capstoneTitle,
+            studentId: booking.studentId || null,
+            bookingId: booking.id || null,
+            bodyPreview: bodyText,
+            errorMessage: err.message || String(err),
+        });
+        throw err;
+    }
 }
 
 const remindedAppointmentIds = new Set();

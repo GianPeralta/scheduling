@@ -4639,3 +4639,213 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         gap: 5px;
     }
 }
+
+/* ==========================================================================
+   Admin Email Activity & Sent Logs Tracker
+   ========================================================================== */
+.admin-section-head.admin-section-head-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 18px;
+    scroll-margin-top: 78px;
+}
+
+.modal-head-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.email-filter-bar {
+    padding: 10px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    background-color: var(--surface-subtle);
+}
+
+.email-filter-bar .profile-filter-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.pill-count {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    background-color: rgba(15, 23, 42, 0.08);
+    color: inherit;
+}
+
+.profile-pill.active .pill-count {
+    background-color: rgba(255, 255, 255, 0.24);
+    color: #ffffff;
+}
+
+.email-logs-list {
+    padding: 12px 20px 20px;
+    display: grid;
+    gap: 10px;
+}
+
+.email-log-item {
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    display: grid;
+    gap: 8px;
+    animation: rise 0.25s var(--ease) both;
+    transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.email-log-item:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-xs);
+}
+
+.email-log-item.is-failed {
+    border-color: var(--danger-border);
+    background-color: #fffdfd;
+}
+
+.email-log-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+}
+
+.email-log-time {
+    font-size: 0.78rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.email-log-main {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px 16px;
+}
+
+.email-log-info {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.email-log-subject {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.38;
+    word-break: break-word;
+}
+
+.email-log-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    font-size: 0.83rem;
+    line-height: 1.4;
+}
+
+.email-log-to {
+    font-weight: 600;
+    color: var(--text-soft);
+    word-break: break-word;
+}
+
+.email-log-group {
+    word-break: break-word;
+}
+
+.email-preview-toggle {
+    flex-shrink: 0;
+}
+
+.email-log-preview {
+    margin: 4px 0 0;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.83rem;
+    line-height: 1.52;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.email-log-more-wrap {
+    display: flex;
+    justify-content: center;
+    padding-top: 6px;
+}
+
+@media (max-width: 680px) {
+    .admin-section-head.admin-section-head-row {
+        align-items: stretch;
+    }
+    .admin-section-head.admin-section-head-row .btn {
+        width: 100%;
+        min-height: 42px;
+    }
+    .tabs.email-sender-tabs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .email-filter-bar {
+        padding: 10px 12px;
+    }
+    .email-filter-bar .profile-filter-pills {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        width: 100%;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .email-filter-bar .profile-filter-pills::-webkit-scrollbar {
+        display: none;
+    }
+    .email-filter-bar .profile-pill {
+        flex-shrink: 0;
+        min-height: 36px;
+        padding: 6px 12px;
+    }
+    .email-logs-list {
+        padding: 12px 12px 16px;
+    }
+    .email-log-item {
+        padding: 13px 14px;
+    }
+    .email-log-main {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .email-preview-toggle {
+        width: 100%;
+        min-height: 38px;
+    }
+}
+
+@media (max-width: 420px) {
+    .tabs.email-sender-tabs {
+        grid-template-columns: 1fr;
+    }
+    .modal-head-actions .link-btn {
+        font-size: 0.76rem;
+    }
+}
