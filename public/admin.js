@@ -299,21 +299,37 @@
         return item.date > state.today || (item.date === state.today && (item.endMinute ?? 1440) > state.currentMinute);
     };
 
+    function getFullDayBlockedSet() {
+        return new Set(
+            (state.blockedSchedules || [])
+                .filter((b) => b.isFullDay && isActiveBlock(b))
+                .map((b) => b.date)
+        );
+    }
+
     function hasUpcomingLetterPickupWindow() {
+        const fullBlocked = getFullDayBlockedSet();
         const fromConfig = (state.scheduleConfig?.openDates || []).some(
             (e) => e.category === 'letter_pickup'
                 && (!state.today || e.date > state.today)
+                && !fullBlocked.has(e.date)
                 && Array.isArray(e.effectiveWindows)
                 && e.effectiveWindows.length > 0
         );
-        return fromConfig || state.letterPickupSchedules.some(isActiveLetterPickup);
+        return fromConfig || state.letterPickupSchedules.some((item) => isActiveLetterPickup(item) && !fullBlocked.has(item.date));
     }
 
     function countUpcomingOpenScheduleItems() {
+        const fullBlocked = getFullDayBlockedSet();
         const openDates = state.scheduleConfig?.openDates || [];
         const uniqueDates = new Set(
             openDates
-                .filter((e) => (!state.today || e.date >= state.today) && Array.isArray(e.effectiveWindows) && e.effectiveWindows.length > 0)
+                .filter(
+                    (e) => (!state.today || e.date > state.today)
+                        && !fullBlocked.has(e.date)
+                        && Array.isArray(e.effectiveWindows)
+                        && e.effectiveWindows.length > 0
+                )
                 .map((e) => e.date)
         );
         return uniqueDates.size;
@@ -731,13 +747,14 @@
                 currentListEl.appendChild(apptBox);
             }
 
+            const hasFullBlockOnDay = dayBlocks.some((b) => b.isFullDay);
             ['consultation', 'defense', 'letter_pickup'].forEach((cat) => {
                 const meta = CATEGORY_META[cat];
                 const entry = dayOpen[cat];
-                const row = el('div', 'sched-status-row' + (entry ? ' is-open' : ''));
+                const row = el('div', 'sched-status-row' + (entry && !hasFullBlockOnDay ? ' is-open' : ''));
                 const info = el('div', 'sched-status-row-info');
                 const top = el('div', 'sched-status-row-top');
-                top.appendChild(el('span', `badge ${entry ? meta.badgeCls : 'muted-badge'}`, meta.label));
+                top.appendChild(el('span', `badge ${entry && !hasFullBlockOnDay ? meta.badgeCls : 'muted-badge'}`, meta.label));
                 if (entry) {
                     const modeTag = entry.mode === 'full_day'
                         ? 'Full Day'
@@ -751,7 +768,9 @@
                     'small',
                     '',
                     entry
-                        ? `Open · ${entry.label}${entry.note ? ` (${entry.note})` : ''}`
+                        ? (hasFullBlockOnDay
+                            ? `Paused by full-day block · ${entry.label}${entry.note ? ` (${entry.note})` : ''}`
+                            : `Open · ${entry.label}${entry.note ? ` (${entry.note})` : ''}`)
                         : 'Closed'
                 ));
                 row.appendChild(info);

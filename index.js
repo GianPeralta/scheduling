@@ -1437,7 +1437,7 @@ function getLastBookableDate(now = nowInTz()) {
     return maxDate;
 }
 
-function getEarliestOpenDatesByCategory(now = nowInTz()) {
+function getEarliestOpenDatesByCategory(now = nowInTz(), fullDayBlockedDates = null) {
     const first = getFirstBookableDate(now);
     const cfg = getActiveScheduleConfig();
     const earliest = {
@@ -1447,6 +1447,7 @@ function getEarliestOpenDatesByCategory(now = nowInTz()) {
     };
     for (const entry of cfg.openDates) {
         if (entry.date < first) continue;
+        if (fullDayBlockedDates && fullDayBlockedDates.has(entry.date)) continue;
         if (!resolveOpenEntryWindows(entry, cfg).length) continue;
         if (!earliest[entry.category] || entry.date < earliest[entry.category]) {
             earliest[entry.category] = entry.date;
@@ -1454,6 +1455,7 @@ function getEarliestOpenDatesByCategory(now = nowInTz()) {
     }
     for (const [date, rows] of cachedLegacyPickupByDate.entries()) {
         if (date < first) continue;
+        if (fullDayBlockedDates && fullDayBlockedDates.has(date)) continue;
         if (!normalizePickupWindows(rows).length) continue;
         if (!earliest.letter_pickup || date < earliest.letter_pickup) {
             earliest.letter_pickup = date;
@@ -1831,12 +1833,17 @@ async function loadLatestLetterPickupDate() {
 /* ------------------------------------------------------------------ */
 app.get('/api/config', async (req, res) => {
     const now = nowInTz();
-    const [cfg, latestLetterPickupDate] = await Promise.all([
+    const firstBookable = getFirstBookableDate(now);
+    const [cfg, latestLetterPickupDate, futureBlocks] = await Promise.all([
         loadScheduleConfig(),
         loadLatestLetterPickupDate(),
+        fetchBlockedByDateRange(firstBookable, '9999-12-31').catch(() => []),
     ]);
+    const fullDayBlockedSet = new Set(
+        (futureBlocks || []).filter((b) => b.is_full_day).map((b) => b.blocked_date)
+    );
     const serializedCfg = serializeScheduleConfig(cfg);
-    const earliestOpenDates = getEarliestOpenDatesByCategory(now);
+    const earliestOpenDates = getEarliestOpenDatesByCategory(now, fullDayBlockedSet);
     const maxOpenPickup = serializedCfg.openDates
         .filter((e) => e.category === 'letter_pickup' && e.effectiveWindows.length > 0)
         .map((e) => e.date)
@@ -6172,7 +6179,9 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-    console.error(err);
+    if (!err.status || err.status >= 500) {
+        console.error(err);
+    }
     // Missing table / column -> the SQL in supabase/schema.sql hasn't been run yet
     if (['42P01', 'PGRST205', '42703', 'PGRST204'].includes(err.code)) {
         return res.status(500).json({
