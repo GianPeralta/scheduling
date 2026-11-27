@@ -61,12 +61,15 @@ html {
     scroll-behavior: smooth;
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    max-width: 100%;
+    overflow-x: clip;
 }
 
 body {
     margin: 0;
     min-height: 100vh;
     min-height: 100dvh;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -75,6 +78,7 @@ body {
     -webkit-font-smoothing: antialiased;
     line-height: 1.5;
     overflow-x: hidden;
+    overflow-x: clip;
 }
 body.modal-open {
     overflow: hidden;
@@ -2503,7 +2507,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .students-grid {
     padding: 18px 20px 22px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 14px;
 }
 .students-grid:has(.empty-state) {
@@ -2760,11 +2764,29 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         max-width: 620px;
     }
 
-    /* Prevent iOS/iPadOS auto-zoom on search & form inputs */
+    /* Prevent iOS/iPadOS auto-zoom on all form, search, select, and time inputs */
     .search input,
     .field input,
-    .field textarea {
+    .field textarea,
+    .field select,
+    .checklist-add-row input,
+    .sched-custom-win-row input[type="time"],
+    .sched-weekday-add-row input[type="time"] {
         font-size: 1rem;
+    }
+
+    .member-chip.is-interactive {
+        min-height: 36px;
+        padding: 5px 12px;
+        font-size: 0.82rem;
+    }
+    .pw-toggle {
+        min-height: 34px;
+        padding: 6px 11px;
+    }
+    .checklist-remove-btn {
+        width: 36px;
+        height: 36px;
     }
 
     .stats { gap: 12px; }
@@ -2885,11 +2907,13 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         gap: 6px;
     }
     #myBookingsBtn,
-    #myAppointmentsLink {
+    #myAppointmentsLink,
+    a.topbar-link[href*="editProfile"] {
         padding: 7px 10px;
     }
     #myBookingsBtn span:not(.nav-count):not(.nav-alert-dot),
-    #myAppointmentsLink span:not(.nav-count):not(.nav-alert-dot) {
+    #myAppointmentsLink span:not(.nav-count):not(.nav-alert-dot),
+    a.topbar-link[href*="editProfile"] span {
         display: none;
     }
     .account-box {
@@ -3048,16 +3072,33 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 
     /* Bottom-sheet Modals on Mobile */
     .modal-backdrop {
+        display: flex;
         align-items: flex-end;
-        padding: 12px 10px max(12px, env(safe-area-inset-bottom, 12px));
+        justify-content: center;
+        padding: 10px 8px max(10px, env(safe-area-inset-bottom, 10px));
     }
     .modal-card,
     .modal-card.modal-wide,
-    .modal-card.modal-profile {
+    .modal-card.modal-profile,
+    .modal-card.modal-reschedule {
         max-width: 100%;
-        max-height: calc(100dvh - 24px);
-        padding: 20px 18px;
+        max-height: calc(100dvh - 20px);
+        padding: 18px 16px max(18px, env(safe-area-inset-bottom, 18px));
         border-radius: 18px;
+        -webkit-overflow-scrolling: touch;
+    }
+    .modal-card .modal-head {
+        position: sticky;
+        top: -18px;
+        z-index: 4;
+        margin: -18px -16px 14px;
+        padding: 14px 16px 12px;
+        background-color: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--border);
+    }
+    .modal-card.modal-profile .modal-head {
+        margin-bottom: 2px;
     }
     .modal-actions.modal-actions-row {
         flex-direction: column-reverse;
@@ -3070,8 +3111,19 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         align-items: flex-start;
     }
     .reschedule-footer {
+        position: sticky;
+        bottom: -18px;
+        z-index: 4;
+        margin: 16px -16px -18px;
+        padding: 12px 16px max(14px, env(safe-area-inset-bottom, 14px));
+        background-color: rgba(255, 255, 255, 0.97);
+        backdrop-filter: blur(8px);
         flex-direction: column;
         align-items: stretch;
+        gap: 10px;
+    }
+    .reschedule-selection-preview {
+        flex: none;
     }
     .reschedule-footer .modal-actions.modal-actions-row {
         width: 100%;
@@ -3096,7 +3148,18 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         grid-template-columns: 1fr 1fr;
         gap: 8px;
     }
-    .dash-actions .btn { min-height: 42px; width: 100%; }
+    .dash-actions .btn {
+        min-height: 44px;
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 0.84rem;
+        gap: 7px;
+    }
+    .dash-actions .live-status-pill {
+        min-height: 44px;
+        width: 100%;
+        justify-content: center;
+    }
 
     .stats {
         grid-template-columns: repeat(3, 1fr);
@@ -3128,17 +3191,30 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         gap: 10px;
     }
     .tabs {
-        display: flex;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
         gap: 4px;
     }
     .tab {
-        flex: 1 1 calc(50% - 4px);
-        min-height: 40px;
-        padding: 7px 8px;
-        font-size: 0.82rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 5px;
+        min-height: 42px;
+        padding: 8px 8px;
+        font-size: 0.81rem;
+        line-height: 1.2;
+        text-align: center;
     }
-    .search input { min-height: 42px; }
+    .tab .count {
+        margin-left: 0;
+    }
+    .search {
+        min-width: 0;
+    }
+    .search input { min-height: 44px; }
 
     .bookings { padding: 6px 12px 16px; }
     .admin-section-head { margin: 26px 0 12px; }
@@ -3208,6 +3284,16 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     }
     .topbar-actions a.topbar-link[href="/admin.html"] {
         padding: 7px 10px;
+    }
+    .student-card-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .student-card-footer .btn {
+        width: 100%;
+    }
+    .dash-actions {
+        grid-template-columns: 1fr;
     }
     .weekdays, .days { gap: 3px; }
     .day { font-size: 0.85rem; min-height: 38px; }
@@ -3716,6 +3802,18 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     font-size: 0.82rem;
     color: var(--text-soft);
 }
+.sched-hint-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+}
+.sched-jump-inspector-btn {
+    display: none;
+    padding: 5px 10px;
+    font-size: 0.76rem;
+    min-height: 30px;
+}
 .sched-calendar-head {
     margin-bottom: 4px;
     margin-top: 4px;
@@ -3867,6 +3965,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .sched-inspector-panel {
     display: grid;
     gap: 16px;
+    scroll-margin-top: 76px;
 }
 
 .sched-status-card,
@@ -4248,15 +4347,46 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     text-decoration: underline;
 }
 
-@media (max-width: 920px) {
+/* Schedule Manager Responsive: Tablets, Portrait Tablets & Mobile */
+@media (max-width: 1040px) {
     .sched-workspace {
         grid-template-columns: 1fr;
+        gap: 18px;
+    }
+    .sched-jump-inspector-btn {
+        display: inline-flex;
     }
 }
+
+@media (min-width: 681px) and (max-width: 1040px) {
+    .sched-cat-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .sched-cat-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .sched-regular-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 680px) {
     .sched-manager {
         padding: 14px 12px 18px;
         gap: 18px;
+    }
+    .sched-intro-banner {
+        padding: 12px 14px;
+        gap: 10px;
+    }
+    .sched-intro-text {
+        flex: 1 1 100%;
+    }
+    .sched-intro-banner .btn {
+        width: 100%;
+        min-height: 40px;
     }
     .sched-calendar-panel,
     .sched-status-card,
@@ -4265,19 +4395,151 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     .sched-overview-section {
         padding: 14px;
     }
+    .sched-cal-top {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    .sched-select-modes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+    }
+    .sched-mode-pill {
+        min-height: 38px;
+        padding: 6px 6px;
+        font-size: 0.78rem;
+        text-align: center;
+    }
+    .sched-skip-sun {
+        align-self: flex-start;
+        min-height: 34px;
+    }
+    .sched-today-btn {
+        min-height: 40px;
+        height: 40px;
+        padding: 6px 12px;
+    }
     .sched-days {
         gap: 4px;
     }
     .sched-day {
-        min-height: 58px;
+        min-height: 56px;
+        min-width: 0;
         padding: 4px 3px;
+        border-radius: 8px;
+    }
+    .sched-day-num {
+        font-size: 0.8rem;
+    }
+    .sched-day-appts {
+        font-size: 0.6rem;
+        padding: 1px 4px;
     }
     .sched-day-tag {
-        font-size: 0.56rem;
-        padding: 1px 2px;
+        font-size: 0.58rem;
+        padding: 1px 3px;
+        text-align: center;
+    }
+    /* Hide verbose hour ranges inside narrow mobile calendar cells; full hours appear in Selected Date card */
+    .sched-tag-hours {
+        display: none;
+    }
+    .sched-status-row {
+        flex-wrap: wrap;
+    }
+    .sched-status-row .btn {
+        min-height: 36px;
+    }
+    .sched-custom-win-row input[type="time"] {
+        min-height: 44px;
+        padding: 9px 8px;
+    }
+    .sched-regular-controls {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .sched-regular-controls > .btn {
+        width: 100%;
+        min-height: 42px;
     }
     .sched-reg-tabs {
         min-width: 0;
         width: 100%;
+    }
+    .sched-regular-grid {
+        grid-template-columns: 1fr;
+    }
+    .sched-weekday-add-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 8px;
+    }
+    .sched-weekday-add-row input[type="time"] {
+        min-width: 0;
+        width: 100%;
+        min-height: 42px;
+        padding: 8px 8px;
+    }
+    .sched-weekday-add-row .btn {
+        grid-column: 1 / -1;
+        width: 100%;
+        min-height: 40px;
+    }
+    #schedOverviewFilters {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        width: 100%;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    #schedOverviewFilters::-webkit-scrollbar {
+        display: none;
+    }
+    #schedOverviewFilters .profile-pill {
+        flex-shrink: 0;
+        min-height: 36px;
+        padding: 6px 12px;
+    }
+    .sched-overview-list {
+        max-height: none;
+    }
+    .sched-overview-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .sched-overview-item > .btn {
+        width: 100%;
+        min-height: 40px;
+    }
+}
+
+@media (max-width: 420px) {
+    .sched-days {
+        gap: 3px;
+    }
+    .sched-day {
+        min-height: 50px;
+        padding: 4px 2px;
+    }
+    .sched-day-num {
+        font-size: 0.76rem;
+    }
+    .sched-day-tag {
+        font-size: 0.52rem;
+        padding: 1px 2px;
+        letter-spacing: -0.01em;
+    }
+    .sched-mode-pill {
+        font-size: 0.73rem;
+        padding: 6px 4px;
+    }
+    .sched-custom-win-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+        gap: 5px;
     }
 }

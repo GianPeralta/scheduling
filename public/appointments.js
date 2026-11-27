@@ -879,7 +879,7 @@
                             : `${info.open} slot${info.open === 1 ? '' : 's'} open`;
                 const currentSuffix = isCurrentBookingDay ? ' · Current date' : '';
                 btn.title = (info.hasBlocks && info.blockReason ? `${openTitle} (${info.blockReason})` : openTitle) + currentSuffix;
-                btn.addEventListener('click', () => selectRescheduleDate(ds, true));
+                btn.addEventListener('click', () => selectRescheduleDate(ds, true, true));
             }
 
             if (ds === state.reschedSelectedDate) btn.classList.add('selected');
@@ -917,7 +917,7 @@
         loadRescheduleMonth();
     }
 
-    async function selectRescheduleDate(ds, userInitiated = true) {
+    async function selectRescheduleDate(ds, userInitiated = true, scrollToSlots = false) {
         const b = state.rescheduleTarget;
         if (!b || !ds) return;
         if (!userInitiated && state.rescheduleSubmitting) return;
@@ -941,6 +941,11 @@
         setText('#reschedSlotsTitle', formatLongDate(ds));
         if (userInitiated) {
             setText('#reschedSlotsSubtitle', 'Loading available times…');
+            if (scrollToSlots && window.innerWidth <= 820) {
+                setTimeout(() => {
+                    $('#rescheduleModal .slots')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, 40);
+            }
 
             const tabsEl = $('#reschedWindowTabs');
             if (tabsEl) {

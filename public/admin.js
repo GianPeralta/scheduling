@@ -525,24 +525,29 @@
 
         const hintTextEl = $('#schedSelectionHintText');
         const clearBtn = $('#schedClearSelectionBtn');
+        const jumpBtn = $('#schedJumpInspectorBtn');
         const selectedCount = state.schedSelectedDates.size;
+        const isTouchOrCompact = window.innerWidth <= 1040 || window.matchMedia('(hover: none)').matches;
         if (hintTextEl) {
             if (state.schedSelectMode === 'range' && state.schedRangeAnchor) {
-                hintTextEl.textContent = `Start date: ${shortDate(state.schedRangeAnchor)} — now click an end date on the calendar.`;
+                hintTextEl.textContent = `Start date: ${shortDate(state.schedRangeAnchor)} — now tap an end date.`;
             } else if (selectedCount > 1) {
                 hintTextEl.textContent = `${selectedCount} dates selected on calendar.`;
             } else if (selectedCount === 1) {
                 const only = getSortedSelectedDates()[0];
-                hintTextEl.textContent = `Selected: ${longDate(only)} (Shift+click another date to select a range).`;
+                hintTextEl.textContent = isTouchOrCompact
+                    ? `Selected: ${longDate(only)}`
+                    : `Selected: ${longDate(only)} (Shift+click another date to select a range).`;
             } else if (state.schedSelectMode === 'multi') {
-                hintTextEl.textContent = 'Click multiple dates on the calendar to toggle them.';
+                hintTextEl.textContent = 'Tap multiple dates on the calendar to toggle them.';
             } else if (state.schedSelectMode === 'range') {
-                hintTextEl.textContent = 'Click a start date, then click an end date on the calendar.';
+                hintTextEl.textContent = 'Tap a start date, then tap an end date on the calendar.';
             } else {
-                hintTextEl.textContent = 'Click any date on the calendar to open or block it.';
+                hintTextEl.textContent = 'Tap any date on the calendar to open or block it.';
             }
         }
         clearBtn?.classList.toggle('hidden', selectedCount <= 1 && !state.schedRangeAnchor);
+        jumpBtn?.classList.toggle('hidden', selectedCount === 0 || Boolean(state.schedRangeAnchor));
 
         const container = $('#schedDays');
         if (!container) return;
@@ -605,7 +610,12 @@
                             : firstWin
                                 ? `${compactTime(firstWin.startMinute)}–${compactTime(firstWin.endMinute)}`
                                 : '';
-                    tags.appendChild(el('span', `sched-day-tag ${meta.badgeCls}`, `${meta.shortTag}${shortHours ? ` · ${shortHours}` : ''}`));
+                    const tagEl = el('span', `sched-day-tag ${meta.badgeCls}`);
+                    tagEl.appendChild(el('span', 'sched-tag-name', meta.shortTag));
+                    if (shortHours) {
+                        tagEl.appendChild(el('span', 'sched-tag-hours', ` · ${shortHours}`));
+                    }
+                    tags.appendChild(tagEl);
                     tooltipLines.push(`${meta.label}: ${entry.label}`);
                 });
                 if (dayBlocks.length > 0) {
@@ -2792,6 +2802,9 @@
         state.schedRangeAnchor = null;
         state.schedSelectedDates = new Set();
         renderScheduleManager();
+    });
+    $('#schedJumpInspectorBtn')?.addEventListener('click', () => {
+        $('#schedInspectorPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     $('#schedPrevMonth')?.addEventListener('click', () => changeSchedMonth(-1));
     $('#schedNextMonth')?.addEventListener('click', () => changeSchedMonth(1));
