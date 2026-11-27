@@ -272,6 +272,13 @@
                                     </div>
 
                                     <div class="sched-custom-windows hidden" id="schedCustomWindowsWrap">
+                                        <div class="quick-reason-chips" id="schedCustomPresets">
+                                            <button type="button" class="reason-chip sched-open-preset" data-start="14:10" data-end="15:30">2:10–3:30 PM (Tue/Thu Consult)</button>
+                                            <button type="button" class="reason-chip sched-open-preset" data-start="12:50" data-end="14:10">12:50–2:10 PM (Wed Consult)</button>
+                                            <button type="button" class="reason-chip sched-open-preset" data-start="10:00" data-end="17:00">10:00 AM–5:00 PM</button>
+                                            <button type="button" class="reason-chip sched-open-preset" data-start="08:50" data-end="12:50">8:50 AM–12:50 PM</button>
+                                            <button type="button" class="reason-chip sched-open-preset" data-start="14:10" data-end="18:10">2:10–6:10 PM</button>
+                                        </div>
                                         <div class="sched-custom-rows" id="schedCustomWindowRows"></div>
                                         <button type="button" class="add-member sched-add-win-btn" id="schedAddCustomWinBtn">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -362,18 +369,24 @@
                     <div class="sched-regular-section" id="schedRegularHoursSection">
                         <div class="sched-regular-head">
                             <div>
-                                <h3>My Regular Weekly Hours</h3>
-                                <p class="muted small">Set your default weekly hours per day of the week. These are used whenever you open dates with <strong>"My Consultation Hours Only"</strong> or <strong>"My Regular Defense Hours"</strong>.</p>
+                                <div class="sched-regular-title-row">
+                                    <h3>My Regular Weekly Hours</h3>
+                                    <span class="badge teal">Preset from November</span>
+                                </div>
+                                <p class="muted small" id="schedRegularSummaryText">Preset with your November schedule (<strong>Tue 2:10–3:30 PM</strong>, <strong>Wed 12:50–2:10 PM</strong>, <strong>Thu 2:10–3:30 PM</strong> for Consultations; <strong>Mon–Sat</strong> for Defenses). Edit any day below or restore the preset anytime.</p>
                             </div>
-                            <div class="segmented sched-reg-tabs" role="tablist" aria-label="Regular hours category">
-                                <label>
-                                    <input type="radio" name="schedRegType" value="consultation" checked />
-                                    <span>Consultation Hours</span>
-                                </label>
-                                <label>
-                                    <input type="radio" name="schedRegType" value="defense" />
-                                    <span>Defense Hours</span>
-                                </label>
+                            <div class="sched-regular-controls">
+                                <button type="button" class="btn btn-ghost btn-sm" id="schedResetPresetBtn">Restore November Preset</button>
+                                <div class="segmented sched-reg-tabs" role="tablist" aria-label="Regular hours category">
+                                    <label>
+                                        <input type="radio" name="schedRegType" value="consultation" checked />
+                                        <span>Consultation Hours</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="schedRegType" value="defense" />
+                                        <span>Defense Hours</span>
+                                    </label>
+                                </div>
                             </div>
                         </div>
                         <div class="sched-regular-grid" id="schedRegularGrid"></div>

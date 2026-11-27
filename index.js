@@ -920,6 +920,7 @@ function nowInTz() {
 }
 
 /* ---------- Dynamic Schedule Configuration (Consultations, Defenses, Letter Pickups) ---------- */
+const SCHEDULE_CONFIG_VERSION = 2;
 const SCHEDULE_CATEGORIES = ['consultation', 'defense', 'letter_pickup'];
 const SCHEDULE_MODES = ['full_day', 'regular', 'custom'];
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -971,10 +972,46 @@ function normalizeHoursByDayMap(rawMap, fallbackTable, minDuration = 5) {
     return out;
 }
 
+function buildNovemberSeededOpenDates(consultationHoursByDay = WINDOWS_BY_DAY, defenseHoursByDay = DEFENSE_WINDOWS_BY_DAY) {
+    const seeded = [];
+    // Preset November 2026 schedule:
+    // - Consultations on Tuesdays, Wednesdays, and Thursdays using regular Consultation Hours
+    // - Defenses on Mondays–Saturdays using regular Defense Hours
+    for (let day = 1; day <= 30; day += 1) {
+        const date = `2026-11-${String(day).padStart(2, '0')}`;
+        const dow = new Date(Date.UTC(2026, 10, day)).getUTCDay();
+        const consultWins = Array.isArray(consultationHoursByDay[dow]) ? consultationHoursByDay[dow] : [];
+        if (consultWins.length > 0) {
+            seeded.push({
+                id: `seed-consultation-${date}`,
+                date,
+                category: 'consultation',
+                mode: 'regular',
+                windows: consultWins.map(([s, e]) => [s, e]),
+                note: null,
+                updatedAt: null,
+            });
+        }
+        const defWins = Array.isArray(defenseHoursByDay[dow]) ? defenseHoursByDay[dow] : [];
+        if (defWins.length > 0) {
+            seeded.push({
+                id: `seed-defense-${date}`,
+                date,
+                category: 'defense',
+                mode: 'regular',
+                windows: defWins.map(([s, e]) => [s, e]),
+                note: null,
+                updatedAt: null,
+            });
+        }
+    }
+    return seeded;
+}
+
 function buildDefaultScheduleConfig() {
     const consultationHoursByDay = cloneHoursTable(WINDOWS_BY_DAY);
     const defenseHoursByDay = cloneHoursTable(DEFENSE_WINDOWS_BY_DAY);
-    const openDates = [];
+    const openDates = buildNovemberSeededOpenDates(consultationHoursByDay, defenseHoursByDay);
     for (const date of INITIAL_SEEDED_OPEN_DATES) {
         openDates.push({
             id: `seed-consultation-${date}`,
@@ -996,7 +1033,7 @@ function buildDefaultScheduleConfig() {
         });
     }
     return indexScheduleConfig({
-        version: 1,
+        version: SCHEDULE_CONFIG_VERSION,
         consultationHoursByDay,
         defenseHoursByDay,
         openDates,
@@ -1014,10 +1051,31 @@ function indexScheduleConfig(cfg) {
 
 function normalizeScheduleConfigObject(raw) {
     if (!raw || typeof raw !== 'object') return buildDefaultScheduleConfig();
+    const rawVersion = Number(raw.version) || 1;
     const consultationHoursByDay = normalizeHoursByDayMap(raw.consultationHoursByDay, WINDOWS_BY_DAY, 5);
     const defenseHoursByDay = normalizeHoursByDayMap(raw.defenseHoursByDay, DEFENSE_WINDOWS_BY_DAY, 30);
 
+    // Ensure November preset weekly hours are populated when upgrading from v1
+    if (rawVersion < SCHEDULE_CONFIG_VERSION) {
+        for (const dow of [2, 3, 4]) {
+            if (!consultationHoursByDay[dow] || consultationHoursByDay[dow].length === 0) {
+                consultationHoursByDay[dow] = WINDOWS_BY_DAY[dow].map(([s, e]) => [s, e]);
+            }
+        }
+        for (const dow of [1, 2, 3, 4, 5, 6]) {
+            if (!defenseHoursByDay[dow] || defenseHoursByDay[dow].length === 0) {
+                defenseHoursByDay[dow] = DEFENSE_WINDOWS_BY_DAY[dow].map(([s, e]) => [s, e]);
+            }
+        }
+    }
+
     const dedup = new Map();
+    if (rawVersion < SCHEDULE_CONFIG_VERSION) {
+        for (const seeded of buildNovemberSeededOpenDates(consultationHoursByDay, defenseHoursByDay)) {
+            dedup.set(`${seeded.date}|${seeded.category}`, seeded);
+        }
+    }
+
     if (Array.isArray(raw.openDates)) {
         for (const item of raw.openDates) {
             if (!item || typeof item !== 'object') continue;
@@ -1049,7 +1107,7 @@ function normalizeScheduleConfigObject(raw) {
     );
 
     return indexScheduleConfig({
-        version: 1,
+        version: SCHEDULE_CONFIG_VERSION,
         consultationHoursByDay,
         defenseHoursByDay,
         openDates,
@@ -1131,9 +1189,12 @@ async function loadScheduleConfig({ force = false } = {}) {
 }
 
 async function saveScheduleConfig(nextConfig) {
-    const normalized = normalizeScheduleConfigObject(nextConfig);
+    const normalized = normalizeScheduleConfigObject({
+        ...nextConfig,
+        version: SCHEDULE_CONFIG_VERSION,
+    });
     const payloadStr = JSON.stringify({
-        version: 1,
+        version: SCHEDULE_CONFIG_VERSION,
         consultationHoursByDay: normalized.consultationHoursByDay,
         defenseHoursByDay: normalized.defenseHoursByDay,
         openDates: normalized.openDates,
@@ -1228,11 +1289,22 @@ function serializeScheduleConfig(cfg = getActiveScheduleConfig(), legacyPickupBy
         );
     }
 
+    const presetConsultationHoursByDay = {};
+    const presetDefenseHoursByDay = {};
+    for (let d = 0; d <= 6; d += 1) {
+        presetConsultationHoursByDay[d] = serializeWindowsWithLabels(WINDOWS_BY_DAY[d] || []);
+        presetDefenseHoursByDay[d] = serializeWindowsWithLabels(DEFENSE_WINDOWS_BY_DAY[d] || []);
+    }
+
     return {
         fullDayWindow: {
             startMinute: FULL_DAY_START_MINUTE,
             endMinute: FULL_DAY_END_MINUTE,
             label: `${formatMinute(FULL_DAY_START_MINUTE)} – ${formatMinute(FULL_DAY_END_MINUTE)}`,
+        },
+        presets: {
+            consultationHoursByDay: presetConsultationHoursByDay,
+            defenseHoursByDay: presetDefenseHoursByDay,
         },
         consultationHoursByDay,
         defenseHoursByDay,
@@ -4049,21 +4121,19 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
             const sourceTable = cat === 'defense'
                 ? currentCfg.defenseHoursByDay
                 : currentCfg.consultationHoursByDay;
-            const missingWeekdays = new Set();
-            for (const d of dates) {
+            const matchingDates = dates.filter((d) => {
                 const dow = parseDate(d).getUTCDay();
-                if (!Array.isArray(sourceTable[dow]) || sourceTable[dow].length === 0) {
-                    missingWeekdays.add(WEEKDAY_NAMES[dow]);
-                }
-            }
-            if (missingWeekdays.size > 0) {
-                const daysText = [...missingWeekdays].join(', ');
+                return Array.isArray(sourceTable[dow]) && sourceTable[dow].length > 0;
+            });
+            if (matchingDates.length === 0) {
+                const missingWeekdays = [...new Set(dates.map((d) => WEEKDAY_NAMES[parseDate(d).getUTCDay()]))];
+                const daysText = missingWeekdays.join(', ');
                 const labelText = cat === 'defense' ? 'Defense Hours' : 'Consultation Hours';
                 return res.status(400).json({
                     code: 'NO_REGULAR_HOURS_FOR_DAY',
-                    missingWeekdays: [...missingWeekdays],
+                    missingWeekdays,
                     category: cat,
-                    error: `${daysText} ${missingWeekdays.size === 1 ? 'has' : 'have'} no weekly ${labelText} set yet. Add ${daysText} hours in "My Regular Hours" below, or choose "10:00 AM – 5:00 PM" / "Custom Time".`,
+                    error: `${daysText} ${missingWeekdays.length === 1 ? 'has' : 'have'} no weekly ${labelText} set yet. Pick "10:00 AM – 5:00 PM" or "Custom Time Window(s)" above, or add ${daysText} hours in "My Regular Weekly Hours" below.`,
                 });
             }
         }
@@ -4076,6 +4146,8 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
 
     const nowIso = new Date().toISOString();
     let openedCount = 0;
+    const openedDatesSet = new Set();
+    const skippedDatesSet = new Set();
     const pickupDatesTouched = [];
 
     for (const d of dates) {
@@ -4089,6 +4161,10 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
             } else if (mode === 'regular') {
                 const tbl = cat === 'defense' ? currentCfg.defenseHoursByDay : currentCfg.consultationHoursByDay;
                 storedWindows = (tbl[dow] || []).map(([s, e]) => [s, e]);
+                if (storedWindows.length === 0) {
+                    skippedDatesSet.add(d);
+                    continue;
+                }
             } else {
                 storedWindows = customWindows.map(([s, e]) => [s, e]);
             }
@@ -4103,9 +4179,13 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
                 updatedAt: nowIso,
             });
             openedCount += 1;
+            openedDatesSet.add(d);
             if (cat === 'letter_pickup') pickupDatesTouched.push(d);
         }
     }
+
+    const effectiveOpenedDates = [...openedDatesSet];
+    const skippedDates = [...skippedDatesSet].filter((d) => !openedDatesSet.has(d));
 
     // Remove superseded legacy letter_pickup_schedules rows for dates now managed in schedule_config_v1
     if (pickupDatesTouched.length) {
@@ -4118,12 +4198,12 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
     }
 
     let unblockedCount = 0;
-    if (unblockDates) {
+    if (unblockDates && effectiveOpenedDates.length) {
         try {
             const { data: removedBlocks } = await db()
                 .from(BLOCKED_TABLE)
                 .delete()
-                .in('blocked_date', dates)
+                .in('blocked_date', effectiveOpenedDates)
                 .eq('is_full_day', true)
                 .select('id');
             unblockedCount = Array.isArray(removedBlocks) ? removedBlocks.length : 0;
@@ -4133,7 +4213,7 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
     }
 
     const saved = await saveScheduleConfig({
-        version: 1,
+        version: SCHEDULE_CONFIG_VERSION,
         consultationHoursByDay: currentCfg.consultationHoursByDay,
         defenseHoursByDay: currentCfg.defenseHoursByDay,
         openDates: [...nextOpenMap.values()],
@@ -4142,7 +4222,7 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
     const rtPromise = notifyRealtimeListeners({
         type: 'schedule_config_updated',
         action: 'open',
-        dates,
+        dates: effectiveOpenedDates,
         categories,
     });
     if (process.env.VERCEL) await rtPromise;
@@ -4150,6 +4230,8 @@ app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
     res.json({
         ok: true,
         openedCount,
+        openedDates: effectiveOpenedDates,
+        skippedDates,
         unblockedCount,
         scheduleConfig: serializeScheduleConfig(saved, cachedLegacyPickupByDate),
     });
@@ -4210,7 +4292,7 @@ app.post('/api/admin/schedule/close', requireAdmin, async (req, res) => {
     }
 
     const saved = await saveScheduleConfig({
-        version: 1,
+        version: SCHEDULE_CONFIG_VERSION,
         consultationHoursByDay: currentCfg.consultationHoursByDay,
         defenseHoursByDay: currentCfg.defenseHoursByDay,
         openDates: remaining,
@@ -4235,12 +4317,24 @@ app.put('/api/admin/schedule/regular-hours', requireAdmin, async (req, res) => {
     const body = req.body || {};
     const currentCfg = await loadScheduleConfig({ force: true });
 
-    const nextConsultationHours = body.consultationHoursByDay && typeof body.consultationHoursByDay === 'object'
-        ? normalizeHoursByDayMap(body.consultationHoursByDay, {}, 5)
-        : currentCfg.consultationHoursByDay;
-    const nextDefenseHours = body.defenseHoursByDay && typeof body.defenseHoursByDay === 'object'
-        ? normalizeHoursByDayMap(body.defenseHoursByDay, {}, 30)
-        : currentCfg.defenseHoursByDay;
+    const resetPreset = typeof body.resetPreset === 'string' ? body.resetPreset.trim() : '';
+    let nextConsultationHours;
+    if (resetPreset === 'consultation' || resetPreset === 'all') {
+        nextConsultationHours = cloneHoursTable(WINDOWS_BY_DAY);
+    } else if (body.consultationHoursByDay && typeof body.consultationHoursByDay === 'object') {
+        nextConsultationHours = normalizeHoursByDayMap(body.consultationHoursByDay, {}, 5);
+    } else {
+        nextConsultationHours = currentCfg.consultationHoursByDay;
+    }
+
+    let nextDefenseHours;
+    if (resetPreset === 'defense' || resetPreset === 'all') {
+        nextDefenseHours = cloneHoursTable(DEFENSE_WINDOWS_BY_DAY);
+    } else if (body.defenseHoursByDay && typeof body.defenseHoursByDay === 'object') {
+        nextDefenseHours = normalizeHoursByDayMap(body.defenseHoursByDay, {}, 30);
+    } else {
+        nextDefenseHours = currentCfg.defenseHoursByDay;
+    }
 
     // Update stored snapshots on any existing 'regular' entries that now have updated hours
     const updatedOpenDates = currentCfg.openDates.map((entry) => {
@@ -4252,7 +4346,7 @@ app.put('/api/admin/schedule/regular-hours', requireAdmin, async (req, res) => {
     });
 
     const saved = await saveScheduleConfig({
-        version: 1,
+        version: SCHEDULE_CONFIG_VERSION,
         consultationHoursByDay: nextConsultationHours,
         defenseHoursByDay: nextDefenseHours,
         openDates: updatedOpenDates,

@@ -4113,6 +4113,18 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     margin-top: 3px;
     max-width: 580px;
 }
+.sched-regular-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.sched-regular-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+}
 .sched-reg-tabs {
     min-width: 290px;
 }

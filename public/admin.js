@@ -833,28 +833,57 @@
             const hoursTable = isDefense
                 ? (state.scheduleConfig?.defenseHoursByDay || {})
                 : (state.scheduleConfig?.consultationHoursByDay || {});
-            const dows = selected.length
-                ? [...new Set(selected.map((d) => utcDate(d).getUTCDay()))].sort((a, b) => a - b)
-                : [1, 2, 3, 4, 5, 6];
-            const missingNames = [];
-            const parts = [];
-            dows.forEach((dow) => {
+            const allConfiguredParts = [];
+            [1, 2, 3, 4, 5, 6].forEach((dow) => {
                 const wins = hoursTable[dow] || hoursTable[String(dow)] || [];
                 if (wins.length) {
-                    parts.push(`${WEEKDAY_SHORT[dow]}: ${wins.map((w) => w.label).join(', ')}`);
-                } else if (selected.length) {
-                    missingNames.push(WEEKDAY_FULL[dow]);
+                    allConfiguredParts.push(`${WEEKDAY_SHORT[dow]}: ${wins.map((w) => w.label).join(', ')}`);
                 }
             });
-            if (missingNames.length > 0) {
-                regPreviewEl.textContent = `Note: ${missingNames.join(', ')} ${missingNames.length === 1 ? 'has' : 'have'} no regular ${isDefense ? 'Defense' : 'Consultation'} Hours set yet — edit below or pick 10:00 AM – 5:00 PM / Custom.`;
-                regPreviewEl.classList.add('is-warning');
-            } else if (parts.length > 0) {
-                regPreviewEl.textContent = parts.join(' · ');
-                regPreviewEl.classList.remove('is-warning');
+            const allSummary = allConfiguredParts.join(' · ');
+
+            if (!selected.length) {
+                if (allConfiguredParts.length > 0) {
+                    regPreviewEl.textContent = `Preset: ${allSummary}`;
+                    regPreviewEl.classList.remove('is-warning');
+                } else {
+                    regPreviewEl.textContent = 'No regular weekly hours set yet — configure them below.';
+                    regPreviewEl.classList.add('is-warning');
+                }
             } else {
-                regPreviewEl.textContent = 'No regular weekly hours set yet — configure them below.';
-                regPreviewEl.classList.add('is-warning');
+                const matchingDates = [];
+                const missingNamesSet = new Set();
+                const selectedParts = [];
+                const seenDows = new Set();
+
+                selected.forEach((d) => {
+                    const dow = utcDate(d).getUTCDay();
+                    const wins = hoursTable[dow] || hoursTable[String(dow)] || [];
+                    if (wins.length) {
+                        matchingDates.push(d);
+                        if (!seenDows.has(dow)) {
+                            seenDows.add(dow);
+                            selectedParts.push(`${WEEKDAY_SHORT[dow]}: ${wins.map((w) => w.label).join(', ')}`);
+                        }
+                    } else {
+                        missingNamesSet.add(WEEKDAY_FULL[dow]);
+                    }
+                });
+
+                const missingNames = [...missingNamesSet];
+                if (matchingDates.length > 0 && missingNames.length === 0) {
+                    regPreviewEl.textContent = selectedParts.join(' · ');
+                    regPreviewEl.classList.remove('is-warning');
+                } else if (matchingDates.length > 0 && missingNames.length > 0) {
+                    regPreviewEl.textContent = `Opens ${matchingDates.length} matching date${matchingDates.length === 1 ? '' : 's'} (${selectedParts.join(' · ')}) and skips ${missingNames.join(', ')}.`;
+                    regPreviewEl.classList.remove('is-warning');
+                } else if (allConfiguredParts.length > 0) {
+                    regPreviewEl.textContent = `Preset weekly hours: ${allSummary}. (${missingNames.join(', ')} ${missingNames.length === 1 ? 'has' : 'have'} none set — use 10:00 AM – 5:00 PM or Custom Time, or add ${missingNames.join('/')} below.)`;
+                    regPreviewEl.classList.toggle('is-warning', state.schedHourMode === 'regular');
+                } else {
+                    regPreviewEl.textContent = 'No regular weekly hours set yet — configure them below or click Restore November Preset.';
+                    regPreviewEl.classList.add('is-warning');
+                }
             }
         }
 
@@ -911,6 +940,12 @@
         });
 
         const isDefense = state.schedRegType === 'defense';
+        const resetBtn = $('#schedResetPresetBtn');
+        if (resetBtn) {
+            resetBtn.textContent = isDefense
+                ? 'Restore Nov Defense Preset'
+                : 'Restore Nov Consultation Preset';
+        }
         const source = isDefense
             ? (state.scheduleConfig?.defenseHoursByDay || {})
             : (state.scheduleConfig?.consultationHoursByDay || {});
@@ -1028,6 +1063,27 @@
         const nextMap = cloneRawHoursMap(source);
         nextMap[dow].splice(idx, 1);
         await saveRegularHoursMap(state.schedRegType, nextMap, btn);
+    }
+
+    async function resetRegularHoursToPreset(btn) {
+        const isDefense = state.schedRegType === 'defense';
+        const label = isDefense ? 'Defense Hours (Mon–Sat)' : 'Consultation Hours (Tue 2:10–3:30 PM, Wed 12:50–2:10 PM, Thu 2:10–3:30 PM)';
+        if (btn) btn.disabled = true;
+        try {
+            const { scheduleConfig } = await api('/api/admin/schedule/regular-hours', {
+                method: 'PUT',
+                body: JSON.stringify({ resetPreset: isDefense ? 'defense' : 'consultation' }),
+            });
+            state.scheduleConfig = scheduleConfig;
+            renderScheduleManager();
+            updateHeaderDates();
+            window.SchedulerRealtime?.notifyLocal({ type: 'schedule_config_updated' });
+            toast(`Restored November preset for ${label}.`, 'success');
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
     }
 
     function renderScheduleOverview() {
@@ -1171,18 +1227,23 @@
                 }),
             });
             state.scheduleConfig = res.scheduleConfig;
+            const openedDates = Array.isArray(res.openedDates) && res.openedDates.length ? res.openedDates : dates;
+            const skippedDates = Array.isArray(res.skippedDates) ? res.skippedDates : [];
             if (unblockDates && res.unblockedCount > 0) {
-                const dateSet = new Set(dates);
+                const dateSet = new Set(openedDates);
                 state.blockedSchedules = state.blockedSchedules.filter((b) => !(dateSet.has(b.date) && b.isFullDay));
             }
             if ($('#schedOpenNoteInput')) $('#schedOpenNoteInput').value = '';
             state.schedBusy = false;
             updateHeaderDates();
             renderScheduleManager();
-            window.SchedulerRealtime?.notifyLocal({ type: 'schedule_config_updated', dates });
+            window.SchedulerRealtime?.notifyLocal({ type: 'schedule_config_updated', dates: openedDates });
             const catLabel = CATEGORY_META[state.schedCategory]?.label || 'Schedule';
+            const skippedNote = skippedDates.length
+                ? ` (skipped ${skippedDates.length} day${skippedDates.length === 1 ? '' : 's'} with no regular hours)`
+                : '';
             toast(
-                `Opened ${catLabel} on ${dates.length === 1 ? shortDate(dates[0]) : `${dates.length} dates`}.`,
+                `Opened ${catLabel} on ${openedDates.length === 1 ? shortDate(openedDates[0]) : `${openedDates.length} dates`}${skippedNote}.`,
                 'success'
             );
         } catch (err) {
@@ -2766,6 +2827,18 @@
         state.schedCustomWindows.push({ start: '13:00', end: '17:00' });
         renderCustomWindowRows();
     });
+
+    document.querySelectorAll('.sched-open-preset').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            const start = chip.dataset.start || '14:10';
+            const end = chip.dataset.end || '15:30';
+            state.schedCustomWindows = [{ start, end }];
+            setSchedOpenError('');
+            renderCustomWindowRows();
+        });
+    });
+
+    $('#schedResetPresetBtn')?.addEventListener('click', (e) => resetRegularHoursToPreset(e.currentTarget));
 
     $('#schedOpenForm')?.addEventListener('submit', submitOpenScheduleForm);
 
