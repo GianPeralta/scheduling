@@ -383,24 +383,13 @@ begin
     v_reason := coalesce(nullif(btrim(p_new_reason), ''), v_row.reason);
 
     if v_duration = 0 then
-        if not exists (
+        -- Express validates partial window blocks against the date's configured open window;
+        -- enforce full-day block & duplicate-day drop-off checks atomically here.
+        if exists (
             select 1
-              from generate_series(
-                  p_new_start_minute::int,
-                  (case
-                      when to_char(p_new_date, 'MM-DD') between '12-07' and '12-12' then 1019
-                      else p_new_start_minute + 79
-                   end)::int
-              ) as m
-             where not exists (
-                 select 1
-                   from public.blocked_schedules b
-                  where b.blocked_date = p_new_date
-                    and (
-                        b.is_full_day
-                        or (m >= b.start_minute and m < b.end_minute)
-                    )
-             )
+              from public.blocked_schedules b
+             where b.blocked_date = p_new_date
+               and b.is_full_day
         ) then
             raise exception 'The instructor is unavailable during that date/time.' using errcode = '23P01';
         end if;

@@ -757,6 +757,17 @@
 
         const minKey = minMonthKey();
         const maxKey = maxMonthKeyForPurpose(nextPurpose);
+        const categoryKey = nextPurpose === 'defense'
+            ? 'defense'
+            : nextPurpose === 'letter_pickup'
+                ? 'letter_pickup'
+                : 'consultation';
+        const earliestOpenDate = state.config?.earliestOpenDates?.[categoryKey] || null;
+        if (purposeChanged && earliestOpenDate && (!state.selectedDate || state.selectedDate.slice(0, 7) < earliestOpenDate.slice(0, 7))) {
+            const [ey, em] = earliestOpenDate.split('-').map(Number);
+            state.viewYear = ey;
+            state.viewMonth = em - 1;
+        }
         const currentKey = monthKey(state.viewYear, state.viewMonth);
         if (minKey && currentKey < minKey) {
             const [y, m] = minKey.split('-').map(Number);
@@ -1857,13 +1868,18 @@
             tabsEl.classList.add('hidden');
         }
         const hasOpenDays = Object.values(state.monthDays || {}).some((d) => d?.bookable && d.open > 0);
-        if (state.consultationPurpose === 'letter_pickup' && !hasOpenDays) {
-            $('#slotsTitle').textContent = 'No pickup dates open';
-            $('#slotsSubtitle').textContent = 'No Communication Letter Pickup schedule is open for this month yet.';
+        if (!hasOpenDays) {
+            const isPickup = state.consultationPurpose === 'letter_pickup';
+            $('#slotsTitle').textContent = isPickup ? 'No pickup dates open' : 'No dates open in this month';
+            $('#slotsSubtitle').textContent = isPickup
+                ? 'No Communication Letter Pickup schedule is open for this month yet.'
+                : 'No available dates are open in this month yet.';
             $('#slotList').innerHTML = `
                 <div class="empty-state">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                    <p>No dates are open for Communication Letter Pickup in this month yet. Please check another month or wait for your instructor to post available pickup times.</p>
+                    <p>${isPickup
+                        ? 'No dates are open for Communication Letter Pickup in this month yet. Please check another month or wait for your instructor to post available pickup times.'
+                        : 'No dates are open in this month yet. Use the calendar arrows to check another month, or check back once your instructor opens dates.'}</p>
                 </div>`;
             return;
         }
@@ -3141,7 +3157,12 @@
                 loadCurrentStudent();
                 return;
             }
-            if (event?.type === 'settings_updated' || event?.bookingEndDate || event?.type?.startsWith('letter_pickup_schedule')) {
+            if (
+                event?.type === 'schedule_config_updated'
+                || event?.type === 'settings_updated'
+                || event?.bookingEndDate
+                || event?.type?.startsWith('letter_pickup_schedule')
+            ) {
                 try {
                     const freshConfig = await api('/api/config');
                     state.config = freshConfig;

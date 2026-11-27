@@ -1644,7 +1644,12 @@
                     return;
                 }
                 if (!state.student) return;
-                if (event?.type === 'settings_updated' || event?.bookingEndDate || event?.type?.startsWith('letter_pickup_schedule')) {
+                if (
+                    event?.type === 'schedule_config_updated'
+                    || event?.type === 'settings_updated'
+                    || event?.bookingEndDate
+                    || event?.type?.startsWith('letter_pickup_schedule')
+                ) {
                     try {
                         const freshConfig = await api('/api/config');
                         if (freshConfig) state.config = freshConfig;

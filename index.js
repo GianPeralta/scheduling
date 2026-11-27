@@ -163,25 +163,26 @@ const WINDOWS_BY_DAY = {
     ],
 };
 
-// Special date-range schedule overrides (inclusive MM-DD bounds; applies to consultations & defenses)
+// Special date-range schedule overrides (seeded on initial setup before custom admin edits)
 // Dec 7 – Dec 12: 10:00 AM – 5:00 PM
-const SPECIAL_DATE_WINDOWS = [
-    {
-        startMmDd: '12-07',
-        endMmDd: '12-12',
-        windows: [[hm(10, 0), hm(17, 0)]],
-    },
-];
+const FULL_DAY_START_MINUTE = hm(10, 0); // 10:00 AM
+const FULL_DAY_END_MINUTE = hm(17, 0);   // 5:00 PM
+const FULL_DAY_WINDOW = [FULL_DAY_START_MINUTE, FULL_DAY_END_MINUTE];
 
-const DEFAULT_BOOKING_END_MM_DD = '12-12';
-// Ignore stale pre-Dec-12 cutoff values saved before the Dec 7–12 schedule window was added
-const SCHEDULE_CUTOFF_BUMPED_AT_MS = Date.parse('2026-11-27T00:25:00Z');
+const INITIAL_SEEDED_OPEN_DATES = [
+    '2026-12-07',
+    '2026-12-08',
+    '2026-12-09',
+    '2026-12-10',
+    '2026-12-11',
+    '2026-12-12',
+];
 
 const CONFIG = {
     location: process.env.MEETING_LOCATION || 'Faculty Office',
     timezone: process.env.TIMEZONE || 'Asia/Manila',
     workingDays: [2, 3, 4],
-    bookingEndDate: process.env.BOOKING_END_DATE || null, // defaults to Dec 12 of current year
+    bookingEndDate: process.env.BOOKING_END_DATE || null,
 };
 
 const TABLE = 'appointments';
@@ -189,6 +190,7 @@ const BLOCKED_TABLE = 'blocked_schedules';
 const LETTER_PICKUP_TABLE = 'letter_pickup_schedules';
 const SETTINGS_TABLE = 'scheduler_settings';
 const BOOKING_END_DATE_KEY = 'booking_end_date';
+const SCHEDULE_CONFIG_KEY = 'schedule_config_v1';
 const BLOCKED_SETTING_SENTINEL_DATE = '1970-01-01';
 const BLOCKED_SETTING_PREFIX = '__SETTING_BOOKING_END_DATE__:';
 
@@ -318,6 +320,7 @@ function startServerRealtimeSubscription() {
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: LETTER_PICKUP_TABLE }, (payload) => {
                 const row = payload?.new || payload?.old || {};
+                lastScheduleConfigLoadedAt = 0;
                 notifyRealtimeListeners(
                     {
                         type: `letter_pickup_schedule_${String(payload?.eventType || 'change').toLowerCase()}`,
@@ -327,7 +330,23 @@ function startServerRealtimeSubscription() {
                     { fromSupabaseWs: true }
                 );
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: SETTINGS_TABLE }, (payload) => {
+                const row = payload?.new || payload?.old || {};
+                lastScheduleConfigLoadedAt = 0;
+                lastSettingsLoadedAt = 0;
+                notifyRealtimeListeners(
+                    {
+                        type: 'schedule_config_updated',
+                        table: SETTINGS_TABLE,
+                        key: row.key || null,
+                    },
+                    { fromSupabaseWs: true }
+                );
+            })
             .on('broadcast', { event: 'schedule_change' }, ({ payload }) => {
+                if (payload?.type === 'schedule_config_updated') {
+                    lastScheduleConfigLoadedAt = 0;
+                }
                 if (payload?.bookingEndDate && parseDate(payload.bookingEndDate)) {
                     cachedBookingEndDate = payload.bookingEndDate;
                     lastSettingsLoadedAt = Date.now();
@@ -900,63 +919,248 @@ function nowInTz() {
     };
 }
 
-function defaultLastBookableDate(now = nowInTz()) {
-    return `${now.date.slice(0, 4)}-${DEFAULT_BOOKING_END_MM_DD}`;
+/* ---------- Dynamic Schedule Configuration (Consultations, Defenses, Letter Pickups) ---------- */
+const SCHEDULE_CATEGORIES = ['consultation', 'defense', 'letter_pickup'];
+const SCHEDULE_MODES = ['full_day', 'regular', 'custom'];
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function normalizeWindowIntervals(rawWindows, minDuration = 5) {
+    if (!Array.isArray(rawWindows)) return [];
+    const valid = [];
+    for (const item of rawWindows) {
+        const s = Array.isArray(item) ? Number(item[0]) : Number(item?.startMinute);
+        const e = Array.isArray(item) ? Number(item[1]) : Number(item?.endMinute);
+        if (Number.isInteger(s) && Number.isInteger(e) && s >= 0 && e <= 1440 && e - s >= minDuration) {
+            valid.push([s, e]);
+        }
+    }
+    valid.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const merged = [];
+    for (const [s, e] of valid) {
+        const last = merged[merged.length - 1];
+        if (last && s <= last[1]) {
+            last[1] = Math.max(last[1], e);
+        } else {
+            merged.push([s, e]);
+        }
+    }
+    return merged;
 }
 
-let cachedBookingEndDate = (
-    CONFIG.bookingEndDate
-    && DATE_RE.test(CONFIG.bookingEndDate)
-    && CONFIG.bookingEndDate.slice(5) >= DEFAULT_BOOKING_END_MM_DD
-)
-    ? CONFIG.bookingEndDate
-    : null;
+function cloneHoursTable(table) {
+    const out = {};
+    for (let d = 0; d <= 6; d += 1) {
+        out[d] = Array.isArray(table[d]) ? table[d].map(([s, e]) => [s, e]) : [];
+    }
+    return out;
+}
+
+function normalizeHoursByDayMap(rawMap, fallbackTable, minDuration = 5) {
+    if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) {
+        return cloneHoursTable(fallbackTable);
+    }
+    const out = {};
+    for (let d = 0; d <= 6; d += 1) {
+        if (Object.prototype.hasOwnProperty.call(rawMap, d) || Object.prototype.hasOwnProperty.call(rawMap, String(d))) {
+            const rawWins = rawMap[d] ?? rawMap[String(d)];
+            out[d] = normalizeWindowIntervals(rawWins, minDuration);
+        } else {
+            out[d] = Array.isArray(fallbackTable[d]) ? fallbackTable[d].map(([s, e]) => [s, e]) : [];
+        }
+    }
+    return out;
+}
+
+function buildDefaultScheduleConfig() {
+    const consultationHoursByDay = cloneHoursTable(WINDOWS_BY_DAY);
+    const defenseHoursByDay = cloneHoursTable(DEFENSE_WINDOWS_BY_DAY);
+    const openDates = [];
+    for (const date of INITIAL_SEEDED_OPEN_DATES) {
+        openDates.push({
+            id: `seed-consultation-${date}`,
+            date,
+            category: 'consultation',
+            mode: 'full_day',
+            windows: [[FULL_DAY_START_MINUTE, FULL_DAY_END_MINUTE]],
+            note: null,
+            updatedAt: null,
+        });
+        openDates.push({
+            id: `seed-defense-${date}`,
+            date,
+            category: 'defense',
+            mode: 'full_day',
+            windows: [[FULL_DAY_START_MINUTE, FULL_DAY_END_MINUTE]],
+            note: null,
+            updatedAt: null,
+        });
+    }
+    return indexScheduleConfig({
+        version: 1,
+        consultationHoursByDay,
+        defenseHoursByDay,
+        openDates,
+    });
+}
+
+function indexScheduleConfig(cfg) {
+    const byDateCategory = new Map();
+    for (const entry of cfg.openDates || []) {
+        byDateCategory.set(`${entry.date}|${entry.category}`, entry);
+    }
+    cfg.byDateCategory = byDateCategory;
+    return cfg;
+}
+
+function normalizeScheduleConfigObject(raw) {
+    if (!raw || typeof raw !== 'object') return buildDefaultScheduleConfig();
+    const consultationHoursByDay = normalizeHoursByDayMap(raw.consultationHoursByDay, WINDOWS_BY_DAY, 5);
+    const defenseHoursByDay = normalizeHoursByDayMap(raw.defenseHoursByDay, DEFENSE_WINDOWS_BY_DAY, 30);
+
+    const dedup = new Map();
+    if (Array.isArray(raw.openDates)) {
+        for (const item of raw.openDates) {
+            if (!item || typeof item !== 'object') continue;
+            const date = String(item.date || '').trim();
+            const category = String(item.category || '').trim();
+            if (!parseDate(date) || !SCHEDULE_CATEGORIES.includes(category)) continue;
+            const mode = SCHEDULE_MODES.includes(item.mode) ? item.mode : 'custom';
+            const minDur = category === 'defense' ? 30 : 5;
+            const windows = mode === 'full_day'
+                ? [[FULL_DAY_START_MINUTE, FULL_DAY_END_MINUTE]]
+                : normalizeWindowIntervals(item.windows, minDur);
+            const note = typeof item.note === 'string' && item.note.trim()
+                ? item.note.trim().slice(0, 500)
+                : null;
+            dedup.set(`${date}|${category}`, {
+                id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : crypto.randomUUID(),
+                date,
+                category,
+                mode,
+                windows,
+                note,
+                updatedAt: item.updatedAt || null,
+            });
+        }
+    }
+
+    const openDates = [...dedup.values()].sort(
+        (a, b) => a.date.localeCompare(b.date) || SCHEDULE_CATEGORIES.indexOf(a.category) - SCHEDULE_CATEGORIES.indexOf(b.category)
+    );
+
+    return indexScheduleConfig({
+        version: 1,
+        consultationHoursByDay,
+        defenseHoursByDay,
+        openDates,
+    });
+}
+
+function resolveOpenEntryWindows(entry, cfg) {
+    if (!entry) return [];
+    if (entry.mode === 'full_day') {
+        return [[FULL_DAY_START_MINUTE, FULL_DAY_END_MINUTE]];
+    }
+    if (entry.mode === 'regular') {
+        const dt = parseDate(entry.date);
+        const dow = dt ? dt.getUTCDay() : -1;
+        const sourceTable = entry.category === 'defense'
+            ? cfg.defenseHoursByDay
+            : cfg.consultationHoursByDay;
+        const regularWins = (dow >= 0 && Array.isArray(sourceTable?.[dow])) ? sourceTable[dow] : [];
+        if (regularWins.length) return regularWins.map(([s, e]) => [s, e]);
+        return Array.isArray(entry.windows) ? entry.windows.map(([s, e]) => [s, e]) : [];
+    }
+    return Array.isArray(entry.windows) ? entry.windows.map(([s, e]) => [s, e]) : [];
+}
+
+let cachedScheduleConfig = buildDefaultScheduleConfig();
+let cachedLegacyPickupByDate = new Map();
+let lastScheduleConfigLoadedAt = 0;
+let cachedBookingEndDate = null;
 let lastSettingsLoadedAt = 0;
 
-async function loadBookingEndDateSetting({ force = false } = {}) {
-    if (!force && lastSettingsLoadedAt && Date.now() - lastSettingsLoadedAt < 5000) {
-        return cachedBookingEndDate;
+function getActiveScheduleConfig() {
+    return cachedScheduleConfig || buildDefaultScheduleConfig();
+}
+
+async function loadScheduleConfig({ force = false } = {}) {
+    if (!force && lastScheduleConfigLoadedAt && Date.now() - lastScheduleConfigLoadedAt < 3000) {
+        return cachedScheduleConfig;
     }
-    const minDefault = defaultLastBookableDate();
     try {
-        const { data, error } = await db()
-            .from(SETTINGS_TABLE)
-            .select('value, updated_at')
-            .eq('key', BOOKING_END_DATE_KEY)
-            .maybeSingle();
-        if (!error && data?.value && parseDate(String(data.value).trim())) {
-            const val = String(data.value).trim();
-            const updatedMs = data.updated_at ? Date.parse(data.updated_at) : 0;
-            cachedBookingEndDate = (val < minDefault && (!Number.isFinite(updatedMs) || updatedMs < SCHEDULE_CUTOFF_BUMPED_AT_MS))
-                ? minDefault
-                : val;
-            lastSettingsLoadedAt = Date.now();
-            return cachedBookingEndDate;
-        }
-        // Fallback: check sentinel row in blocked_schedules if scheduler_settings table hasn't been created yet
-        const { data: sentinelRows, error: bErr } = await db()
-            .from(BLOCKED_TABLE)
-            .select('reason, created_at')
-            .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
-            .like('reason', `${BLOCKED_SETTING_PREFIX}%`)
-            .order('created_at', { ascending: false })
-            .limit(1);
-        if (!bErr && Array.isArray(sentinelRows) && sentinelRows.length) {
-            const candidate = String(sentinelRows[0].reason || '').slice(BLOCKED_SETTING_PREFIX.length).trim();
-            if (parseDate(candidate)) {
-                const createdMs = sentinelRows[0].created_at ? Date.parse(sentinelRows[0].created_at) : 0;
-                cachedBookingEndDate = (candidate < minDefault && (!Number.isFinite(createdMs) || createdMs < SCHEDULE_CUTOFF_BUMPED_AT_MS))
-                    ? minDefault
-                    : candidate;
-                lastSettingsLoadedAt = Date.now();
-                return cachedBookingEndDate;
+        const [{ data, error }, pickupRes] = await Promise.all([
+            db()
+                .from(SETTINGS_TABLE)
+                .select('value, updated_at')
+                .eq('key', SCHEDULE_CONFIG_KEY)
+                .maybeSingle(),
+            db()
+                .from(LETTER_PICKUP_TABLE)
+                .select('*')
+                .order('available_date', { ascending: true })
+                .order('start_minute', { ascending: true }),
+        ]);
+
+        if (!error && data?.value) {
+            try {
+                const parsed = JSON.parse(data.value);
+                cachedScheduleConfig = normalizeScheduleConfigObject(parsed);
+            } catch {
+                cachedScheduleConfig = buildDefaultScheduleConfig();
             }
+        } else if (!error && !data) {
+            cachedScheduleConfig = buildDefaultScheduleConfig();
         }
-        lastSettingsLoadedAt = Date.now();
+
+        if (!pickupRes.error && Array.isArray(pickupRes.data)) {
+            const byDate = new Map();
+            for (const r of pickupRes.data) {
+                const d = r.available_date;
+                if (!d) continue;
+                if (!byDate.has(d)) byDate.set(d, []);
+                byDate.get(d).push(r);
+            }
+            cachedLegacyPickupByDate = byDate;
+        }
+        lastScheduleConfigLoadedAt = Date.now();
     } catch {
-        // Ignore transient lookup errors and fall back to cached / default value
+        // Ignore transient lookup errors and fall back to cached / default config
     }
-    return cachedBookingEndDate;
+    return cachedScheduleConfig;
+}
+
+async function saveScheduleConfig(nextConfig) {
+    const normalized = normalizeScheduleConfigObject(nextConfig);
+    const payloadStr = JSON.stringify({
+        version: 1,
+        consultationHoursByDay: normalized.consultationHoursByDay,
+        defenseHoursByDay: normalized.defenseHoursByDay,
+        openDates: normalized.openDates,
+    });
+
+    const { error } = await db()
+        .from(SETTINGS_TABLE)
+        .upsert(
+            [{ key: SCHEDULE_CONFIG_KEY, value: payloadStr, updated_at: new Date().toISOString() }],
+            { onConflict: 'key' }
+        );
+
+    if (error) {
+        if (['42P01', 'PGRST205'].includes(error.code)) {
+            throw httpError(500, 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.');
+        }
+        throw error;
+    }
+
+    cachedScheduleConfig = normalized;
+    lastScheduleConfigLoadedAt = Date.now();
+    return normalized;
+}
+
+async function loadBookingEndDateSetting({ force = false } = {}) {
+    await loadScheduleConfig({ force });
+    return getLastBookableDate();
 }
 
 async function saveBookingEndDateSetting(dateStr) {
@@ -964,61 +1168,126 @@ async function saveBookingEndDateSetting(dateStr) {
     if (!parseDate(clean)) {
         throw httpError(400, 'Please select a valid cutoff date (YYYY-MM-DD).', { field: 'bookingEndDateInput' });
     }
-
-    const { error: settingsErr } = await db()
-        .from(SETTINGS_TABLE)
-        .upsert(
-            [{ key: BOOKING_END_DATE_KEY, value: clean, updated_at: new Date().toISOString() }],
-            { onConflict: 'key' }
-        );
-
-    if (settingsErr) {
-        if (['42P01', 'PGRST205'].includes(settingsErr.code)) {
-            await db()
-                .from(BLOCKED_TABLE)
-                .delete()
-                .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
-                .like('reason', `${BLOCKED_SETTING_PREFIX}%`);
-            const { error: fallbackErr } = await db()
-                .from(BLOCKED_TABLE)
-                .insert([{
-                    blocked_date: BLOCKED_SETTING_SENTINEL_DATE,
-                    is_full_day: true,
-                    start_minute: null,
-                    end_minute: null,
-                    reason: `${BLOCKED_SETTING_PREFIX}${clean}`,
-                }]);
-            if (fallbackErr) throw fallbackErr;
-        } else {
-            throw settingsErr;
-        }
-    } else {
-        // Clean up any legacy sentinel row if scheduler_settings succeeded
-        try {
-            await db()
-                .from(BLOCKED_TABLE)
-                .delete()
-                .eq('blocked_date', BLOCKED_SETTING_SENTINEL_DATE)
-                .like('reason', `${BLOCKED_SETTING_PREFIX}%`);
-        } catch {
-            // Ignore legacy sentinel cleanup errors
-        }
-    }
-
     cachedBookingEndDate = clean;
     lastSettingsLoadedAt = Date.now();
     return clean;
 }
 
+function serializeWindowsWithLabels(wins) {
+    return (wins || []).map(([s, e]) => ({
+        startMinute: s,
+        endMinute: e,
+        label: `${formatMinute(s)} – ${formatMinute(e)}`,
+    }));
+}
+
+function serializeScheduleConfig(cfg = getActiveScheduleConfig(), legacyPickupByDate = cachedLegacyPickupByDate) {
+    const consultationHoursByDay = {};
+    const defenseHoursByDay = {};
+    for (let d = 0; d <= 6; d += 1) {
+        consultationHoursByDay[d] = serializeWindowsWithLabels(cfg.consultationHoursByDay[d] || []);
+        defenseHoursByDay[d] = serializeWindowsWithLabels(cfg.defenseHoursByDay[d] || []);
+    }
+
+    const mergedEntries = cfg.openDates.map((entry) => {
+        const effective = resolveOpenEntryWindows(entry, cfg);
+        return {
+            id: entry.id,
+            date: entry.date,
+            category: entry.category,
+            mode: entry.mode,
+            windows: serializeWindowsWithLabels(entry.windows),
+            effectiveWindows: serializeWindowsWithLabels(effective),
+            label: effective.map(([s, e]) => `${formatMinute(s)} – ${formatMinute(e)}`).join(', ') || 'No hours set',
+            note: entry.note || null,
+            updatedAt: entry.updatedAt || null,
+        };
+    });
+
+    // Include any legacy letter_pickup_schedules rows on dates not already in openDates
+    if (legacyPickupByDate && legacyPickupByDate.size > 0) {
+        for (const [date, rows] of legacyPickupByDate.entries()) {
+            if (cfg.byDateCategory.has(`${date}|letter_pickup`)) continue;
+            const wins = normalizePickupWindows(rows);
+            if (!wins.length) continue;
+            const note = rows.find((r) => r.note)?.note || null;
+            mergedEntries.push({
+                id: `legacy-pickup-${date}`,
+                date,
+                category: 'letter_pickup',
+                mode: 'custom',
+                windows: serializeWindowsWithLabels(wins),
+                effectiveWindows: serializeWindowsWithLabels(wins),
+                label: wins.map(([s, e]) => `${formatMinute(s)} – ${formatMinute(e)}`).join(', '),
+                note,
+                updatedAt: rows[0]?.created_at || null,
+            });
+        }
+        mergedEntries.sort(
+            (a, b) => a.date.localeCompare(b.date) || SCHEDULE_CATEGORIES.indexOf(a.category) - SCHEDULE_CATEGORIES.indexOf(b.category)
+        );
+    }
+
+    return {
+        fullDayWindow: {
+            startMinute: FULL_DAY_START_MINUTE,
+            endMinute: FULL_DAY_END_MINUTE,
+            label: `${formatMinute(FULL_DAY_START_MINUTE)} – ${formatMinute(FULL_DAY_END_MINUTE)}`,
+        },
+        consultationHoursByDay,
+        defenseHoursByDay,
+        openDates: mergedEntries,
+    };
+}
+
+function getEndOfNextMonth(dateStr) {
+    const dt = parseDate(dateStr);
+    if (!dt) return `${String(dateStr || '2026').slice(0, 4)}-12-31`;
+    return toDateStr(new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 2, 0)));
+}
+
 function getLastBookableDate(now = nowInTz()) {
-    const defaultEnd = defaultLastBookableDate(now);
-    if (cachedBookingEndDate && parseDate(cachedBookingEndDate)) {
-        return cachedBookingEndDate;
+    let maxDate = getEndOfNextMonth(now.date);
+    const cfg = getActiveScheduleConfig();
+    for (const entry of cfg.openDates) {
+        if (entry.date > maxDate && resolveOpenEntryWindows(entry, cfg).length > 0) {
+            maxDate = entry.date;
+        }
     }
-    if (CONFIG.bookingEndDate && parseDate(CONFIG.bookingEndDate)) {
-        return CONFIG.bookingEndDate >= defaultEnd ? CONFIG.bookingEndDate : defaultEnd;
+    for (const [date, rows] of cachedLegacyPickupByDate.entries()) {
+        if (date > maxDate && normalizePickupWindows(rows).length > 0) {
+            maxDate = date;
+        }
     }
-    return defaultEnd;
+    if (cachedBookingEndDate && cachedBookingEndDate > maxDate) {
+        maxDate = cachedBookingEndDate;
+    }
+    return maxDate;
+}
+
+function getEarliestOpenDatesByCategory(now = nowInTz()) {
+    const first = getFirstBookableDate(now);
+    const cfg = getActiveScheduleConfig();
+    const earliest = {
+        consultation: null,
+        defense: null,
+        letter_pickup: null,
+    };
+    for (const entry of cfg.openDates) {
+        if (entry.date < first) continue;
+        if (!resolveOpenEntryWindows(entry, cfg).length) continue;
+        if (!earliest[entry.category] || entry.date < earliest[entry.category]) {
+            earliest[entry.category] = entry.date;
+        }
+    }
+    for (const [date, rows] of cachedLegacyPickupByDate.entries()) {
+        if (date < first) continue;
+        if (!normalizePickupWindows(rows).length) continue;
+        if (!earliest.letter_pickup || date < earliest.letter_pickup) {
+            earliest.letter_pickup = date;
+        }
+    }
+    return earliest;
 }
 
 function parseDate(str) {
@@ -1127,35 +1396,40 @@ function getFirstBookableDate(now = nowInTz()) {
     return addDays(now.date, 1);
 }
 
-function specialWindowsForDate(dateStr) {
-    if (!parseDate(dateStr)) return null;
-    const mmdd = dateStr.slice(5);
-    const matched = SPECIAL_DATE_WINDOWS.find((r) => mmdd >= r.startMmDd && mmdd <= r.endMmDd);
-    return matched ? matched.windows : null;
-}
-
-/** Time windows open on a given date for this purpose (defenses use their own weekly schedule; letter pickups use instructor-configured windows). */
+/** Time windows open on a given date for this purpose (dates start closed unless opened by the instructor). */
 function windowsForDate(dateStr, purpose = 'system', customWindows = null) {
-    if (purpose === 'letter_pickup') {
-        return Array.isArray(customWindows) ? customWindows : [];
-    }
     const dt = parseDate(dateStr);
     if (!dt) return [];
-    const special = specialWindowsForDate(dateStr);
-    if (special) return special;
-    const table = purpose === 'defense' ? DEFENSE_WINDOWS_BY_DAY : WINDOWS_BY_DAY;
-    return table[dt.getUTCDay()] || [];
+    const cfg = getActiveScheduleConfig();
+    const category = purpose === 'defense'
+        ? 'defense'
+        : purpose === 'letter_pickup'
+            ? 'letter_pickup'
+            : 'consultation';
+
+    const entry = cfg.byDateCategory.get(`${dateStr}|${category}`);
+    const openedWins = entry ? resolveOpenEntryWindows(entry, cfg) : [];
+
+    if (category === 'letter_pickup') {
+        const legacyRows = cachedLegacyPickupByDate.get(dateStr) || [];
+        const legacyWins = Array.isArray(customWindows)
+            ? customWindows
+            : normalizePickupWindows(legacyRows);
+        if (openedWins.length && legacyWins.length) {
+            return normalizeWindowIntervals([...openedWins, ...legacyWins], LETTER_PICKUP_DURATION);
+        }
+        return openedWins.length ? openedWins : legacyWins;
+    }
+
+    return openedWins;
 }
 
 /** Is this date one the teacher accepts bookings for at all? */
 function isBookableDate(dateStr, now = nowInTz(), purpose = 'system', customWindows = null) {
     const dt = parseDate(dateStr);
     if (!dt) return false;
-    if (purpose !== 'letter_pickup') {
-        if (dateStr > getLastBookableDate(now)) return false;
-    }
-    if (!windowsForDate(dateStr, purpose, customWindows).length) return false;
     if (dateStr < getFirstBookableDate(now)) return false;
+    if (!windowsForDate(dateStr, purpose, customWindows).length) return false;
     return true;
 }
 
@@ -1385,10 +1659,19 @@ async function loadLatestLetterPickupDate() {
 /* ------------------------------------------------------------------ */
 app.get('/api/config', async (req, res) => {
     const now = nowInTz();
-    const [, latestLetterPickupDate] = await Promise.all([
-        loadBookingEndDateSetting(),
+    const [cfg, latestLetterPickupDate] = await Promise.all([
+        loadScheduleConfig(),
         loadLatestLetterPickupDate(),
     ]);
+    const serializedCfg = serializeScheduleConfig(cfg);
+    const earliestOpenDates = getEarliestOpenDatesByCategory(now);
+    const maxOpenPickup = serializedCfg.openDates
+        .filter((e) => e.category === 'letter_pickup' && e.effectiveWindows.length > 0)
+        .map((e) => e.date)
+        .sort()
+        .pop() || null;
+    const effectiveLatestPickup = [latestLetterPickupDate, maxOpenPickup].filter(Boolean).sort().pop() || null;
+
     res.json({
         teacherName: TEACHER_NAME,
         teacherEmail: TEACHER_EMAIL,
@@ -1400,7 +1683,8 @@ app.get('/api/config', async (req, res) => {
         today: now.date,
         firstBookableDate: getFirstBookableDate(now),
         lastBookableDate: getLastBookableDate(now),
-        latestLetterPickupDate,
+        latestLetterPickupDate: effectiveLatestPickup,
+        earliestOpenDates,
         allowedEmailDomains: AUTH.allowedDomains,
         maxActiveBookings: AUTH.maxActiveBookings,
         minGroupMembers: MIN_MEMBERS,
@@ -1408,23 +1692,8 @@ app.get('/api/config', async (req, res) => {
         cancelCutoffMinutes: CANCEL_CUTOFF_MINUTES,
         defenseLevels: DEFENSE_LEVELS,
         defenseStartStep: DEFENSE_START_STEP,
-        consultationWindowsByDay: Object.fromEntries(
-            Object.entries(WINDOWS_BY_DAY).map(([day, wins]) => [
-                day,
-                wins.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
-            ])
-        ),
-        defenseWindowsByDay: Object.fromEntries(
-            Object.entries(DEFENSE_WINDOWS_BY_DAY).map(([day, wins]) => [
-                day,
-                wins.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
-            ])
-        ),
-        specialDateWindows: SPECIAL_DATE_WINDOWS.map((r) => ({
-            startMmDd: r.startMmDd,
-            endMmDd: r.endMmDd,
-            windows: r.windows.map(([s, e]) => ({ startMinute: s, endMinute: e, label: `${formatMinute(s)} – ${formatMinute(e)}` })),
-        })),
+        consultationWindowsByDay: serializedCfg.consultationHoursByDay,
+        defenseWindowsByDay: serializedCfg.defenseHoursByDay,
         realtime: {
             supabaseUrl: process.env.SUPABASE_URL || null,
             supabaseAnonKey: process.env.SUPABASE_ANON_KEY || null,
@@ -2986,7 +3255,7 @@ async function handleStudentReschedule(req, res) {
         }
     }
 
-    await loadBookingEndDateSetting();
+    await loadScheduleConfig({ force: true });
 
     let slotStart;
     let slotEnd;
@@ -3317,7 +3586,7 @@ app.post('/api/bookings', requireStudent, async (req, res) => {
         });
     }
 
-    await loadBookingEndDateSetting();
+    await loadScheduleConfig({ force: true });
 
     let slotStart;
     let slotEnd;
@@ -3684,11 +3953,320 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
         currentHour: now.hour,
         currentMinute: now.minuteOfDay,
         bookingEndDate: getLastBookableDate(now),
+        scheduleConfig: serializeScheduleConfig(getActiveScheduleConfig(), cachedLegacyPickupByDate),
         bookings,
         blockedSchedules,
         letterPickupSchedules,
         students,
         studentUpdateLogs: serializedLogs,
+    });
+});
+
+/* ---------- Unified Schedule & Availability Admin Endpoints ---------- */
+function extractTargetDatesFromBody(body) {
+    const set = new Set();
+    if (Array.isArray(body?.dates)) {
+        for (const raw of body.dates) {
+            const d = String(raw || '').trim();
+            if (parseDate(d)) set.add(d);
+        }
+    } else if (body?.date) {
+        const start = String(body.date || '').trim();
+        const end = body.endDate ? String(body.endDate).trim() : start;
+        if (!parseDate(start)) {
+            throw httpError(400, 'Please select a valid date.');
+        }
+        if (!parseDate(end) || end < start) {
+            throw httpError(400, 'End date must be on or after the start date.');
+        }
+        const diff = Math.round((parseDate(end).getTime() - parseDate(start).getTime()) / 86400000);
+        if (diff > 120) {
+            throw httpError(400, 'You can select at most 120 days at a time.');
+        }
+        for (let d = start; d <= end; d = addDays(d, 1)) {
+            set.add(d);
+        }
+    }
+    const sorted = [...set].sort();
+    if (!sorted.length) {
+        throw httpError(400, 'Please select at least one date on the calendar.');
+    }
+    if (sorted.length > 120) {
+        throw httpError(400, 'You can update at most 120 dates at a time.');
+    }
+    return sorted;
+}
+
+app.get('/api/admin/schedule', requireAdmin, async (req, res) => {
+    const cfg = await loadScheduleConfig({ force: true });
+    res.json({
+        ok: true,
+        scheduleConfig: serializeScheduleConfig(cfg, cachedLegacyPickupByDate),
+    });
+});
+
+// Open 1 or more dates for Consultations, Capstone/Thesis Defense, and/or Comm. Letter Pickup
+app.post('/api/admin/schedule/open', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const dates = extractTargetDatesFromBody(body);
+
+    const rawCategories = Array.isArray(body.categories)
+        ? body.categories
+        : body.category
+            ? [body.category]
+            : [];
+    const categories = [...new Set(rawCategories.map((c) => String(c || '').trim()))]
+        .filter((c) => SCHEDULE_CATEGORIES.includes(c));
+    if (!categories.length) {
+        return res.status(400).json({ error: 'Please choose what schedule type to open (Consultations, Defense, or Letter Pickup).' });
+    }
+
+    const mode = SCHEDULE_MODES.includes(body.mode) ? body.mode : 'full_day';
+    const rawNote = String(body.note ?? '').trim();
+    const note = rawNote ? rawNote.slice(0, 500) : null;
+    const unblockDates = Boolean(body.unblockDates);
+
+    const currentCfg = await loadScheduleConfig({ force: true });
+
+    let customWindows = [];
+    if (mode === 'custom') {
+        const minDur = categories.includes('defense') && categories.length === 1 ? 60 : 5;
+        customWindows = normalizeWindowIntervals(body.windows, minDur);
+        if (!customWindows.length) {
+            return res.status(400).json({
+                error: categories.includes('defense') && categories.length === 1
+                    ? 'Please enter a valid start and end time (at least 1 hour long for defenses).'
+                    : 'Please enter a valid start and end time (end time must be after start time).',
+            });
+        }
+        if (categories.includes('defense') && !customWindows.some(([s, e]) => e - s >= 60)) {
+            return res.status(400).json({
+                error: 'Custom defense windows must be at least 1 hour (60 minutes) long so Capstone / Thesis defenses can fit.',
+            });
+        }
+    } else if (mode === 'regular') {
+        for (const cat of categories) {
+            const sourceTable = cat === 'defense'
+                ? currentCfg.defenseHoursByDay
+                : currentCfg.consultationHoursByDay;
+            const missingWeekdays = new Set();
+            for (const d of dates) {
+                const dow = parseDate(d).getUTCDay();
+                if (!Array.isArray(sourceTable[dow]) || sourceTable[dow].length === 0) {
+                    missingWeekdays.add(WEEKDAY_NAMES[dow]);
+                }
+            }
+            if (missingWeekdays.size > 0) {
+                const daysText = [...missingWeekdays].join(', ');
+                const labelText = cat === 'defense' ? 'Defense Hours' : 'Consultation Hours';
+                return res.status(400).json({
+                    code: 'NO_REGULAR_HOURS_FOR_DAY',
+                    missingWeekdays: [...missingWeekdays],
+                    category: cat,
+                    error: `${daysText} ${missingWeekdays.size === 1 ? 'has' : 'have'} no weekly ${labelText} set yet. Add ${daysText} hours in "My Regular Hours" below, or choose "10:00 AM – 5:00 PM" / "Custom Time".`,
+                });
+            }
+        }
+    }
+
+    const nextOpenMap = new Map();
+    for (const entry of currentCfg.openDates) {
+        nextOpenMap.set(`${entry.date}|${entry.category}`, { ...entry });
+    }
+
+    const nowIso = new Date().toISOString();
+    let openedCount = 0;
+    const pickupDatesTouched = [];
+
+    for (const d of dates) {
+        const dow = parseDate(d).getUTCDay();
+        for (const cat of categories) {
+            const key = `${d}|${cat}`;
+            const existing = nextOpenMap.get(key);
+            let storedWindows;
+            if (mode === 'full_day') {
+                storedWindows = [[FULL_DAY_START_MINUTE, FULL_DAY_END_MINUTE]];
+            } else if (mode === 'regular') {
+                const tbl = cat === 'defense' ? currentCfg.defenseHoursByDay : currentCfg.consultationHoursByDay;
+                storedWindows = (tbl[dow] || []).map(([s, e]) => [s, e]);
+            } else {
+                storedWindows = customWindows.map(([s, e]) => [s, e]);
+            }
+
+            nextOpenMap.set(key, {
+                id: existing?.id && !String(existing.id).startsWith('seed-') ? existing.id : crypto.randomUUID(),
+                date: d,
+                category: cat,
+                mode,
+                windows: storedWindows,
+                note: note !== null ? note : (existing?.note || null),
+                updatedAt: nowIso,
+            });
+            openedCount += 1;
+            if (cat === 'letter_pickup') pickupDatesTouched.push(d);
+        }
+    }
+
+    // Remove superseded legacy letter_pickup_schedules rows for dates now managed in schedule_config_v1
+    if (pickupDatesTouched.length) {
+        try {
+            await db().from(LETTER_PICKUP_TABLE).delete().in('available_date', [...new Set(pickupDatesTouched)]);
+            for (const pd of pickupDatesTouched) cachedLegacyPickupByDate.delete(pd);
+        } catch {
+            // Ignore if legacy table doesn't exist
+        }
+    }
+
+    let unblockedCount = 0;
+    if (unblockDates) {
+        try {
+            const { data: removedBlocks } = await db()
+                .from(BLOCKED_TABLE)
+                .delete()
+                .in('blocked_date', dates)
+                .eq('is_full_day', true)
+                .select('id');
+            unblockedCount = Array.isArray(removedBlocks) ? removedBlocks.length : 0;
+        } catch {
+            // Ignore block cleanup errors
+        }
+    }
+
+    const saved = await saveScheduleConfig({
+        version: 1,
+        consultationHoursByDay: currentCfg.consultationHoursByDay,
+        defenseHoursByDay: currentCfg.defenseHoursByDay,
+        openDates: [...nextOpenMap.values()],
+    });
+
+    const rtPromise = notifyRealtimeListeners({
+        type: 'schedule_config_updated',
+        action: 'open',
+        dates,
+        categories,
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.json({
+        ok: true,
+        openedCount,
+        unblockedCount,
+        scheduleConfig: serializeScheduleConfig(saved, cachedLegacyPickupByDate),
+    });
+});
+
+// Close / remove opened availability on 1 or more dates (for selected categories or by entry id)
+app.post('/api/admin/schedule/close', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const currentCfg = await loadScheduleConfig({ force: true });
+
+    const targetId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : null;
+    let dates = [];
+    if (!targetId) {
+        dates = extractTargetDatesFromBody(body);
+    }
+    const rawCategories = Array.isArray(body.categories) && body.categories.length
+        ? body.categories
+        : body.category
+            ? [body.category]
+            : SCHEDULE_CATEGORIES;
+    const categorySet = new Set(rawCategories.filter((c) => SCHEDULE_CATEGORIES.includes(c)));
+    const dateSet = new Set(dates);
+
+    const pickupDatesToClear = new Set();
+    if (targetId && targetId.startsWith('legacy-pickup-')) {
+        const legacyDate = targetId.slice('legacy-pickup-'.length);
+        if (parseDate(legacyDate)) pickupDatesToClear.add(legacyDate);
+    }
+
+    let closedCount = 0;
+    const remaining = currentCfg.openDates.filter((entry) => {
+        const matchById = Boolean(targetId && entry.id === targetId);
+        const matchByDateCat = !targetId && dateSet.has(entry.date) && categorySet.has(entry.category);
+        if (matchById || matchByDateCat) {
+            closedCount += 1;
+            if (entry.category === 'letter_pickup') pickupDatesToClear.add(entry.date);
+            return false;
+        }
+        return true;
+    });
+
+    if (!targetId && categorySet.has('letter_pickup')) {
+        for (const d of dates) {
+            if (cachedLegacyPickupByDate.has(d)) {
+                pickupDatesToClear.add(d);
+                closedCount += 1;
+            }
+        }
+    }
+
+    if (pickupDatesToClear.size > 0) {
+        try {
+            await db().from(LETTER_PICKUP_TABLE).delete().in('available_date', [...pickupDatesToClear]);
+            for (const d of pickupDatesToClear) cachedLegacyPickupByDate.delete(d);
+        } catch {
+            // Ignore legacy table cleanup errors
+        }
+    }
+
+    const saved = await saveScheduleConfig({
+        version: 1,
+        consultationHoursByDay: currentCfg.consultationHoursByDay,
+        defenseHoursByDay: currentCfg.defenseHoursByDay,
+        openDates: remaining,
+    });
+
+    const rtPromise = notifyRealtimeListeners({
+        type: 'schedule_config_updated',
+        action: 'close',
+        dates: dates.length ? dates : [...pickupDatesToClear],
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.json({
+        ok: true,
+        closedCount,
+        scheduleConfig: serializeScheduleConfig(saved, cachedLegacyPickupByDate),
+    });
+});
+
+// Update default weekly Consultation Hours and/or Defense Hours (used when opening dates in 'regular' mode)
+app.put('/api/admin/schedule/regular-hours', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const currentCfg = await loadScheduleConfig({ force: true });
+
+    const nextConsultationHours = body.consultationHoursByDay && typeof body.consultationHoursByDay === 'object'
+        ? normalizeHoursByDayMap(body.consultationHoursByDay, {}, 5)
+        : currentCfg.consultationHoursByDay;
+    const nextDefenseHours = body.defenseHoursByDay && typeof body.defenseHoursByDay === 'object'
+        ? normalizeHoursByDayMap(body.defenseHoursByDay, {}, 30)
+        : currentCfg.defenseHoursByDay;
+
+    // Update stored snapshots on any existing 'regular' entries that now have updated hours
+    const updatedOpenDates = currentCfg.openDates.map((entry) => {
+        if (entry.mode !== 'regular') return entry;
+        const dow = parseDate(entry.date)?.getUTCDay();
+        const tbl = entry.category === 'defense' ? nextDefenseHours : nextConsultationHours;
+        const nextWins = Array.isArray(tbl?.[dow]) && tbl[dow].length ? tbl[dow].map(([s, e]) => [s, e]) : entry.windows;
+        return { ...entry, windows: nextWins };
+    });
+
+    const saved = await saveScheduleConfig({
+        version: 1,
+        consultationHoursByDay: nextConsultationHours,
+        defenseHoursByDay: nextDefenseHours,
+        openDates: updatedOpenDates,
+    });
+
+    const rtPromise = notifyRealtimeListeners({
+        type: 'schedule_config_updated',
+        action: 'regular_hours',
+    });
+    if (process.env.VERCEL) await rtPromise;
+
+    res.json({
+        ok: true,
+        scheduleConfig: serializeScheduleConfig(saved, cachedLegacyPickupByDate),
     });
 });
 
@@ -3733,11 +4311,15 @@ app.get('/api/admin/blocks', requireAdmin, async (req, res) => {
     res.json({ blockedSchedules });
 });
 
-// Block a date (or date range) or a specific time range on a date
+// Block one or more dates (supports body.dates array or body.date + body.endDate) or a specific time range
 app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
     const body = req.body || {};
-    const date = String(body.date || '').trim();
-    const endDate = body.endDate ? String(body.endDate).trim() : date;
+    let targetDates;
+    try {
+        targetDates = extractTargetDatesFromBody(body);
+    } catch (err) {
+        return res.status(err.status || 400).json({ field: 'blockDate', error: err.message });
+    }
     const isFullDay = body.isFullDay !== false;
     const startMinute = isFullDay ? null : Number(body.startMinute);
     const endMinute = isFullDay ? null : Number(body.endMinute);
@@ -3745,16 +4327,6 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
     const reason = rawReason ? rawReason.slice(0, 500) : null;
     const cancelExisting = Boolean(body.cancelExisting);
 
-    if (!parseDate(date)) {
-        return res.status(400).json({ field: 'blockDate', error: 'Please select a valid date.' });
-    }
-    if (!parseDate(endDate) || endDate < date) {
-        return res.status(400).json({ field: 'blockEndDate', error: 'End date must be on or after the start date.' });
-    }
-    const diffDays = Math.round((parseDate(endDate).getTime() - parseDate(date).getTime()) / 86400000);
-    if (diffDays > 60) {
-        return res.status(400).json({ field: 'blockEndDate', error: 'You can block at most 60 days at a time.' });
-    }
     if (!isFullDay) {
         if (!Number.isInteger(startMinute) || !Number.isInteger(endMinute)
             || startMinute < 0 || endMinute > 1440 || startMinute >= endMinute) {
@@ -3765,16 +4337,15 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
         }
     }
 
-    const rowsToInsert = [];
-    for (let d = date; d <= endDate; d = addDays(d, 1)) {
-        rowsToInsert.push({
-            blocked_date: d,
-            is_full_day: isFullDay,
-            start_minute: isFullDay ? null : startMinute,
-            end_minute: isFullDay ? null : endMinute,
-            reason,
-        });
-    }
+    const rowsToInsert = targetDates.map((d) => ({
+        blocked_date: d,
+        is_full_day: isFullDay,
+        start_minute: isFullDay ? null : startMinute,
+        end_minute: isFullDay ? null : endMinute,
+        reason,
+    }));
+    const firstDate = targetDates[0];
+    const lastDate = targetDates[targetDates.length - 1];
 
     const { data: inserted, error: insertErr } = await db()
         .from(BLOCKED_TABLE)
@@ -3797,10 +4368,9 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
             db()
                 .from(TABLE)
                 .select('*')
-                .gte('appointment_date', date)
-                .lte('appointment_date', endDate)
+                .in('appointment_date', targetDates)
                 .neq('status', 'cancelled'),
-            isFullDay ? Promise.resolve([]) : fetchBlockedByDateRange(date, endDate),
+            isFullDay ? Promise.resolve([]) : fetchBlockedByDateRange(firstDate, lastDate),
         ]);
         if (!activeErr && Array.isArray(activeRows) && activeRows.length) {
             const bStart = isFullDay ? 0 : startMinute;
@@ -3854,7 +4424,8 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
 
     const rtPromise = notifyRealtimeListeners({
         type: 'schedule_blocked',
-        date,
+        date: firstDate,
+        dates: targetDates,
         cancelledCount: cancelledBookings.length,
     });
     if (process.env.VERCEL) await rtPromise;
@@ -3864,6 +4435,40 @@ app.post('/api/admin/blocks', requireAdmin, async (req, res) => {
         blocks: (inserted || []).map(toBlockedSchedule),
         cancelledBookings,
     });
+});
+
+// Remove all blocks on 1 or more selected dates
+app.post('/api/admin/blocks/unblock-dates', requireAdmin, async (req, res) => {
+    const dates = extractTargetDatesFromBody(req.body || {});
+    const { data, error } = await db()
+        .from(BLOCKED_TABLE)
+        .delete()
+        .in('blocked_date', dates)
+        .not('reason', 'like', `${BLOCKED_SETTING_PREFIX}%`)
+        .select('id');
+    // Note: rows with null reason are ignored by `not like` in SQL, so also delete null-reason rows on those dates
+    const { data: nullReasonData, error: err2 } = await db()
+        .from(BLOCKED_TABLE)
+        .delete()
+        .in('blocked_date', dates)
+        .is('reason', null)
+        .select('id');
+    const anyErr = error || err2;
+    if (anyErr) {
+        if (['42P01', 'PGRST205'].includes(anyErr.code)) {
+            return res.status(500).json({
+                error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+            });
+        }
+        return res.status(500).json({ error: anyErr.message });
+    }
+    const removedIds = [
+        ...(Array.isArray(data) ? data.map((r) => r.id) : []),
+        ...(Array.isArray(nullReasonData) ? nullReasonData.map((r) => r.id) : []),
+    ];
+    const rtPromise = notifyRealtimeListeners({ type: 'schedule_unblocked', dates });
+    if (process.env.VERCEL) await rtPromise;
+    res.json({ ok: true, removedIds });
 });
 
 // Remove a blocked date or time range

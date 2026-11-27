@@ -36,13 +36,33 @@
         notesSaving: false,
         notesDraftChecklist: [],
         notesDraftAttended: new Set(),
-        blockScope: 'full', // 'full' | 'time'
-        blocking: false,
-        savingLetterPickup: false,
-        savingCutoff: false,
+        scheduleConfig: null,
+        schedInitialized: false,
+        schedViewYear: 0,
+        schedViewMonth: 0, // 0-11
+        schedSelectMode: 'single', // 'single' | 'multi' | 'range'
+        schedRangeAnchor: null,
+        schedLastClickedDate: null,
+        schedSelectedDates: new Set(),
+        schedActionMode: 'open', // 'open' | 'block'
+        schedCategory: 'consultation', // 'consultation' | 'defense' | 'letter_pickup'
+        schedHourMode: 'full_day', // 'full_day' | 'regular' | 'custom'
+        schedCustomWindows: [{ start: '10:00', end: '17:00' }],
+        schedBlockScope: 'full', // 'full' | 'time'
+        schedRegType: 'consultation', // 'consultation' | 'defense'
+        schedOverviewFilter: 'all', // 'all' | 'consultation' | 'defense' | 'letter_pickup' | 'blocked'
+        schedBusy: false,
         bookingEndDate: '',
         sendingEmail: false,
         emailTemplate: 'manuscript_ready',
+    };
+
+    const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const CATEGORY_META = {
+        consultation: { label: 'Consultations', shortTag: 'Consult', badgeCls: 'teal' },
+        defense: { label: 'Capstone / Thesis Defense', shortTag: 'Defense', badgeCls: 'rose' },
+        letter_pickup: { label: 'Comm. Letter Pickup', shortTag: 'Pickup', badgeCls: 'violet' },
     };
 
     /* ---------------- helpers ---------------- */
@@ -159,19 +179,17 @@
         state.password = '';
         state.cancelling = false;
         state.notesSaving = false;
-        state.blocking = false;
-        state.savingLetterPickup = false;
-        state.savingCutoff = false;
+        state.schedBusy = false;
         state.sendingEmail = false;
         closeCancelModal();
         closeNotesModal();
-        closeBlockModal();
-        closeLetterPickupModal();
-        closeCutoffModal();
         closeSendEmailModal();
         state.bookings = [];
         state.blockedSchedules = [];
         state.letterPickupSchedules = [];
+        state.scheduleConfig = null;
+        state.schedInitialized = false;
+        state.schedSelectedDates = new Set();
         state.students = [];
         state.studentUpdateLogs = [];
         showLogin();
@@ -207,14 +225,25 @@
             state.letterPickupSchedules = (data.letterPickupSchedules || []).sort(
                 (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
             );
+            state.scheduleConfig = data.scheduleConfig || state.scheduleConfig || {
+                consultationHoursByDay: {},
+                defenseHoursByDay: {},
+                openDates: [],
+            };
             state.students = data.students || [];
             state.studentUpdateLogs = data.studentUpdateLogs || [];
             state.today = data.today;
             state.currentHour = data.currentHour;
             state.currentMinute = data.currentMinute ?? data.currentHour * 60;
             state.bookingEndDate = data.bookingEndDate || state.config?.lastBookableDate || `${data.today.slice(0, 4)}-12-12`;
-            if (!$('#letterPickupScheduleModal')?.classList.contains('hidden')) {
-                renderLetterPickupModalList();
+            if (!state.schedInitialized && data.today) {
+                const [ty, tm] = data.today.split('-').map(Number);
+                state.schedViewYear = ty;
+                state.schedViewMonth = tm - 1;
+                const tomorrow = addDays(data.today, 1);
+                state.schedSelectedDates = new Set([tomorrow]);
+                state.schedLastClickedDate = tomorrow;
+                state.schedInitialized = true;
             }
             if (state.cancelTarget && !state.cancelling) {
                 const updatedTarget = state.bookings.find((x) => x.id === state.cancelTarget.id);
@@ -270,218 +299,964 @@
         return item.date > state.today || (item.date === state.today && (item.endMinute ?? 1440) > state.currentMinute);
     };
 
+    function hasUpcomingLetterPickupWindow() {
+        const fromConfig = (state.scheduleConfig?.openDates || []).some(
+            (e) => e.category === 'letter_pickup'
+                && (!state.today || e.date > state.today)
+                && Array.isArray(e.effectiveWindows)
+                && e.effectiveWindows.length > 0
+        );
+        return fromConfig || state.letterPickupSchedules.some(isActiveLetterPickup);
+    }
+
+    function countUpcomingOpenScheduleItems() {
+        const openDates = state.scheduleConfig?.openDates || [];
+        const uniqueDates = new Set(
+            openDates
+                .filter((e) => (!state.today || e.date >= state.today) && Array.isArray(e.effectiveWindows) && e.effectiveWindows.length > 0)
+                .map((e) => e.date)
+        );
+        return uniqueDates.size;
+    }
+
     function updateHeaderDates() {
         const todayText = state.today ? `Today is ${longDate(state.today)}` : '';
-        const cutoffText = state.bookingEndDate ? ` · Open until ${longDate(state.bookingEndDate)}` : '';
+        const openDayCount = countUpcomingOpenScheduleItems();
+        const openSummary = openDayCount > 0
+            ? ` · ${openDayCount} open date${openDayCount === 1 ? '' : 's'} scheduled`
+            : ' · No future dates open yet';
         if ($('#todayLabel')) {
-            $('#todayLabel').textContent = `${todayText}${cutoffText}`;
-        }
-        if ($('#cutoffBtnLabel')) {
-            $('#cutoffBtnLabel').textContent = state.bookingEndDate
-                ? `Cutoff: ${shortDate(state.bookingEndDate)}`
-                : 'Booking Cutoff';
+            $('#todayLabel').textContent = `${todayText}${openSummary}`;
         }
     }
 
-    /* ---------------- booking cutoff date modal ---------------- */
-    function setCutoffError(msg) {
-        const errEl = $('#cutoffFormError');
+    /* ---------------- unified visual schedule & availability manager ---------------- */
+    const formatMinute12 = (totalMinutes) => {
+        const h = Math.floor(totalMinutes / 60) % 24;
+        const m = totalMinutes % 60;
+        const suffix = h >= 12 ? 'PM' : 'AM';
+        const hr = h % 12 === 0 ? 12 : h % 12;
+        return `${hr}:${pad2(m)} ${suffix}`;
+    };
+
+    const compactTime = (totalMinutes) => {
+        const h = Math.floor(totalMinutes / 60) % 24;
+        const m = totalMinutes % 60;
+        const suffix = h >= 12 ? 'p' : 'a';
+        const hr = h % 12 === 0 ? 12 : h % 12;
+        return m === 0 ? `${hr}${suffix}` : `${hr}:${pad2(m)}${suffix}`;
+    };
+
+    const makeDateStr = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
+
+    function switchAdminTab(tabName, scrollIntoView = false) {
+        state.tab = tabName;
+        document.querySelectorAll('.tab[data-tab]').forEach((t) => {
+            t.classList.toggle('active', t.dataset.tab === tabName);
+        });
+        render();
+        if (scrollIntoView) {
+            $('#mainBookingsCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
+    function getSortedSelectedDates() {
+        return [...state.schedSelectedDates].sort();
+    }
+
+    function getOpenEntriesByDateMap() {
+        const map = new Map();
+        for (const entry of state.scheduleConfig?.openDates || []) {
+            if (!Array.isArray(entry.effectiveWindows) || !entry.effectiveWindows.length) continue;
+            if (!map.has(entry.date)) map.set(entry.date, {});
+            map.get(entry.date)[entry.category] = entry;
+        }
+        return map;
+    }
+
+    function getBlocksByDateMap() {
+        const map = new Map();
+        for (const blk of state.blockedSchedules || []) {
+            if (!map.has(blk.date)) map.set(blk.date, []);
+            map.get(blk.date).push(blk);
+        }
+        return map;
+    }
+
+    function getActiveBookingsByDateMap() {
+        const map = new Map();
+        for (const b of state.bookings || []) {
+            if (isCancelled(b)) continue;
+            if (!map.has(b.date)) map.set(b.date, []);
+            map.get(b.date).push(b);
+        }
+        return map;
+    }
+
+    function setSchedOpenError(msg = '') {
+        const errEl = $('#schedOpenError');
         if (!errEl) return;
-        errEl.textContent = msg || '';
+        errEl.textContent = msg;
         errEl.classList.toggle('hidden', !msg);
     }
 
-    function renderCutoffPresets() {
-        const wrap = $('#cutoffPresetChips');
-        if (!wrap) return;
-        wrap.innerHTML = '';
-        const year = Number((state.today || new Date().toISOString()).slice(0, 4)) || 2026;
-        const presets = [
-            { label: `Nov 30, ${year}`, date: `${year}-11-30` },
-            { label: `Dec 12, ${year}`, date: `${year}-12-12` },
-            { label: `Dec 18, ${year}`, date: `${year}-12-18` },
-            { label: `Dec 31, ${year}`, date: `${year}-12-31` },
-        ];
-        presets.forEach((p) => {
-            if (state.today && p.date < state.today) return;
-            const chip = el('button', 'reason-chip', p.label);
-            chip.type = 'button';
-            chip.addEventListener('click', () => {
-                const input = $('#bookingEndDateInput');
-                if (input) input.value = p.date;
-                setCutoffError('');
-            });
-            wrap.appendChild(chip);
+    function setSchedBlockError(msg = '') {
+        const errEl = $('#schedBlockError');
+        if (!errEl) return;
+        errEl.textContent = msg;
+        errEl.classList.toggle('hidden', !msg);
+    }
+
+    function setSchedSelectMode(mode) {
+        state.schedSelectMode = ['single', 'multi', 'range'].includes(mode) ? mode : 'single';
+        state.schedRangeAnchor = null;
+        if (state.schedSelectMode === 'single' && state.schedSelectedDates.size > 1) {
+            const first = getSortedSelectedDates()[0];
+            state.schedSelectedDates = new Set(first ? [first] : []);
+        }
+        document.querySelectorAll('.sched-mode-pill[data-select-mode]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.selectMode === state.schedSelectMode);
         });
+        $('#schedRangeSkipSunWrap')?.classList.toggle('hidden', state.schedSelectMode !== 'range');
+        renderScheduleManager();
     }
 
-    function openCutoffModal() {
-        const current = state.bookingEndDate || state.config?.lastBookableDate || (state.today ? `${state.today.slice(0, 4)}-12-12` : '');
-        if ($('#cutoffCurrentText')) {
-            $('#cutoffCurrentText').textContent = current ? longDate(current) : '—';
+    function fillDateRangeSet(d1, d2, skipSundays = false) {
+        const start = d1 <= d2 ? d1 : d2;
+        const end = d1 <= d2 ? d2 : d1;
+        const out = [];
+        for (let cur = start; cur <= end; cur = addDays(cur, 1)) {
+            if (skipSundays && start !== end && utcDate(cur).getUTCDay() === 0) continue;
+            out.push(cur);
+            if (out.length >= 120) break;
         }
-        const dateInput = $('#bookingEndDateInput');
-        if (dateInput) {
-            if (state.today) dateInput.min = state.today;
-            dateInput.value = current;
-        }
-        renderCutoffPresets();
-        setCutoffError('');
-        $('#cutoffModal')?.classList.remove('hidden');
-        syncModalBodyLock();
-        if (window.matchMedia('(hover: hover)').matches) {
-            setTimeout(() => dateInput?.focus(), 40);
-        }
+        return out;
     }
 
-    function closeCutoffModal() {
-        if (state.savingCutoff) return;
-        $('#cutoffModal')?.classList.add('hidden');
-        syncModalBodyLock();
-        setCutoffError('');
-    }
+    function onClickScheduleDay(ds, event) {
+        setSchedOpenError('');
+        setSchedBlockError('');
 
-    async function submitCutoffForm(e) {
-        e.preventDefault();
-        if (state.savingCutoff) return;
-        setCutoffError('');
-
-        const date = ($('#bookingEndDateInput')?.value || '').trim();
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            setCutoffError('Please select a valid cutoff date.');
-            $('#bookingEndDateInput')?.focus();
-            return;
-        }
-        if (state.today && date < state.today) {
-            setCutoffError('The booking cutoff date must be today or a future date.');
-            $('#bookingEndDateInput')?.focus();
-            return;
-        }
-
-        state.savingCutoff = true;
-        const confirmBtn = $('#confirmCutoffBtn');
-        const cancelBtn = $('#cancelCutoffModalBtn');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.querySelector('.spinner')?.classList.remove('hidden');
-            confirmBtn.querySelector('.btn-label').textContent = 'Saving…';
-        }
-        if (cancelBtn) cancelBtn.disabled = true;
-
-        try {
-            const { bookingEndDate } = await api('/api/admin/settings/booking-end-date', {
-                method: 'POST',
-                body: JSON.stringify({ bookingEndDate: date }),
-            });
-            state.bookingEndDate = bookingEndDate;
-            if (state.config) state.config.lastBookableDate = bookingEndDate;
-            updateHeaderDates();
-            state.savingCutoff = false;
-            closeCutoffModal();
-            window.SchedulerRealtime?.notifyLocal({
-                type: 'settings_updated',
-                bookingEndDate,
-            });
-            toast(`Booking cutoff updated to ${longDate(bookingEndDate)}.`, 'success');
-        } catch (err) {
-            setCutoffError(err.message);
-        } finally {
-            state.savingCutoff = false;
-            if (confirmBtn) {
-                confirmBtn.disabled = false;
-                confirmBtn.querySelector('.spinner')?.classList.add('hidden');
-                confirmBtn.querySelector('.btn-label').textContent = 'Save cutoff date';
+        if (event?.shiftKey && state.schedLastClickedDate) {
+            const skipSun = Boolean($('#schedRangeSkipSun')?.checked) && state.schedSelectMode === 'range';
+            const rangeDates = fillDateRangeSet(state.schedLastClickedDate, ds, skipSun);
+            if (state.schedSelectMode === 'single') {
+                state.schedSelectMode = 'multi';
+                document.querySelectorAll('.sched-mode-pill[data-select-mode]').forEach((btn) => {
+                    btn.classList.toggle('active', btn.dataset.selectMode === 'multi');
+                });
             }
-            if (cancelBtn) cancelBtn.disabled = false;
-        }
-    }
-
-    /* ---------------- block date / time modal ---------------- */
-    function setBlockFormError(msg) {
-        const errEl = $('#blockFormError');
-        if (!errEl) return;
-        errEl.textContent = msg || '';
-        errEl.classList.toggle('hidden', !msg);
-    }
-
-    function setBlockScope(scope) {
-        state.blockScope = scope === 'time' ? 'time' : 'full';
-        const isTime = state.blockScope === 'time';
-        document.querySelectorAll('input[name="blockScope"]').forEach((r) => {
-            r.checked = r.value === state.blockScope;
-        });
-        $('#blockTimeFields')?.classList.toggle('hidden', !isTime);
-        setBlockFormError('');
-    }
-
-    function openBlockModal(defaultDate = '') {
-        const startDefault = defaultDate || (state.today ? addDays(state.today, 1) : new Date().toISOString().slice(0, 10));
-        const dateInput = $('#blockDateInput');
-        if (dateInput) {
-            dateInput.value = startDefault;
-            if (state.today) dateInput.min = state.today;
-        }
-        if ($('#blockReasonInput')) $('#blockReasonInput').value = '';
-        if ($('#blockCancelExistingInput')) $('#blockCancelExistingInput').checked = true;
-        setBlockScope('full');
-        setBlockFormError('');
-        $('#blockModal')?.classList.remove('hidden');
-        syncModalBodyLock();
-        if (window.matchMedia('(hover: hover)').matches) {
-            setTimeout(() => dateInput?.focus(), 40);
-        }
-    }
-
-    function closeBlockModal() {
-        if (state.blocking) return;
-        $('#blockModal')?.classList.add('hidden');
-        syncModalBodyLock();
-        setBlockFormError('');
-    }
-
-    async function submitBlockSchedule(e) {
-        e.preventDefault();
-        if (state.blocking) return;
-        setBlockFormError('');
-
-        const date = ($('#blockDateInput')?.value || '').trim();
-        const isFullDay = state.blockScope === 'full';
-        const reason = ($('#blockReasonInput')?.value || '').trim();
-        const cancelExisting = Boolean($('#blockCancelExistingInput')?.checked);
-
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            setBlockFormError('Please select a date to block.');
-            $('#blockDateInput')?.focus();
+            rangeDates.forEach((d) => state.schedSelectedDates.add(d));
+            state.schedLastClickedDate = ds;
+            state.schedRangeAnchor = null;
+            renderScheduleManager();
             return;
         }
 
-        let startMinute = null;
-        let endMinute = null;
-        if (!isFullDay) {
-            startMinute = timeValToMinute($('#blockStartTimeInput')?.value);
-            endMinute = timeValToMinute($('#blockEndTimeInput')?.value);
-            if (startMinute === null || endMinute === null || startMinute >= endMinute) {
-                setBlockFormError('End time must be after start time.');
+        if (state.schedSelectMode === 'range') {
+            if (!state.schedRangeAnchor) {
+                state.schedRangeAnchor = ds;
+                state.schedSelectedDates = new Set([ds]);
+            } else {
+                const skipSun = Boolean($('#schedRangeSkipSun')?.checked);
+                const rangeDates = fillDateRangeSet(state.schedRangeAnchor, ds, skipSun);
+                state.schedSelectedDates = new Set(rangeDates);
+                state.schedRangeAnchor = null;
+            }
+            state.schedLastClickedDate = ds;
+            renderScheduleManager();
+            return;
+        }
+
+        if (state.schedSelectMode === 'multi') {
+            if (state.schedSelectedDates.has(ds)) {
+                state.schedSelectedDates.delete(ds);
+            } else {
+                state.schedSelectedDates.add(ds);
+            }
+            state.schedLastClickedDate = ds;
+            renderScheduleManager();
+            return;
+        }
+
+        // Single Date mode
+        state.schedSelectedDates = new Set([ds]);
+        state.schedLastClickedDate = ds;
+        renderScheduleManager();
+    }
+
+    function changeSchedMonth(delta) {
+        let m = state.schedViewMonth + delta;
+        let y = state.schedViewYear;
+        if (m < 0) { m = 11; y -= 1; }
+        if (m > 11) { m = 0; y += 1; }
+        state.schedViewYear = y;
+        state.schedViewMonth = m;
+        renderScheduleCalendar();
+    }
+
+    function jumpSchedToday() {
+        const ref = state.today || new Date().toISOString().slice(0, 10);
+        const [y, m] = ref.split('-').map(Number);
+        state.schedViewYear = y;
+        state.schedViewMonth = m - 1;
+        const tomorrow = addDays(ref, 1);
+        state.schedSelectMode = 'single';
+        state.schedRangeAnchor = null;
+        state.schedSelectedDates = new Set([tomorrow]);
+        document.querySelectorAll('.sched-mode-pill[data-select-mode]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.selectMode === 'single');
+        });
+        $('#schedRangeSkipSunWrap')?.classList.add('hidden');
+        renderScheduleManager();
+    }
+
+    function renderScheduleCalendar() {
+        const y = state.schedViewYear || 2026;
+        const m = state.schedViewMonth || 0;
+        const monthLabelEl = $('#schedMonthLabel');
+        if (monthLabelEl) {
+            monthLabelEl.textContent = new Date(Date.UTC(y, m, 1)).toLocaleDateString('en-US', {
+                month: 'long',
+                year: 'numeric',
+                timeZone: 'UTC',
+            });
+        }
+
+        const hintTextEl = $('#schedSelectionHintText');
+        const clearBtn = $('#schedClearSelectionBtn');
+        const selectedCount = state.schedSelectedDates.size;
+        if (hintTextEl) {
+            if (state.schedSelectMode === 'range' && state.schedRangeAnchor) {
+                hintTextEl.textContent = `Start date: ${shortDate(state.schedRangeAnchor)} — now click an end date on the calendar.`;
+            } else if (selectedCount > 1) {
+                hintTextEl.textContent = `${selectedCount} dates selected on calendar.`;
+            } else if (selectedCount === 1) {
+                const only = getSortedSelectedDates()[0];
+                hintTextEl.textContent = `Selected: ${longDate(only)} (Shift+click another date to select a range).`;
+            } else if (state.schedSelectMode === 'multi') {
+                hintTextEl.textContent = 'Click multiple dates on the calendar to toggle them.';
+            } else if (state.schedSelectMode === 'range') {
+                hintTextEl.textContent = 'Click a start date, then click an end date on the calendar.';
+            } else {
+                hintTextEl.textContent = 'Click any date on the calendar to open or block it.';
+            }
+        }
+        clearBtn?.classList.toggle('hidden', selectedCount <= 1 && !state.schedRangeAnchor);
+
+        const container = $('#schedDays');
+        if (!container) return;
+        container.innerHTML = '';
+
+        const firstDow = new Date(Date.UTC(y, m, 1)).getUTCDay();
+        const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+        for (let i = 0; i < firstDow; i += 1) {
+            container.appendChild(el('span', 'day-spacer'));
+        }
+
+        const openByDate = getOpenEntriesByDateMap();
+        const blocksByDate = getBlocksByDateMap();
+        const apptsByDate = getActiveBookingsByDateMap();
+
+        for (let d = 1; d <= daysInMonth; d += 1) {
+            const ds = makeDateStr(y, m, d);
+            const dayOpen = openByDate.get(ds) || {};
+            const dayBlocks = blocksByDate.get(ds) || [];
+            const dayAppts = apptsByDate.get(ds) || [];
+            const hasFullBlock = dayBlocks.some((b) => b.isFullDay);
+            const hasAnyOpen = Boolean(dayOpen.consultation || dayOpen.defense || dayOpen.letter_pickup);
+
+            const btn = el('button', 'sched-day');
+            btn.type = 'button';
+            btn.dataset.date = ds;
+            if (state.today && ds <= state.today) btn.classList.add('is-past');
+            if (ds === state.today) btn.classList.add('is-today');
+            if (hasAnyOpen && !hasFullBlock) btn.classList.add('is-open-day');
+            if (hasFullBlock) btn.classList.add('is-blocked-full');
+            if (state.schedSelectedDates.has(ds)) btn.classList.add('is-selected');
+            if (state.schedRangeAnchor === ds) btn.classList.add('is-range-anchor');
+
+            const head = el('div', 'sched-day-head');
+            head.appendChild(el('span', 'sched-day-num', String(d)));
+            if (dayAppts.length > 0) {
+                const apptBadge = el('span', 'sched-day-appts', String(dayAppts.length));
+                apptBadge.title = `${dayAppts.length} scheduled appointment${dayAppts.length === 1 ? '' : 's'}`;
+                head.appendChild(apptBadge);
+            }
+            btn.appendChild(head);
+
+            const tags = el('div', 'sched-day-tags');
+            const tooltipLines = [longDate(ds)];
+
+            if (hasFullBlock) {
+                const blk = dayBlocks.find((b) => b.isFullDay);
+                tags.appendChild(el('span', 'sched-day-tag danger', 'Blocked'));
+                tooltipLines.push(`Blocked all day${blk?.reason ? ` (${blk.reason})` : ''}`);
+            } else {
+                ['consultation', 'defense', 'letter_pickup'].forEach((cat) => {
+                    const entry = dayOpen[cat];
+                    if (!entry) return;
+                    const meta = CATEGORY_META[cat];
+                    const firstWin = entry.effectiveWindows[0];
+                    const shortHours = entry.mode === 'full_day'
+                        ? '10a–5p'
+                        : entry.effectiveWindows.length > 1
+                            ? `${entry.effectiveWindows.length} win`
+                            : firstWin
+                                ? `${compactTime(firstWin.startMinute)}–${compactTime(firstWin.endMinute)}`
+                                : '';
+                    tags.appendChild(el('span', `sched-day-tag ${meta.badgeCls}`, `${meta.shortTag}${shortHours ? ` · ${shortHours}` : ''}`));
+                    tooltipLines.push(`${meta.label}: ${entry.label}`);
+                });
+                if (dayBlocks.length > 0) {
+                    tags.appendChild(el('span', 'sched-day-tag danger', `Block (${dayBlocks.length})`));
+                    dayBlocks.forEach((b) => tooltipLines.push(`Blocked: ${b.label}${b.reason ? ` (${b.reason})` : ''}`));
+                }
+            }
+
+            if (tooltipLines.length === 1) {
+                tooltipLines.push('Closed (click to open)');
+            }
+            btn.title = tooltipLines.join('\n');
+            btn.appendChild(tags);
+            btn.addEventListener('click', (e) => onClickScheduleDay(ds, e));
+            container.appendChild(btn);
+        }
+    }
+
+    function renderCustomWindowRows() {
+        const wrap = $('#schedCustomWindowsWrap');
+        const rowsContainer = $('#schedCustomWindowRows');
+        if (!wrap || !rowsContainer) return;
+        wrap.classList.toggle('hidden', state.schedHourMode !== 'custom');
+        if (state.schedHourMode !== 'custom') return;
+
+        rowsContainer.innerHTML = '';
+        if (!state.schedCustomWindows.length) {
+            state.schedCustomWindows = [{ start: '10:00', end: '17:00' }];
+        }
+
+        state.schedCustomWindows.forEach((win, idx) => {
+            const row = el('div', 'sched-custom-win-row');
+            const startInput = document.createElement('input');
+            startInput.type = 'time';
+            startInput.step = '300';
+            startInput.value = win.start;
+            startInput.setAttribute('aria-label', `Window ${idx + 1} start time`);
+            startInput.addEventListener('input', () => {
+                state.schedCustomWindows[idx].start = startInput.value;
+                setSchedOpenError('');
+            });
+
+            const sep = el('span', 'sched-custom-win-sep', 'to');
+
+            const endInput = document.createElement('input');
+            endInput.type = 'time';
+            endInput.step = '300';
+            endInput.value = win.end;
+            endInput.setAttribute('aria-label', `Window ${idx + 1} end time`);
+            endInput.addEventListener('input', () => {
+                state.schedCustomWindows[idx].end = endInput.value;
+                setSchedOpenError('');
+            });
+
+            row.append(startInput, sep, endInput);
+            if (state.schedCustomWindows.length > 1) {
+                const rmBtn = el('button', 'remove-member');
+                rmBtn.type = 'button';
+                rmBtn.title = 'Remove window';
+                rmBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+                rmBtn.addEventListener('click', () => {
+                    state.schedCustomWindows.splice(idx, 1);
+                    renderCustomWindowRows();
+                });
+                row.appendChild(rmBtn);
+            }
+            rowsContainer.appendChild(row);
+        });
+
+        $('#schedAddCustomWinBtn')?.classList.toggle('hidden', state.schedCustomWindows.length >= 4);
+    }
+
+    function renderScheduleInspector() {
+        const selected = getSortedSelectedDates();
+        const eyebrowEl = $('#schedStatusEyebrow');
+        const titleEl = $('#schedSelectedTitle');
+        const currentListEl = $('#schedCurrentList');
+        if (!currentListEl) return;
+        currentListEl.innerHTML = '';
+
+        const openByDate = getOpenEntriesByDateMap();
+        const blocksByDate = getBlocksByDateMap();
+        const apptsByDate = getActiveBookingsByDateMap();
+
+        if (!selected.length) {
+            if (eyebrowEl) eyebrowEl.textContent = 'No Date Selected';
+            if (titleEl) titleEl.textContent = 'Select a date on the calendar';
+            currentListEl.appendChild(el('p', 'muted small', 'Click one date, multiple dates, or a date range on the calendar to inspect or update availability.'));
+        } else if (selected.length === 1) {
+            const ds = selected[0];
+            if (eyebrowEl) {
+                eyebrowEl.textContent = state.today && ds <= state.today
+                    ? (ds === state.today ? 'Today (students book 1 day ahead)' : 'Past Date')
+                    : 'Selected Date';
+            }
+            if (titleEl) titleEl.textContent = longDate(ds);
+
+            const dayOpen = openByDate.get(ds) || {};
+            const dayBlocks = blocksByDate.get(ds) || [];
+            const dayAppts = apptsByDate.get(ds) || [];
+
+            if (dayAppts.length > 0) {
+                const apptBox = el('div', 'sched-appt-notice');
+                apptBox.appendChild(el('span', '', `${dayAppts.length} scheduled appointment${dayAppts.length === 1 ? '' : 's'} on this date`));
+                const viewBtn = el('button', 'link-btn', 'View in Upcoming →');
+                viewBtn.type = 'button';
+                viewBtn.addEventListener('click', () => {
+                    state.search = ds;
+                    if ($('#searchInput')) $('#searchInput').value = ds;
+                    switchAdminTab(state.today && ds < state.today ? 'past' : 'upcoming');
+                });
+                apptBox.appendChild(viewBtn);
+                currentListEl.appendChild(apptBox);
+            }
+
+            ['consultation', 'defense', 'letter_pickup'].forEach((cat) => {
+                const meta = CATEGORY_META[cat];
+                const entry = dayOpen[cat];
+                const row = el('div', 'sched-status-row' + (entry ? ' is-open' : ''));
+                const info = el('div', 'sched-status-row-info');
+                const top = el('div', 'sched-status-row-top');
+                top.appendChild(el('span', `badge ${entry ? meta.badgeCls : 'muted-badge'}`, meta.label));
+                if (entry) {
+                    const modeTag = entry.mode === 'full_day'
+                        ? 'Full Day'
+                        : entry.mode === 'regular'
+                            ? 'Regular Hours'
+                            : 'Custom';
+                    top.appendChild(el('span', 'badge muted-badge', modeTag));
+                }
+                info.appendChild(top);
+                info.appendChild(el(
+                    'small',
+                    '',
+                    entry
+                        ? `Open · ${entry.label}${entry.note ? ` (${entry.note})` : ''}`
+                        : 'Closed'
+                ));
+                row.appendChild(info);
+
+                if (entry) {
+                    const closeBtn = el('button', 'btn btn-danger-soft btn-sm', 'Close');
+                    closeBtn.type = 'button';
+                    closeBtn.addEventListener('click', () => closeScheduleDates([ds], [cat], closeBtn));
+                    row.appendChild(closeBtn);
+                }
+                currentListEl.appendChild(row);
+            });
+
+            dayBlocks.forEach((blk) => {
+                const row = el('div', 'sched-status-row is-blocked');
+                const info = el('div', 'sched-status-row-info');
+                const top = el('div', 'sched-status-row-top');
+                top.appendChild(el('span', 'badge danger', `Blocked · ${blk.label}`));
+                info.appendChild(top);
+                info.appendChild(el('small', '', blk.reason || 'Instructor unavailable'));
+                const unblockBtn = el('button', 'btn btn-ghost btn-sm', 'Unblock');
+                unblockBtn.type = 'button';
+                unblockBtn.addEventListener('click', () => unblockSchedule(blk, unblockBtn));
+                row.append(info, unblockBtn);
+                currentListEl.appendChild(row);
+            });
+        } else {
+            const first = selected[0];
+            const last = selected[selected.length - 1];
+            if (eyebrowEl) eyebrowEl.textContent = `${selected.length} Dates Selected`;
+            if (titleEl) titleEl.textContent = `${shortDate(first)} – ${shortDate(last)}`;
+
+            ['consultation', 'defense', 'letter_pickup'].forEach((cat) => {
+                const meta = CATEGORY_META[cat];
+                const openOnCount = selected.filter((d) => Boolean(openByDate.get(d)?.[cat])).length;
+                const row = el('div', 'sched-status-row' + (openOnCount > 0 ? ' is-open' : ''));
+                const info = el('div', 'sched-status-row-info');
+                const top = el('div', 'sched-status-row-top');
+                top.appendChild(el('span', `badge ${openOnCount > 0 ? meta.badgeCls : 'muted-badge'}`, meta.label));
+                info.appendChild(top);
+                info.appendChild(el('small', '', openOnCount > 0 ? `Open on ${openOnCount} of ${selected.length} selected dates` : 'Closed on all selected dates'));
+                row.appendChild(info);
+                if (openOnCount > 0) {
+                    const closeBtn = el('button', 'btn btn-danger-soft btn-sm', 'Close all');
+                    closeBtn.type = 'button';
+                    closeBtn.addEventListener('click', () => closeScheduleDates(selected, [cat], closeBtn));
+                    row.appendChild(closeBtn);
+                }
+                currentListEl.appendChild(row);
+            });
+
+            const blockedSelectedDates = selected.filter((d) => (blocksByDate.get(d) || []).length > 0);
+            if (blockedSelectedDates.length > 0) {
+                const row = el('div', 'sched-status-row is-blocked');
+                const info = el('div', 'sched-status-row-info');
+                const top = el('div', 'sched-status-row-top');
+                top.appendChild(el('span', 'badge danger', 'Blocked'));
+                info.appendChild(top);
+                info.appendChild(el('small', '', `${blockedSelectedDates.length} of ${selected.length} selected dates have active blocks`));
+                const unblockAllBtn = el('button', 'btn btn-ghost btn-sm', 'Unblock all');
+                unblockAllBtn.type = 'button';
+                unblockAllBtn.addEventListener('click', () => unblockSelectedDates(blockedSelectedDates, unblockAllBtn));
+                row.append(info, unblockAllBtn);
+                currentListEl.appendChild(row);
+            }
+        }
+
+        // Sync Open vs Block form visibility
+        document.querySelectorAll('input[name="schedActionMode"]').forEach((r) => {
+            r.checked = r.value === state.schedActionMode;
+        });
+        $('#schedOpenForm')?.classList.toggle('hidden', state.schedActionMode !== 'open');
+        $('#schedBlockForm')?.classList.toggle('hidden', state.schedActionMode !== 'block');
+
+        // Sync Category cards
+        document.querySelectorAll('.sched-cat-card[data-cat]').forEach((card) => {
+            card.classList.toggle('active', card.dataset.cat === state.schedCategory);
+        });
+
+        // Sync Hour Mode options & live regular-hours preview for selected dates
+        const isDefense = state.schedCategory === 'defense';
+        const regTitleEl = $('#schedRegularModeTitle');
+        if (regTitleEl) {
+            regTitleEl.textContent = isDefense ? 'My Regular Defense Hours' : 'My Consultation Hours Only';
+        }
+
+        const regPreviewEl = $('#schedRegularModePreview');
+        if (regPreviewEl) {
+            const hoursTable = isDefense
+                ? (state.scheduleConfig?.defenseHoursByDay || {})
+                : (state.scheduleConfig?.consultationHoursByDay || {});
+            const dows = selected.length
+                ? [...new Set(selected.map((d) => utcDate(d).getUTCDay()))].sort((a, b) => a - b)
+                : [1, 2, 3, 4, 5, 6];
+            const missingNames = [];
+            const parts = [];
+            dows.forEach((dow) => {
+                const wins = hoursTable[dow] || hoursTable[String(dow)] || [];
+                if (wins.length) {
+                    parts.push(`${WEEKDAY_SHORT[dow]}: ${wins.map((w) => w.label).join(', ')}`);
+                } else if (selected.length) {
+                    missingNames.push(WEEKDAY_FULL[dow]);
+                }
+            });
+            if (missingNames.length > 0) {
+                regPreviewEl.textContent = `Note: ${missingNames.join(', ')} ${missingNames.length === 1 ? 'has' : 'have'} no regular ${isDefense ? 'Defense' : 'Consultation'} Hours set yet — edit below or pick 10:00 AM – 5:00 PM / Custom.`;
+                regPreviewEl.classList.add('is-warning');
+            } else if (parts.length > 0) {
+                regPreviewEl.textContent = parts.join(' · ');
+                regPreviewEl.classList.remove('is-warning');
+            } else {
+                regPreviewEl.textContent = 'No regular weekly hours set yet — configure them below.';
+                regPreviewEl.classList.add('is-warning');
+            }
+        }
+
+        document.querySelectorAll('.sched-hour-option[data-hour-mode]').forEach((opt) => {
+            const active = opt.dataset.hourMode === state.schedHourMode;
+            opt.classList.toggle('is-selected', active);
+            const radio = opt.querySelector('input[type="radio"]');
+            if (radio) radio.checked = active;
+        });
+
+        renderCustomWindowRows();
+
+        // Auto-unblock checkbox if any selected date currently has a full-day block
+        const hasFullDayBlockOnSelected = selected.some((d) => (blocksByDate.get(d) || []).some((b) => b.isFullDay));
+        $('#schedAutoUnblockWrap')?.classList.toggle('hidden', !hasFullDayBlockOnSelected);
+
+        // Dynamic submit button labels
+        const catLabel = CATEGORY_META[state.schedCategory]?.label || 'Schedule';
+        const dateSuffix = selected.length === 0
+            ? ''
+            : selected.length === 1
+                ? ` on ${shortDate(selected[0])}`
+                : ` on ${selected.length} Dates`;
+        if ($('#schedOpenSubmitLabel') && !state.schedBusy) {
+            $('#schedOpenSubmitLabel').textContent = `Open ${catLabel}${dateSuffix}`;
+        }
+        if ($('#schedOpenSubmitBtn')) {
+            $('#schedOpenSubmitBtn').disabled = state.schedBusy || selected.length === 0;
+        }
+
+        document.querySelectorAll('input[name="schedBlockScope"]').forEach((r) => {
+            r.checked = r.value === state.schedBlockScope;
+        });
+        $('#schedBlockTimeSection')?.classList.toggle('hidden', state.schedBlockScope !== 'time');
+        if ($('#schedBlockSubmitLabel') && !state.schedBusy) {
+            $('#schedBlockSubmitLabel').textContent = selected.length === 1
+                ? `Block ${shortDate(selected[0])}`
+                : selected.length > 1
+                    ? `Block ${selected.length} Dates`
+                    : 'Block Selected Date(s)';
+        }
+        if ($('#schedBlockSubmitBtn')) {
+            $('#schedBlockSubmitBtn').disabled = state.schedBusy || selected.length === 0;
+        }
+    }
+
+    function renderRegularHoursSection() {
+        const grid = $('#schedRegularGrid');
+        if (!grid) return;
+        grid.innerHTML = '';
+
+        document.querySelectorAll('input[name="schedRegType"]').forEach((r) => {
+            r.checked = r.value === state.schedRegType;
+        });
+
+        const isDefense = state.schedRegType === 'defense';
+        const source = isDefense
+            ? (state.scheduleConfig?.defenseHoursByDay || {})
+            : (state.scheduleConfig?.consultationHoursByDay || {});
+
+        // Show Monday (1) through Saturday (6)
+        [1, 2, 3, 4, 5, 6].forEach((dow) => {
+            const wins = source[dow] || source[String(dow)] || [];
+            const card = el('div', 'sched-weekday-card');
+
+            const head = el('div', 'sched-weekday-head');
+            head.appendChild(el('strong', '', WEEKDAY_FULL[dow]));
+            head.appendChild(el(
+                'span',
+                `badge ${wins.length ? (isDefense ? 'rose' : 'teal') : 'muted-badge'}`,
+                wins.length ? `${wins.length} window${wins.length === 1 ? '' : 's'}` : 'None set'
+            ));
+            card.appendChild(head);
+
+            const chipsWrap = el('div', 'sched-weekday-chips');
+            if (!wins.length) {
+                chipsWrap.appendChild(el('span', 'muted small', 'No regular hours configured.'));
+            } else {
+                wins.forEach((w, idx) => {
+                    const chip = el('span', 'sched-win-chip' + (isDefense ? ' rose' : ''));
+                    chip.appendChild(el('span', '', w.label));
+                    const rmBtn = el('button', '', '×');
+                    rmBtn.type = 'button';
+                    rmBtn.title = `Remove ${w.label}`;
+                    rmBtn.addEventListener('click', () => removeRegularHourWindow(dow, idx, rmBtn));
+                    chip.appendChild(rmBtn);
+                    chipsWrap.appendChild(chip);
+                });
+            }
+            card.appendChild(chipsWrap);
+
+            const addRow = el('div', 'sched-weekday-add-row');
+            const startInp = document.createElement('input');
+            startInp.type = 'time';
+            startInp.step = '300';
+            startInp.value = isDefense ? '09:00' : '14:10';
+            startInp.setAttribute('aria-label', `${WEEKDAY_FULL[dow]} start time`);
+
+            const endInp = document.createElement('input');
+            endInp.type = 'time';
+            endInp.step = '300';
+            endInp.value = isDefense ? '12:00' : '15:30';
+            endInp.setAttribute('aria-label', `${WEEKDAY_FULL[dow]} end time`);
+
+            const addBtn = el('button', 'btn btn-primary-soft btn-sm', '+ Add');
+            addBtn.type = 'button';
+            addBtn.addEventListener('click', () => addRegularHourWindow(dow, startInp.value, endInp.value, addBtn));
+
+            addRow.append(startInp, el('span', 'muted small', '–'), endInp, addBtn);
+            card.appendChild(addRow);
+
+            grid.appendChild(card);
+        });
+    }
+
+    async function saveRegularHoursMap(type, nextHoursMap, triggerBtn) {
+        if (triggerBtn) triggerBtn.disabled = true;
+        try {
+            const payload = type === 'defense'
+                ? { defenseHoursByDay: nextHoursMap }
+                : { consultationHoursByDay: nextHoursMap };
+            const { scheduleConfig } = await api('/api/admin/schedule/regular-hours', {
+                method: 'PUT',
+                body: JSON.stringify(payload),
+            });
+            state.scheduleConfig = scheduleConfig;
+            renderScheduleManager();
+            updateHeaderDates();
+            window.SchedulerRealtime?.notifyLocal({ type: 'schedule_config_updated' });
+            toast(`Saved ${type === 'defense' ? 'Defense' : 'Consultation'} regular hours.`, 'success');
+        } catch (err) {
+            if (triggerBtn) triggerBtn.disabled = false;
+            toast(err.message, 'error');
+        }
+    }
+
+    function cloneRawHoursMap(source) {
+        const out = {};
+        for (let d = 0; d <= 6; d += 1) {
+            const arr = source?.[d] || source?.[String(d)] || [];
+            out[d] = arr.map((w) => [w.startMinute, w.endMinute]);
+        }
+        return out;
+    }
+
+    async function addRegularHourWindow(dow, startStr, endStr, btn) {
+        const s = timeValToMinute(startStr);
+        const e = timeValToMinute(endStr);
+        const isDefense = state.schedRegType === 'defense';
+        if (s === null || e === null || s >= e) {
+            toast('End time must be after start time.', 'error');
+            return;
+        }
+        if (isDefense && e - s < 60) {
+            toast('Defense hours must be at least 1 hour (60 minutes) long.', 'error');
+            return;
+        }
+        if (!isDefense && e - s < 5) {
+            toast('Consultation window must be at least 5 minutes long.', 'error');
+            return;
+        }
+        const source = isDefense ? state.scheduleConfig?.defenseHoursByDay : state.scheduleConfig?.consultationHoursByDay;
+        const nextMap = cloneRawHoursMap(source);
+        nextMap[dow].push([s, e]);
+        await saveRegularHoursMap(state.schedRegType, nextMap, btn);
+    }
+
+    async function removeRegularHourWindow(dow, idx, btn) {
+        const isDefense = state.schedRegType === 'defense';
+        const source = isDefense ? state.scheduleConfig?.defenseHoursByDay : state.scheduleConfig?.consultationHoursByDay;
+        const nextMap = cloneRawHoursMap(source);
+        nextMap[dow].splice(idx, 1);
+        await saveRegularHoursMap(state.schedRegType, nextMap, btn);
+    }
+
+    function renderScheduleOverview() {
+        const list = $('#schedOverviewList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        document.querySelectorAll('#schedOverviewFilters [data-overview-filter]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.overviewFilter === state.schedOverviewFilter);
+        });
+
+        const filter = state.schedOverviewFilter || 'all';
+        const items = [];
+
+        if (filter !== 'blocked') {
+            for (const entry of state.scheduleConfig?.openDates || []) {
+                if (state.today && entry.date < state.today) continue;
+                if (!Array.isArray(entry.effectiveWindows) || !entry.effectiveWindows.length) continue;
+                if (filter !== 'all' && entry.category !== filter) continue;
+                items.push({ kind: 'open', date: entry.date, entry });
+            }
+        }
+
+        if (filter === 'all' || filter === 'blocked') {
+            for (const blk of state.blockedSchedules || []) {
+                if (!isActiveBlock(blk)) continue;
+                items.push({ kind: 'block', date: blk.date, blk });
+            }
+        }
+
+        items.sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'block' ? 1 : -1));
+
+        if (!items.length) {
+            list.appendChild(el('p', 'muted small', 'No upcoming configured dates match this filter. Select dates on the calendar above to open or block them.'));
+            return;
+        }
+
+        items.forEach((it) => {
+            const row = el('div', 'sched-overview-item');
+            const left = el('div', 'sched-overview-item-left');
+
+            const dateBtn = el('button', 'sched-overview-date-btn', longDate(it.date));
+            dateBtn.type = 'button';
+            dateBtn.addEventListener('click', () => {
+                const [y, m] = it.date.split('-').map(Number);
+                state.schedViewYear = y;
+                state.schedViewMonth = m - 1;
+                state.schedSelectMode = 'single';
+                state.schedRangeAnchor = null;
+                state.schedSelectedDates = new Set([it.date]);
+                document.querySelectorAll('.sched-mode-pill[data-select-mode]').forEach((b) => {
+                    b.classList.toggle('active', b.dataset.selectMode === 'single');
+                });
+                $('#schedRangeSkipSunWrap')?.classList.add('hidden');
+                renderScheduleManager();
+                $('.sched-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+            left.appendChild(dateBtn);
+
+            if (it.kind === 'open') {
+                const meta = CATEGORY_META[it.entry.category] || CATEGORY_META.consultation;
+                left.appendChild(el('span', `badge ${meta.badgeCls}`, meta.label));
+                left.appendChild(el('span', 'muted small', `${it.entry.label}${it.entry.note ? ` · ${it.entry.note}` : ''}`));
+                const closeBtn = el('button', 'btn btn-danger-soft btn-sm', 'Close');
+                closeBtn.type = 'button';
+                closeBtn.addEventListener('click', () => closeScheduleDates([it.date], [it.entry.category], closeBtn));
+                row.append(left, closeBtn);
+            } else {
+                left.appendChild(el('span', 'badge danger', `Blocked · ${it.blk.label}`));
+                if (it.blk.reason) left.appendChild(el('span', 'muted small', it.blk.reason));
+                const unblockBtn = el('button', 'btn btn-ghost btn-sm', 'Unblock');
+                unblockBtn.type = 'button';
+                unblockBtn.addEventListener('click', () => unblockSchedule(it.blk, unblockBtn));
+                row.append(left, unblockBtn);
+            }
+
+            list.appendChild(row);
+        });
+    }
+
+    function renderScheduleManager() {
+        if ($('#countScheduleOpen')) {
+            $('#countScheduleOpen').textContent = countUpcomingOpenScheduleItems();
+        }
+        if (state.tab !== 'schedule') return;
+        renderScheduleCalendar();
+        renderScheduleInspector();
+        renderRegularHoursSection();
+        renderScheduleOverview();
+    }
+
+    async function submitOpenScheduleForm(e) {
+        e.preventDefault();
+        if (state.schedBusy) return;
+        setSchedOpenError('');
+
+        const dates = getSortedSelectedDates();
+        if (!dates.length) {
+            setSchedOpenError('Please select at least one date on the calendar first.');
+            return;
+        }
+
+        let windows = [];
+        if (state.schedHourMode === 'custom') {
+            for (const w of state.schedCustomWindows) {
+                const s = timeValToMinute(w.start);
+                const end = timeValToMinute(w.end);
+                if (s === null || end === null || s >= end) {
+                    setSchedOpenError('Each custom time window must have an end time after its start time.');
+                    return;
+                }
+                windows.push([s, end]);
+            }
+            if (state.schedCategory === 'defense' && !windows.some(([s, end]) => end - s >= 60)) {
+                setSchedOpenError('Custom Defense windows must be at least 1 hour (60 minutes) long.');
                 return;
             }
         }
 
-        state.blocking = true;
-        const confirmBtn = $('#confirmBlockBtn');
-        const cancelBtn = $('#cancelBlockModalBtn');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.querySelector('.spinner')?.classList.remove('hidden');
-            confirmBtn.querySelector('.btn-label').textContent = 'Blocking…';
+        const note = ($('#schedOpenNoteInput')?.value || '').trim();
+        const unblockDates = Boolean(!$('#schedAutoUnblockWrap')?.classList.contains('hidden') && $('#schedAutoUnblockInput')?.checked);
+
+        state.schedBusy = true;
+        const submitBtn = $('#schedOpenSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.querySelector('.spinner')?.classList.remove('hidden');
+            if ($('#schedOpenSubmitLabel')) $('#schedOpenSubmitLabel').textContent = 'Saving…';
         }
-        if (cancelBtn) cancelBtn.disabled = true;
+
+        try {
+            const res = await api('/api/admin/schedule/open', {
+                method: 'POST',
+                body: JSON.stringify({
+                    dates,
+                    categories: [state.schedCategory],
+                    mode: state.schedHourMode,
+                    windows,
+                    note,
+                    unblockDates,
+                }),
+            });
+            state.scheduleConfig = res.scheduleConfig;
+            if (unblockDates && res.unblockedCount > 0) {
+                const dateSet = new Set(dates);
+                state.blockedSchedules = state.blockedSchedules.filter((b) => !(dateSet.has(b.date) && b.isFullDay));
+            }
+            if ($('#schedOpenNoteInput')) $('#schedOpenNoteInput').value = '';
+            state.schedBusy = false;
+            updateHeaderDates();
+            renderScheduleManager();
+            window.SchedulerRealtime?.notifyLocal({ type: 'schedule_config_updated', dates });
+            const catLabel = CATEGORY_META[state.schedCategory]?.label || 'Schedule';
+            toast(
+                `Opened ${catLabel} on ${dates.length === 1 ? shortDate(dates[0]) : `${dates.length} dates`}.`,
+                'success'
+            );
+        } catch (err) {
+            setSchedOpenError(err.message);
+        } finally {
+            state.schedBusy = false;
+            if (submitBtn) {
+                submitBtn.querySelector('.spinner')?.classList.add('hidden');
+            }
+            renderScheduleInspector();
+        }
+    }
+
+    async function closeScheduleDates(dates, categories, btn) {
+        if (btn) btn.disabled = true;
+        try {
+            const res = await api('/api/admin/schedule/close', {
+                method: 'POST',
+                body: JSON.stringify({ dates, categories }),
+            });
+            state.scheduleConfig = res.scheduleConfig;
+            if (categories.includes('letter_pickup')) {
+                const dSet = new Set(dates);
+                state.letterPickupSchedules = state.letterPickupSchedules.filter((x) => !dSet.has(x.date));
+            }
+            updateHeaderDates();
+            renderScheduleManager();
+            window.SchedulerRealtime?.notifyLocal({ type: 'schedule_config_updated', dates });
+            toast(`Closed selected schedule on ${dates.length === 1 ? shortDate(dates[0]) : `${dates.length} dates`}.`, 'success');
+        } catch (err) {
+            if (btn) btn.disabled = false;
+            toast(err.message, 'error');
+        }
+    }
+
+    async function submitBlockScheduleForm(e) {
+        e.preventDefault();
+        if (state.schedBusy) return;
+        setSchedBlockError('');
+
+        const dates = getSortedSelectedDates();
+        if (!dates.length) {
+            setSchedBlockError('Please select at least one date on the calendar to block.');
+            return;
+        }
+
+        const isFullDay = state.schedBlockScope === 'full';
+        let startMinute = null;
+        let endMinute = null;
+        if (!isFullDay) {
+            startMinute = timeValToMinute($('#schedBlockStartInput')?.value);
+            endMinute = timeValToMinute($('#schedBlockEndInput')?.value);
+            if (startMinute === null || endMinute === null || startMinute >= endMinute) {
+                setSchedBlockError('End time must be after start time.');
+                return;
+            }
+        }
+
+        const reason = ($('#schedBlockReasonInput')?.value || '').trim();
+        const cancelExisting = Boolean($('#schedBlockCancelExisting')?.checked);
+
+        state.schedBusy = true;
+        const submitBtn = $('#schedBlockSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.querySelector('.spinner')?.classList.remove('hidden');
+            if ($('#schedBlockSubmitLabel')) $('#schedBlockSubmitLabel').textContent = 'Blocking…';
+        }
 
         try {
             const res = await api('/api/admin/blocks', {
                 method: 'POST',
                 body: JSON.stringify({
-                    date,
-                    endDate: date,
+                    dates,
                     isFullDay,
                     startMinute,
                     endMinute,
@@ -504,28 +1279,26 @@
                 });
             }
 
-            state.blocking = false;
-            closeBlockModal();
+            if ($('#schedBlockReasonInput')) $('#schedBlockReasonInput').value = '';
+            state.schedBusy = false;
             render();
-            window.SchedulerRealtime?.notifyLocal({ type: 'block_created', date });
+            window.SchedulerRealtime?.notifyLocal({ type: 'block_created', dates });
 
             const cancelledMsg = cancelledList.length
                 ? ` (${cancelledList.length} appointment${cancelledList.length === 1 ? '' : 's'} cancelled)`
                 : '';
             toast(
-                `${isFullDay ? 'Date' : 'Time range'} blocked${cancelledMsg}.`,
+                `Blocked ${dates.length === 1 ? shortDate(dates[0]) : `${dates.length} dates`}${cancelledMsg}.`,
                 'success'
             );
         } catch (err) {
-            setBlockFormError(err.message);
+            setSchedBlockError(err.message);
         } finally {
-            state.blocking = false;
-            if (confirmBtn) {
-                confirmBtn.disabled = false;
-                confirmBtn.querySelector('.spinner')?.classList.add('hidden');
-                confirmBtn.querySelector('.btn-label').textContent = 'Block';
+            state.schedBusy = false;
+            if (submitBtn) {
+                submitBtn.querySelector('.spinner')?.classList.add('hidden');
             }
-            if (cancelBtn) cancelBtn.disabled = false;
+            renderScheduleInspector();
         }
     }
 
@@ -543,164 +1316,18 @@
         }
     }
 
-    /* ---------------- communication letter pickup schedule modal ---------------- */
-    function setLetterPickupError(msg) {
-        const errEl = $('#letterPickupFormError');
-        if (!errEl) return;
-        errEl.textContent = msg || '';
-        errEl.classList.toggle('hidden', !msg);
-    }
-
-    function updateLetterPickupSlotPreview() {
-        const preview = $('#letterPickupSlotPreview');
-        if (!preview) return;
-        const startMin = timeValToMinute($('#letterPickupStartTimeInput')?.value);
-        const endMin = timeValToMinute($('#letterPickupEndTimeInput')?.value);
-        if (startMin === null || endMin === null || endMin <= startMin) {
-            preview.textContent = 'End time must be after start time (at least 5 minutes).';
-            return;
-        }
-        const count = Math.floor((endMin - startMin) / 5);
-        if (count < 1) {
-            preview.textContent = 'Window must be at least 5 minutes long to create a 5-minute pickup slot.';
-            return;
-        }
-        preview.textContent = `${count} × 5-minute pickup slot${count === 1 ? '' : 's'} will be open for Communication Letter Pickup.`;
-    }
-
-    function renderLetterPickupModalList() {
-        const list = $('#letterPickupModalList');
-        if (!list) return;
-        list.innerHTML = '';
-
-        const items = state.letterPickupSchedules
-            .slice()
-            .sort((a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0));
-
-        if (!items.length) {
-            list.appendChild(el('p', 'muted small', 'No pickup windows added yet. Students cannot schedule a letter pickup until you add a date & time window above.'));
-            return;
-        }
-
-        items.forEach((item) => {
-            const row = el('div', 'pickup-modal-item');
-            const info = el('div', 'pickup-modal-item-info');
-            const count = item.slotCount ?? Math.max(0, Math.floor(((item.endMinute || 0) - (item.startMinute || 0)) / 5));
-            info.appendChild(el('strong', '', `${shortDate(item.date)} · ${item.label}`));
-            const subText = item.note
-                ? `${count} slot${count === 1 ? '' : 's'} (5 min each) · ${item.note}`
-                : `${count} × 5-min slot${count === 1 ? '' : 's'}`;
-            info.appendChild(el('span', 'muted small', subText));
-
-            const delBtn = el('button', 'btn btn-danger-soft btn-sm', 'Remove');
-            delBtn.type = 'button';
-            delBtn.addEventListener('click', () => deleteLetterPickupSchedule(item, delBtn));
-
-            row.append(info, delBtn);
-            list.appendChild(row);
-        });
-    }
-
-    function openLetterPickupModal(defaultDate = '') {
-        const minDate = state.today ? addDays(state.today, 1) : new Date().toISOString().slice(0, 10);
-        const dateInput = $('#letterPickupDateInput');
-        if (dateInput) {
-            dateInput.min = minDate;
-            dateInput.value = defaultDate && defaultDate >= minDate ? defaultDate : minDate;
-        }
-        if ($('#letterPickupNoteInput')) $('#letterPickupNoteInput').value = '';
-        updateLetterPickupSlotPreview();
-        renderLetterPickupModalList();
-        setLetterPickupError('');
-        $('#letterPickupScheduleModal')?.classList.remove('hidden');
-        syncModalBodyLock();
-        if (window.matchMedia('(hover: hover)').matches) {
-            setTimeout(() => dateInput?.focus(), 40);
-        }
-    }
-
-    function closeLetterPickupModal() {
-        if (state.savingLetterPickup) return;
-        $('#letterPickupScheduleModal')?.classList.add('hidden');
-        syncModalBodyLock();
-        setLetterPickupError('');
-    }
-
-    async function submitLetterPickupSchedule(e) {
-        e.preventDefault();
-        if (state.savingLetterPickup) return;
-        setLetterPickupError('');
-
-        const date = ($('#letterPickupDateInput')?.value || '').trim();
-        const startMinute = timeValToMinute($('#letterPickupStartTimeInput')?.value);
-        const endMinute = timeValToMinute($('#letterPickupEndTimeInput')?.value);
-        const note = ($('#letterPickupNoteInput')?.value || '').trim();
-
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            setLetterPickupError('Please select an available date.');
-            $('#letterPickupDateInput')?.focus();
-            return;
-        }
-        if (state.today && date <= state.today) {
-            setLetterPickupError('Please select a future date (students must schedule at least 1 day in advance).');
-            $('#letterPickupDateInput')?.focus();
-            return;
-        }
-        if (startMinute === null || endMinute === null || startMinute >= endMinute) {
-            setLetterPickupError('End time must be after start time.');
-            return;
-        }
-        if (endMinute - startMinute < 5) {
-            setLetterPickupError('Time range must be at least 5 minutes long.');
-            return;
-        }
-
-        state.savingLetterPickup = true;
-        const confirmBtn = $('#confirmLetterPickupBtn');
-        const cancelBtn = $('#cancelLetterPickupModalBtn');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.querySelector('.spinner')?.classList.remove('hidden');
-            confirmBtn.querySelector('.btn-label').textContent = 'Adding…';
-        }
-        if (cancelBtn) cancelBtn.disabled = true;
-
-        try {
-            const { schedule } = await api('/api/admin/letter-pickup-schedules', {
-                method: 'POST',
-                body: JSON.stringify({ date, startMinute, endMinute, note }),
-            });
-            state.letterPickupSchedules.push(schedule);
-            state.letterPickupSchedules.sort(
-                (a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0)
-            );
-            if ($('#letterPickupNoteInput')) $('#letterPickupNoteInput').value = '';
-            renderLetterPickupModalList();
-            render();
-            window.SchedulerRealtime?.notifyLocal({ type: 'letter_pickup_schedule_created', date });
-            toast(`Added pickup window on ${shortDate(date)} (${schedule.label}).`, 'success');
-        } catch (err) {
-            setLetterPickupError(err.message);
-        } finally {
-            state.savingLetterPickup = false;
-            if (confirmBtn) {
-                confirmBtn.disabled = false;
-                confirmBtn.querySelector('.spinner')?.classList.add('hidden');
-                confirmBtn.querySelector('.btn-label').textContent = 'Add pickup window';
-            }
-            if (cancelBtn) cancelBtn.disabled = false;
-        }
-    }
-
-    async function deleteLetterPickupSchedule(item, btn) {
+    async function unblockSelectedDates(dates, btn) {
         if (btn) btn.disabled = true;
         try {
-            await api(`/api/admin/letter-pickup-schedules/${item.id}`, { method: 'DELETE' });
-            state.letterPickupSchedules = state.letterPickupSchedules.filter((x) => x.id !== item.id);
-            renderLetterPickupModalList();
+            await api('/api/admin/blocks/unblock-dates', {
+                method: 'POST',
+                body: JSON.stringify({ dates }),
+            });
+            const dSet = new Set(dates);
+            state.blockedSchedules = state.blockedSchedules.filter((x) => !dSet.has(x.date));
             render();
-            window.SchedulerRealtime?.notifyLocal({ type: 'letter_pickup_schedule_deleted', date: item.date });
-            toast(`Removed pickup window on ${shortDate(item.date)}.`, 'success');
+            window.SchedulerRealtime?.notifyLocal({ type: 'block_removed', dates });
+            toast(`Unblocked ${dates.length} date${dates.length === 1 ? '' : 's'}.`, 'success');
         } catch (err) {
             if (btn) btn.disabled = false;
             toast(err.message, 'error');
@@ -813,10 +1440,10 @@
     async function notifyLetterReady(b, btn) {
         const target = b.studentEmail || 'student';
         const again = b.notifiedAt ? ' again' : '';
-        const hasOpenPickupWindows = state.letterPickupSchedules.some(isActiveLetterPickup);
+        const hasOpenPickupWindows = hasUpcomingLetterPickupWindow();
         const noWindowWarning = hasOpenPickupWindows
             ? ''
-            : '\n\nNote: You currently have 0 upcoming Letter Pickup windows configured. Remember to add a pickup date/time in "Letter Pickup Schedule" so the student can book a slot.';
+            : '\n\nNote: You currently have 0 upcoming Letter Pickup dates open. Remember to open a date for "Comm. Letter Pickup" in Schedule & Availability so the student can book a slot.';
         if (!confirm(`Send "Communication Letter Ready for Pickup" notification email${again} to ${target}?${noWindowWarning}`)) return;
         btn.disabled = true;
         const prevText = btn.textContent;
@@ -829,7 +1456,7 @@
             toast(
                 hasOpenPickupWindows
                     ? `Notification emailed to ${target}.`
-                    : `Notification emailed to ${target}. Add a window in "Letter Pickup Schedule" so they can book.`,
+                    : `Notification emailed to ${target}. Open a Letter Pickup date in "Schedule & Availability" so they can book.`,
                 'success'
             );
         } catch (err) {
@@ -948,8 +1575,8 @@
 
         const hintEl = $('#emailTemplateHint');
         if (hintEl) {
-            if (normalized === 'letter_ready' && !state.letterPickupSchedules.some(isActiveLetterPickup)) {
-                hintEl.textContent = `${nextMeta.hint} (Tip: You currently have 0 upcoming Letter Pickup windows configured — add one in "Letter Pickup Schedule" so the student can book a slot.)`;
+            if (normalized === 'letter_ready' && !hasUpcomingLetterPickupWindow()) {
+                hintEl.textContent = `${nextMeta.hint} (Tip: You currently have 0 upcoming Letter Pickup dates open — open one in "Schedule & Availability" so the student can book a slot.)`;
             } else {
                 hintEl.textContent = nextMeta.hint;
             }
@@ -1796,169 +2423,11 @@
         });
     }
 
-    function matchesBlockSearch(blk, q) {
-        if (!q) return true;
-        if (blk.date.toLowerCase().includes(q)) return true;
-        if (longDate(blk.date).toLowerCase().includes(q)) return true;
-        if (blk.label && blk.label.toLowerCase().includes(q)) return true;
-        if (blk.reason && blk.reason.toLowerCase().includes(q)) return true;
-        return false;
-    }
-
-    function renderBlockedTab(container, q) {
-        const blocks = state.blockedSchedules
-            .filter((blk) => matchesBlockSearch(blk, q))
-            .slice()
-            .sort((a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0));
-
-        if (!blocks.length) {
-            const empty = el('div', 'empty-state');
-            empty.style.marginTop = '12px';
-            empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></svg>';
-            empty.appendChild(el('p', '', q ? 'No blocked schedules match your search.' : 'No blocked dates or times.'));
-            const addBtn = el('button', 'btn btn-primary btn-sm', 'Block a Date or Time');
-            addBtn.type = 'button';
-            addBtn.addEventListener('click', () => openBlockModal());
-            empty.appendChild(addBtn);
-            container.appendChild(empty);
-            return;
-        }
-
-        const groups = new Map();
-        blocks.forEach((blk) => {
-            if (!groups.has(blk.date)) groups.set(blk.date, []);
-            groups.get(blk.date).push(blk);
-        });
-
-        let i = 0;
-        groups.forEach((items, date) => {
-            const group = el('div', 'date-group');
-            const title = el('div', 'date-group-title', longDate(date));
-            if (date === state.today) title.appendChild(el('span', 'badge teal', 'Today'));
-            else if (date === addDays(state.today, 1)) title.appendChild(el('span', 'badge sky', 'Tomorrow'));
-            else if (date < state.today) title.appendChild(el('span', 'badge muted-badge', 'Past'));
-            group.appendChild(title);
-
-            items.forEach((blk) => {
-                const card = el('div', 'booking booking-blocked');
-                card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
-
-                const time = el('div', 'booking-time booking-time-blocked');
-                if (blk.isFullDay) {
-                    time.appendChild(el('strong', '', 'All Day'));
-                } else {
-                    const [start, end] = blk.label.split(' – ');
-                    time.appendChild(el('strong', '', start));
-                    time.appendChild(el('span', '', `to ${end}`));
-                }
-
-                const body = el('div', 'booking-body');
-                body.appendChild(el('span', 'booking-title', blk.reason || 'Unavailable'));
-
-                const actions = el('div', 'booking-actions');
-                const unblockBtn = el('button', 'btn btn-ghost btn-sm', 'Unblock');
-                unblockBtn.type = 'button';
-                unblockBtn.addEventListener('click', () => unblockSchedule(blk, unblockBtn));
-                actions.appendChild(unblockBtn);
-
-                card.append(time, body, actions);
-                group.appendChild(card);
-            });
-
-            container.appendChild(group);
-        });
-    }
-
-    function matchesLetterPickupSearch(item, q) {
-        if (!q) return true;
-        if (item.date.toLowerCase().includes(q)) return true;
-        if (longDate(item.date).toLowerCase().includes(q)) return true;
-        if (item.label && item.label.toLowerCase().includes(q)) return true;
-        if (item.note && item.note.toLowerCase().includes(q)) return true;
-        return false;
-    }
-
-    function renderLetterPickupTab(container, q) {
-        const itemsList = state.letterPickupSchedules
-            .filter((item) => matchesLetterPickupSearch(item, q))
-            .slice()
-            .sort((a, b) => a.date.localeCompare(b.date) || (a.startMinute ?? 0) - (b.startMinute ?? 0));
-
-        const topBar = el('div', 'pickup-tab-toolbar');
-        topBar.appendChild(el('span', 'muted small', 'Only dates and times listed here are open for Pickup of Communication Letter (5 min per slot).'));
-        const addTopBtn = el('button', 'btn btn-primary btn-sm', '+ Add Pickup Window');
-        addTopBtn.type = 'button';
-        addTopBtn.addEventListener('click', () => openLetterPickupModal());
-        topBar.appendChild(addTopBtn);
-        container.appendChild(topBar);
-
-        if (!itemsList.length) {
-            const empty = el('div', 'empty-state');
-            empty.style.marginTop = '12px';
-            empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>';
-            empty.appendChild(el('p', '', q ? 'No letter pickup windows match your search.' : 'No Communication Letter Pickup windows configured yet.'));
-            const addBtn = el('button', 'btn btn-primary btn-sm', 'Add Pickup Date / Time');
-            addBtn.type = 'button';
-            addBtn.addEventListener('click', () => openLetterPickupModal());
-            empty.appendChild(addBtn);
-            container.appendChild(empty);
-            return;
-        }
-
-        const groups = new Map();
-        itemsList.forEach((item) => {
-            if (!groups.has(item.date)) groups.set(item.date, []);
-            groups.get(item.date).push(item);
-        });
-
-        let i = 0;
-        groups.forEach((items, date) => {
-            const group = el('div', 'date-group');
-            const title = el('div', 'date-group-title', longDate(date));
-            if (date === state.today) title.appendChild(el('span', 'badge teal', 'Today'));
-            else if (date === addDays(state.today, 1)) title.appendChild(el('span', 'badge sky', 'Tomorrow'));
-            else if (date < state.today) title.appendChild(el('span', 'badge muted-badge', 'Past'));
-            group.appendChild(title);
-
-            items.forEach((item) => {
-                const card = el('div', 'booking booking-pickup');
-                card.style.animationDelay = `${Math.min(i++, 12) * 25}ms`;
-
-                const time = el('div', 'booking-time booking-time-pickup');
-                const [start, end] = item.label.split(' – ');
-                time.appendChild(el('strong', '', start));
-                time.appendChild(el('span', '', `to ${end}`));
-
-                const body = el('div', 'booking-body');
-                const head = el('div', 'booking-name');
-                const slotCount = item.slotCount ?? Math.max(0, Math.floor(((item.endMinute || 0) - (item.startMinute || 0)) / 5));
-                head.appendChild(el('span', 'booking-title', 'Communication Letter Pickup Window'));
-                head.appendChild(el('span', 'badge violet', `${slotCount} × 5-min slots`));
-                body.appendChild(head);
-                if (item.note) {
-                    body.appendChild(el('p', 'booking-reason', item.note));
-                }
-
-                const actions = el('div', 'booking-actions');
-                const removeBtn = el('button', 'btn btn-danger-soft btn-sm', 'Remove');
-                removeBtn.type = 'button';
-                removeBtn.addEventListener('click', () => deleteLetterPickupSchedule(item, removeBtn));
-                actions.appendChild(removeBtn);
-
-                card.append(time, body, actions);
-                group.appendChild(card);
-            });
-
-            container.appendChild(group);
-        });
-    }
-
     /* ---------------- render ---------------- */
     function render() {
-        const activeBlocks = state.blockedSchedules.filter(isActiveBlock);
-        if ($('#countBlocked')) $('#countBlocked').textContent = activeBlocks.length;
-        const activePickups = state.letterPickupSchedules.filter(isActiveLetterPickup);
-        if ($('#countLetterPickup')) $('#countLetterPickup').textContent = activePickups.length;
+        if ($('#countScheduleOpen')) {
+            $('#countScheduleOpen').textContent = countUpcomingOpenScheduleItems();
+        }
 
         const active = state.bookings.filter((b) => !isCancelled(b));
         const upcoming = active.filter((b) => !isPast(b));
@@ -1978,18 +2447,19 @@
 
         renderStudentsSection();
 
+        const isScheduleTab = state.tab === 'schedule';
+        $('#mainSearchLabel')?.classList.toggle('hidden', isScheduleTab);
+        $('#scheduleManagerView')?.classList.toggle('hidden', !isScheduleTab);
+        $('#bookingList')?.classList.toggle('hidden', isScheduleTab);
+
+        if (isScheduleTab) {
+            renderScheduleManager();
+            return;
+        }
+
         const q = state.search.toLowerCase();
         const container = $('#bookingList');
         container.innerHTML = '';
-
-        if (state.tab === 'blocked') {
-            renderBlockedTab(container, q);
-            return;
-        }
-        if (state.tab === 'letter_pickup') {
-            renderLetterPickupTab(container, q);
-            return;
-        }
 
         const source = state.tab === 'upcoming' ? upcoming : state.tab === 'cancelled' ? cancelled : past;
         const list = source.filter((b) => matchesSearch(b, q));
@@ -2252,20 +2722,91 @@
         });
     });
 
-    // Block Date / Time modal bindings
-    $('#openBlockModalBtn')?.addEventListener('click', () => openBlockModal());
-    $('#closeBlockModalBtn')?.addEventListener('click', closeBlockModal);
-    $('#cancelBlockModalBtn')?.addEventListener('click', closeBlockModal);
-    $('#blockModal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'blockModal') closeBlockModal();
+    // Unified Schedule & Availability Manager bindings
+    $('#openScheduleTabBtn')?.addEventListener('click', () => switchAdminTab('schedule', true));
+    document.querySelectorAll('.sched-mode-pill[data-select-mode]').forEach((btn) => {
+        btn.addEventListener('click', () => setSchedSelectMode(btn.dataset.selectMode));
     });
-    document.querySelectorAll('input[name="blockScope"]').forEach((r) => {
-        r.addEventListener('change', (e) => setBlockScope(e.target.value));
+    $('#schedClearSelectionBtn')?.addEventListener('click', () => {
+        state.schedRangeAnchor = null;
+        state.schedSelectedDates = new Set();
+        renderScheduleManager();
     });
-    ['#blockDateInput', '#blockStartTimeInput', '#blockEndTimeInput'].forEach((sel) => {
-        $(sel)?.addEventListener('input', () => setBlockFormError(''));
+    $('#schedPrevMonth')?.addEventListener('click', () => changeSchedMonth(-1));
+    $('#schedNextMonth')?.addEventListener('click', () => changeSchedMonth(1));
+    $('#schedTodayBtn')?.addEventListener('click', jumpSchedToday);
+
+    document.querySelectorAll('input[name="schedActionMode"]').forEach((r) => {
+        r.addEventListener('change', (e) => {
+            state.schedActionMode = e.target.value === 'block' ? 'block' : 'open';
+            setSchedOpenError('');
+            setSchedBlockError('');
+            renderScheduleInspector();
+        });
     });
-    $('#blockScheduleForm')?.addEventListener('submit', submitBlockSchedule);
+
+    document.querySelectorAll('.sched-cat-card[data-cat]').forEach((card) => {
+        card.addEventListener('click', () => {
+            state.schedCategory = card.dataset.cat;
+            setSchedOpenError('');
+            renderScheduleInspector();
+        });
+    });
+
+    document.querySelectorAll('input[name="schedHourMode"]').forEach((r) => {
+        r.addEventListener('change', (e) => {
+            state.schedHourMode = e.target.value;
+            setSchedOpenError('');
+            renderScheduleInspector();
+        });
+    });
+
+    $('#schedAddCustomWinBtn')?.addEventListener('click', () => {
+        if (state.schedCustomWindows.length >= 4) return;
+        state.schedCustomWindows.push({ start: '13:00', end: '17:00' });
+        renderCustomWindowRows();
+    });
+
+    $('#schedOpenForm')?.addEventListener('submit', submitOpenScheduleForm);
+
+    document.querySelectorAll('input[name="schedBlockScope"]').forEach((r) => {
+        r.addEventListener('change', (e) => {
+            state.schedBlockScope = e.target.value === 'time' ? 'time' : 'full';
+            setSchedBlockError('');
+            renderScheduleInspector();
+        });
+    });
+    document.querySelectorAll('.sched-time-preset').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            if ($('#schedBlockStartInput')) $('#schedBlockStartInput').value = chip.dataset.start || '12:00';
+            if ($('#schedBlockEndInput')) $('#schedBlockEndInput').value = chip.dataset.end || '13:00';
+            setSchedBlockError('');
+        });
+    });
+    document.querySelectorAll('.block-reason-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            const inp = $('#schedBlockReasonInput');
+            if (!inp) return;
+            inp.value = chip.dataset.blockReason || '';
+            setSchedBlockError('');
+            inp.focus();
+        });
+    });
+    $('#schedBlockForm')?.addEventListener('submit', submitBlockScheduleForm);
+
+    document.querySelectorAll('input[name="schedRegType"]').forEach((r) => {
+        r.addEventListener('change', (e) => {
+            state.schedRegType = e.target.value === 'defense' ? 'defense' : 'consultation';
+            renderRegularHoursSection();
+        });
+    });
+
+    document.querySelectorAll('#schedOverviewFilters [data-overview-filter]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            state.schedOverviewFilter = btn.dataset.overviewFilter || 'all';
+            renderScheduleOverview();
+        });
+    });
 
     // Cancel modal bindings
     $('#cancelBookingForm')?.addEventListener('submit', submitCancelBooking);
@@ -2339,39 +2880,10 @@
     });
     $('#sendEmailForm')?.addEventListener('submit', submitSendEmail);
 
-    // Communication Letter Pickup Schedule modal bindings
-    $('#openLetterPickupModalBtn')?.addEventListener('click', () => openLetterPickupModal());
-    $('#closeLetterPickupModalBtn')?.addEventListener('click', closeLetterPickupModal);
-    $('#cancelLetterPickupModalBtn')?.addEventListener('click', closeLetterPickupModal);
-    $('#letterPickupScheduleModal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'letterPickupScheduleModal') closeLetterPickupModal();
-    });
-    ['#letterPickupStartTimeInput', '#letterPickupEndTimeInput'].forEach((sel) => {
-        $(sel)?.addEventListener('input', () => {
-            updateLetterPickupSlotPreview();
-            setLetterPickupError('');
-        });
-    });
-    $('#letterPickupDateInput')?.addEventListener('input', () => setLetterPickupError(''));
-    $('#letterPickupScheduleForm')?.addEventListener('submit', submitLetterPickupSchedule);
-
-    // Booking Cutoff Date modal bindings
-    $('#openCutoffModalBtn')?.addEventListener('click', () => openCutoffModal());
-    $('#closeCutoffModalBtn')?.addEventListener('click', closeCutoffModal);
-    $('#cancelCutoffModalBtn')?.addEventListener('click', closeCutoffModal);
-    $('#cutoffModal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'cutoffModal') closeCutoffModal();
-    });
-    $('#bookingEndDateInput')?.addEventListener('input', () => setCutoffError(''));
-    $('#cutoffForm')?.addEventListener('submit', submitCutoffForm);
-
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeCancelModal();
             closeNotesModal();
-            closeBlockModal();
-            closeLetterPickupModal();
-            closeCutoffModal();
             closeSendEmailModal();
         }
     });

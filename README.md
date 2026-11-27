@@ -16,19 +16,10 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
   5. **Pickup of Communication Letter** (`5 minutes`, **shown only to students who registered Arnemie Gayyed as Adviser**): Scheduled once students receive the email notification that their signed communication letter is ready for pickup, using instructor-configured pickup windows.
   6. **Other Consultations** (`10 minutes`): Available for all students for other Capstone or Thesis concerns.
   7. **Capstone / Thesis Defense** (`1 hour` for **Capstone 1 / Thesis 1**, `2 hours` for **Capstone 2 / Thesis 2**): Students can confirm or update their course level, view available defense windows, and type their preferred start time (e.g. `2:30` → automatically reserves `2:30 PM – 3:30 PM` for Capstone 1 or `2:30 PM – 4:30 PM` for Capstone 2) or tap a suggested start time.
-- **Weekly consultation schedule (Tuesday – Thursday)** until the configured booking cutoff date (defaults to **December 12**, configurable live in the Admin Dashboard):
-  - **Tuesday**: 2:10 PM – 3:30 PM
-  - **Wednesday**: 12:50 PM – 2:10 PM
-  - **Thursday**: 2:10 PM – 3:30 PM
-- **Weekly defense schedule (Monday – Saturday)** until the configured booking cutoff date:
-  - **Monday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM
-  - **Tuesday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 6:10 PM
-  - **Wednesday**: 11:30 AM – 2:10 PM, 3:30 PM – 4:50 PM
-  - **Thursday**: 10:10 AM – 11:30 AM, 2:10 PM – 3:30 PM, 4:50 PM – 6:10 PM
-  - **Friday**: 7:30 AM – 8:30 AM, 11:30 AM – 12:50 PM, 4:50 PM – 6:10 PM
-  - **Saturday**: 8:50 AM – 12:50 PM, 2:10 PM – 6:10 PM
-- **Special schedule (December 7 – 12)**:
-  - **Monday – Saturday (Dec 7 – Dec 12)**: **10:00 AM – 5:00 PM** for all consultations and defenses.
+- **Visual Schedule & Availability Manager (`/admin.html`)**:
+  - Calendar dates **start closed** until opened by the instructor.
+  - Select a single date, multiple dates, or a date range on the interactive calendar to open **Consultations**, **Capstone / Thesis Defenses**, or **Comm. Letter Pickups** independently.
+  - Choose **10:00 AM – 5:00 PM** (full day), **My Consultation / Defense Hours Only** (configurable per weekday Monday–Saturday), or **Custom Time Window(s)**, or block dates/times in one place.
 - **Cross-schedule overlap prevention**: if a time slot has been booked as a consultation, it cannot be booked for a defense (and vice versa), while 0-minute Drop-offs never block timed slots.
 - Confirmation ticket with a unique booking reference + **Student Profile** modal (`My Profile`) showing registered Capstone/Thesis details, upcoming & past consultations, and any **cancelled schedules with the instructor's cancellation reason**
 

@@ -56,21 +56,13 @@
                     <h1>Consultations</h1>
                 </div>
                 <div class="dash-actions">
-                    <button type="button" class="btn btn-primary" id="openBlockModalBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></svg>
-                        Block Date / Time
+                    <button type="button" class="btn btn-primary" id="openScheduleTabBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+                        Manage Schedule
                     </button>
                     <button type="button" class="btn btn-ghost" id="openSendEmailModalBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                         Send Email
-                    </button>
-                    <button type="button" class="btn btn-ghost" id="openLetterPickupModalBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
-                        Letter Pickup Schedule
-                    </button>
-                    <button type="button" class="btn btn-ghost" id="openCutoffModalBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                        <span id="cutoffBtnLabel">Booking Cutoff</span>
                     </button>
                     <span class="live-status-pill is-live" id="realtimeStatusPill" title="Dashboard updates automatically in real time">
                         <span class="live-dot"></span>
@@ -113,21 +105,298 @@
                 </div>
             </div>
 
-            <div class="card bookings-card">
+            <div class="card bookings-card" id="mainBookingsCard">
                 <div class="toolbar">
                     <div class="tabs" role="tablist">
                         <button class="tab active" data-tab="upcoming">Upcoming <span class="count" id="countUpcoming">0</span></button>
+                        <button class="tab" data-tab="schedule">Schedule &amp; Availability <span class="count" id="countScheduleOpen">0</span></button>
                         <button class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
                         <button class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
-                        <button class="tab" data-tab="blocked">Blocked <span class="count" id="countBlocked">0</span></button>
-                        <button class="tab" data-tab="letter_pickup">Letter Pickup <span class="count" id="countLetterPickup">0</span></button>
                     </div>
-                    <label class="search">
+                    <label class="search" id="mainSearchLabel">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
                         <input type="search" id="searchInput" placeholder="Search consultations…" />
                     </label>
                 </div>
+
+                <!-- Appointments List (Upcoming / Past / Cancelled) -->
                 <div class="bookings" id="bookingList"></div>
+
+                <!-- Unified Visual Schedule & Availability Manager -->
+                <div class="sched-manager hidden" id="scheduleManagerView">
+                    <div class="sched-intro-banner">
+                        <div class="sched-intro-text">
+                            <strong>Visual Schedule &amp; Availability Manager</strong>
+                            <p class="muted small">Dates start <strong>closed</strong> by default. Select a date, multiple dates, or a date range on the calendar to open <strong>Consultations</strong>, <strong>Capstone / Thesis Defenses</strong>, or <strong>Comm. Letter Pickups</strong> separately — or to block unavailable times.</p>
+                        </div>
+                        <a class="btn btn-ghost btn-sm" href="#schedRegularHoursSection">Edit Regular Weekly Hours ↓</a>
+                    </div>
+
+                    <div class="sched-workspace">
+                        <!-- Left Column: Interactive Calendar -->
+                        <div class="sched-calendar-panel">
+                            <div class="sched-cal-top">
+                                <div class="sched-select-modes" role="radiogroup" aria-label="Date selection mode">
+                                    <button type="button" class="sched-mode-pill active" data-select-mode="single">Single Date</button>
+                                    <button type="button" class="sched-mode-pill" data-select-mode="multi">Multiple Dates</button>
+                                    <button type="button" class="sched-mode-pill" data-select-mode="range">Date Range</button>
+                                </div>
+                                <label class="sched-skip-sun hidden" id="schedRangeSkipSunWrap" title="Automatically skip Sundays when selecting a date range">
+                                    <input type="checkbox" id="schedRangeSkipSun" checked />
+                                    <span>Mon–Sat only</span>
+                                </label>
+                            </div>
+
+                            <div class="sched-selection-hint-bar" id="schedSelectionHintBar">
+                                <span id="schedSelectionHintText">Click a date on the calendar to inspect, open, or block it.</span>
+                                <button type="button" class="link-btn hidden" id="schedClearSelectionBtn">Clear selection</button>
+                            </div>
+
+                            <div class="calendar-head sched-calendar-head">
+                                <h3 id="schedMonthLabel">—</h3>
+                                <div class="calendar-nav">
+                                    <button type="button" class="btn btn-ghost btn-sm sched-today-btn" id="schedTodayBtn">Today</button>
+                                    <button type="button" class="icon-btn" id="schedPrevMonth" aria-label="Previous month">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                                    </button>
+                                    <button type="button" class="icon-btn" id="schedNextMonth" aria-label="Next month">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="weekdays">
+                                <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                            </div>
+                            <div class="sched-days" id="schedDays"></div>
+
+                            <div class="sched-legend">
+                                <span><i class="sched-legend-swatch teal"></i> Consultations</span>
+                                <span><i class="sched-legend-swatch rose"></i> Defense</span>
+                                <span><i class="sched-legend-swatch violet"></i> Letter Pickup</span>
+                                <span><i class="sched-legend-swatch danger"></i> Blocked</span>
+                            </div>
+                        </div>
+
+                        <!-- Right Column: Selected Date(s) Inspector & Open / Block Controls -->
+                        <div class="sched-inspector-panel">
+                            <!-- Current Status on Selected Date(s) -->
+                            <div class="sched-status-card" id="schedStatusCard">
+                                <div class="sched-status-head">
+                                    <div>
+                                        <span class="selection-label" id="schedStatusEyebrow">Selected Date</span>
+                                        <h3 id="schedSelectedTitle">Select a date on the calendar</h3>
+                                    </div>
+                                </div>
+                                <div class="sched-current-list" id="schedCurrentList"></div>
+                            </div>
+
+                            <!-- Open vs Block Action Card -->
+                            <div class="sched-action-card" id="schedActionCard">
+                                <div class="segmented sched-action-tabs" role="tablist" aria-label="Open or block dates">
+                                    <label>
+                                        <input type="radio" name="schedActionMode" value="open" checked />
+                                        <span>Open Date(s)</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="schedActionMode" value="block" />
+                                        <span>Block Date(s)</span>
+                                    </label>
+                                </div>
+
+                                <!-- OPEN FORM -->
+                                <form class="sched-form" id="schedOpenForm" novalidate>
+                                    <div class="field">
+                                        <span>1. Choose what to open <small class="muted">(opened separately)</small></span>
+                                        <div class="sched-cat-grid" id="schedCategoryGrid">
+                                            <button type="button" class="sched-cat-card active" data-cat="consultation">
+                                                <span class="sched-cat-dot teal"></span>
+                                                <span class="sched-cat-info">
+                                                    <strong>Consultations</strong>
+                                                    <small>System, Drop-off, Retrieval, Letter Sig., Other</small>
+                                                </span>
+                                            </button>
+                                            <button type="button" class="sched-cat-card" data-cat="defense">
+                                                <span class="sched-cat-dot rose"></span>
+                                                <span class="sched-cat-info">
+                                                    <strong>Capstone / Thesis Defense</strong>
+                                                    <small>1 hr (Cap/Thesis 1) &amp; 2 hr (Cap/Thesis 2)</small>
+                                                </span>
+                                            </button>
+                                            <button type="button" class="sched-cat-card" data-cat="letter_pickup">
+                                                <span class="sched-cat-dot violet"></span>
+                                                <span class="sched-cat-info">
+                                                    <strong>Comm. Letter Pickup</strong>
+                                                    <small>5-minute signed letter pickup slots</small>
+                                                </span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="field">
+                                        <span>2. Available time for booking</span>
+                                        <div class="sched-hours-options" id="schedHoursOptions">
+                                            <label class="sched-hour-option is-selected" data-hour-mode="full_day">
+                                                <input type="radio" name="schedHourMode" value="full_day" checked />
+                                                <div class="sched-hour-option-body">
+                                                    <div class="sched-hour-option-top">
+                                                        <strong>10:00 AM – 5:00 PM</strong>
+                                                        <span class="badge teal">Full Day</span>
+                                                    </div>
+                                                    <small class="muted">Continuous booking window from 10:00 AM to 5:00 PM</small>
+                                                </div>
+                                            </label>
+
+                                            <label class="sched-hour-option" data-hour-mode="regular">
+                                                <input type="radio" name="schedHourMode" value="regular" />
+                                                <div class="sched-hour-option-body">
+                                                    <div class="sched-hour-option-top">
+                                                        <strong id="schedRegularModeTitle">My Consultation Hours Only</strong>
+                                                        <span class="badge sky">Weekly Hours</span>
+                                                    </div>
+                                                    <small class="muted" id="schedRegularModePreview">Uses your saved regular hours for each selected weekday.</small>
+                                                </div>
+                                            </label>
+
+                                            <label class="sched-hour-option" data-hour-mode="custom">
+                                                <input type="radio" name="schedHourMode" value="custom" />
+                                                <div class="sched-hour-option-body">
+                                                    <div class="sched-hour-option-top">
+                                                        <strong>Custom Time Window(s)</strong>
+                                                        <span class="badge muted-badge">Custom</span>
+                                                    </div>
+                                                    <small class="muted">Specify any exact start and end time(s)</small>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="sched-custom-windows hidden" id="schedCustomWindowsWrap">
+                                        <div class="sched-custom-rows" id="schedCustomWindowRows"></div>
+                                        <button type="button" class="add-member sched-add-win-btn" id="schedAddCustomWinBtn">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                                            Add another time window
+                                        </button>
+                                    </div>
+
+                                    <label class="field" id="schedOpenNoteField">
+                                        <span>Note <small class="muted">(optional — e.g. room or instructions)</small></span>
+                                        <input type="text" id="schedOpenNoteInput" maxlength="500" placeholder="Optional note" />
+                                    </label>
+
+                                    <label class="block-cancel-check hidden" id="schedAutoUnblockWrap">
+                                        <input type="checkbox" id="schedAutoUnblockInput" checked />
+                                        <span>Remove existing full-day block on selected date(s)</span>
+                                    </label>
+
+                                    <div class="form-error hidden" id="schedOpenError" role="alert"></div>
+
+                                    <button type="submit" class="btn btn-primary btn-block" id="schedOpenSubmitBtn">
+                                        <span class="btn-label" id="schedOpenSubmitLabel">Open Consultations</span>
+                                        <span class="spinner hidden"></span>
+                                    </button>
+                                </form>
+
+                                <!-- BLOCK FORM -->
+                                <form class="sched-form hidden" id="schedBlockForm" novalidate>
+                                    <div class="field">
+                                        <span>Block scope</span>
+                                        <div class="segmented" role="radiogroup" aria-label="Block scope">
+                                            <label>
+                                                <input type="radio" name="schedBlockScope" value="full" checked />
+                                                <span>Entire Day</span>
+                                            </label>
+                                            <label>
+                                                <input type="radio" name="schedBlockScope" value="time" />
+                                                <span>Specific Time</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="sched-block-time-section hidden" id="schedBlockTimeSection">
+                                        <div class="block-time-grid">
+                                            <label class="field">
+                                                <span>Start time</span>
+                                                <input type="time" id="schedBlockStartInput" value="12:00" step="300" />
+                                            </label>
+                                            <label class="field">
+                                                <span>End time</span>
+                                                <input type="time" id="schedBlockEndInput" value="13:00" step="300" />
+                                            </label>
+                                        </div>
+                                        <div class="quick-reason-chips">
+                                            <button type="button" class="reason-chip sched-time-preset" data-start="12:00" data-end="13:00">Lunch 12–1 PM</button>
+                                            <button type="button" class="reason-chip sched-time-preset" data-start="08:00" data-end="12:00">Morning 8–12 PM</button>
+                                            <button type="button" class="reason-chip sched-time-preset" data-start="13:00" data-end="17:00">Afternoon 1–5 PM</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="field">
+                                        <span>Reason <small class="muted">(optional, shown to students)</small></span>
+                                        <input type="text" id="schedBlockReasonInput" maxlength="500" placeholder="e.g. Faculty meeting, official business, out sick" />
+                                        <div class="quick-reason-chips">
+                                            <button type="button" class="reason-chip block-reason-chip" data-block-reason="Faculty meeting">Faculty meeting</button>
+                                            <button type="button" class="reason-chip block-reason-chip" data-block-reason="Official business">Official business</button>
+                                            <button type="button" class="reason-chip block-reason-chip" data-block-reason="Lunch break">Lunch break</button>
+                                            <button type="button" class="reason-chip block-reason-chip" data-block-reason="Out sick">Out sick</button>
+                                        </div>
+                                    </div>
+
+                                    <label class="block-cancel-check">
+                                        <input type="checkbox" id="schedBlockCancelExisting" checked />
+                                        <span>Cancel existing appointments during this blocked time</span>
+                                    </label>
+
+                                    <div class="form-error hidden" id="schedBlockError" role="alert"></div>
+
+                                    <button type="submit" class="btn btn-danger btn-block" id="schedBlockSubmitBtn">
+                                        <span class="btn-label" id="schedBlockSubmitLabel">Block Selected Date(s)</span>
+                                        <span class="spinner hidden"></span>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- My Regular Weekly Hours Section -->
+                    <div class="sched-regular-section" id="schedRegularHoursSection">
+                        <div class="sched-regular-head">
+                            <div>
+                                <h3>My Regular Weekly Hours</h3>
+                                <p class="muted small">Set your default weekly hours per day of the week. These are used whenever you open dates with <strong>"My Consultation Hours Only"</strong> or <strong>"My Regular Defense Hours"</strong>.</p>
+                            </div>
+                            <div class="segmented sched-reg-tabs" role="tablist" aria-label="Regular hours category">
+                                <label>
+                                    <input type="radio" name="schedRegType" value="consultation" checked />
+                                    <span>Consultation Hours</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="schedRegType" value="defense" />
+                                    <span>Defense Hours</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="sched-regular-grid" id="schedRegularGrid"></div>
+                    </div>
+
+                    <!-- Configured Upcoming Open Dates & Active Blocks Overview -->
+                    <div class="sched-overview-section">
+                        <div class="sched-overview-head">
+                            <div>
+                                <h3>Configured Upcoming Dates</h3>
+                                <p class="muted small">Click any date below to highlight it on the calendar, or close / unblock in one click.</p>
+                            </div>
+                            <div class="profile-filter-pills" id="schedOverviewFilters">
+                                <button type="button" class="profile-pill active" data-overview-filter="all">All</button>
+                                <button type="button" class="profile-pill" data-overview-filter="consultation">Consultations</button>
+                                <button type="button" class="profile-pill" data-overview-filter="defense">Defense</button>
+                                <button type="button" class="profile-pill" data-overview-filter="letter_pickup">Letter Pickup</button>
+                                <button type="button" class="profile-pill" data-overview-filter="blocked">Blocked</button>
+                            </div>
+                        </div>
+                        <div class="sched-overview-list" id="schedOverviewList"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Separate Section: Registered Students & Groups -->
@@ -155,66 +424,6 @@
             </div>
         </section>
     </main>
-
-    <!-- Block Date / Time Modal -->
-    <div class="modal-backdrop hidden" id="blockModal" role="dialog" aria-modal="true" aria-labelledby="blockModalTitle">
-        <div class="modal-card">
-            <div class="modal-head">
-                <h3 id="blockModalTitle">Block Date or Time</h3>
-                <button type="button" class="icon-btn" id="closeBlockModalBtn" aria-label="Close">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
-            </div>
-            <form class="modal-body" id="blockScheduleForm" novalidate>
-                <div class="segmented" role="radiogroup" aria-label="Block scope">
-                    <label>
-                        <input type="radio" name="blockScope" value="full" checked />
-                        <span>Entire day</span>
-                    </label>
-                    <label>
-                        <input type="radio" name="blockScope" value="time" />
-                        <span>Specific time</span>
-                    </label>
-                </div>
-
-                <label class="field">
-                    <span>Date</span>
-                    <input type="date" id="blockDateInput" required />
-                </label>
-
-                <div class="block-time-grid hidden" id="blockTimeFields">
-                    <label class="field">
-                        <span>Start time</span>
-                        <input type="time" id="blockStartTimeInput" value="08:00" step="300" />
-                    </label>
-                    <label class="field">
-                        <span>End time</span>
-                        <input type="time" id="blockEndTimeInput" value="17:00" step="300" />
-                    </label>
-                </div>
-
-                <label class="field">
-                    <span>Reason <small class="muted">(optional, shown to students)</small></span>
-                    <input type="text" id="blockReasonInput" maxlength="500" placeholder="e.g. Out sick, faculty meeting" />
-                </label>
-
-                <label class="block-cancel-check">
-                    <input type="checkbox" id="blockCancelExistingInput" checked />
-                    <span>Cancel existing appointments during this time</span>
-                </label>
-
-                <div class="form-error hidden" id="blockFormError" role="alert"></div>
-
-                <div class="modal-actions modal-actions-row">
-                    <button type="button" class="btn btn-ghost" id="cancelBlockModalBtn">Cancel</button>
-                    <button type="submit" class="btn btn-danger" id="confirmBlockBtn">
-                        <span class="btn-label">Block</span>
-                        <span class="spinner hidden"></span>
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
 
     <!-- Manual Send Email Modal -->
     <div class="modal-backdrop hidden" id="sendEmailModal" role="dialog" aria-modal="true" aria-labelledby="sendEmailModalTitle">
@@ -290,103 +499,6 @@
                     <button type="button" class="btn btn-ghost" id="cancelSendEmailModalBtn">Cancel</button>
                     <button type="submit" class="btn btn-primary" id="confirmSendEmailBtn">
                         <span class="btn-label">Send email</span>
-                        <span class="spinner hidden"></span>
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Communication Letter Pickup Availability Modal -->
-    <div class="modal-backdrop hidden" id="letterPickupScheduleModal" role="dialog" aria-modal="true" aria-labelledby="letterPickupModalTitle">
-        <div class="modal-card modal-wide">
-            <div class="modal-head">
-                <h3 id="letterPickupModalTitle">Communication Letter Pickup Schedule</h3>
-                <button type="button" class="icon-btn" id="closeLetterPickupModalBtn" aria-label="Close">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
-            </div>
-            <form class="modal-body" id="letterPickupScheduleForm" novalidate>
-                <p class="muted small">
-                    Set the specific dates and time windows open exclusively for <strong>Pickup of Communication Letter</strong> (5-minute slots each). Students can book at least 1 day in advance.
-                </p>
-
-                <label class="field">
-                    <span>Available date</span>
-                    <input type="date" id="letterPickupDateInput" required />
-                </label>
-
-                <div class="block-time-grid">
-                    <label class="field">
-                        <span>Start time</span>
-                        <input type="time" id="letterPickupStartTimeInput" value="14:00" step="300" required />
-                    </label>
-                    <label class="field">
-                        <span>End time</span>
-                        <input type="time" id="letterPickupEndTimeInput" value="15:00" step="300" required />
-                    </label>
-                </div>
-
-                <div class="email-template-preview" id="letterPickupSlotPreview"></div>
-
-                <label class="field">
-                    <span>Note <small class="muted">(optional)</small></span>
-                    <input type="text" id="letterPickupNoteInput" maxlength="500" placeholder="e.g. Room / desk location or pickup batch note" />
-                </label>
-
-                <div class="form-error hidden" id="letterPickupFormError" role="alert"></div>
-
-                <div class="modal-actions modal-actions-row">
-                    <button type="button" class="btn btn-ghost" id="cancelLetterPickupModalBtn">Close</button>
-                    <button type="submit" class="btn btn-primary" id="confirmLetterPickupBtn">
-                        <span class="btn-label">Add pickup window</span>
-                        <span class="spinner hidden"></span>
-                    </button>
-                </div>
-            </form>
-
-            <div class="pickup-modal-list-wrap">
-                <span class="student-field-label">Configured Pickup Windows</span>
-                <div class="pickup-modal-list" id="letterPickupModalList"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Booking Cutoff Date (Last Bookable Date) Modal -->
-    <div class="modal-backdrop hidden" id="cutoffModal" role="dialog" aria-modal="true" aria-labelledby="cutoffModalTitle">
-        <div class="modal-card">
-            <div class="modal-head">
-                <h3 id="cutoffModalTitle">Booking Cutoff Date</h3>
-                <button type="button" class="icon-btn" id="closeCutoffModalBtn" aria-label="Close">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
-            </div>
-            <form class="modal-body" id="cutoffForm" novalidate>
-                <p class="muted small">
-                    Set the last date students are allowed to schedule consultations and defenses. Changes take effect immediately on the booking calendar.
-                </p>
-
-                <div class="cancel-target-summary">
-                    <span class="muted small">Current last bookable date</span>
-                    <strong id="cutoffCurrentText">—</strong>
-                </div>
-
-                <label class="field">
-                    <span>Last bookable date</span>
-                    <input type="date" id="bookingEndDateInput" required />
-                </label>
-
-                <div class="field">
-                    <span>Quick presets</span>
-                    <div class="quick-reason-chips" id="cutoffPresetChips"></div>
-                </div>
-
-                <div class="form-error hidden" id="cutoffFormError" role="alert"></div>
-
-                <div class="modal-actions modal-actions-row">
-                    <button type="button" class="btn btn-ghost" id="cancelCutoffModalBtn">Cancel</button>
-                    <button type="submit" class="btn btn-primary" id="confirmCutoffBtn">
-                        <span class="btn-label">Save cutoff date</span>
                         <span class="spinner hidden"></span>
                     </button>
                 </div>

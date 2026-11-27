@@ -126,6 +126,13 @@
                         date: row.available_date || null,
                     });
                 })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduler_settings' }, (payload) => {
+                    const row = payload?.new || payload?.old || {};
+                    scheduleEmit({
+                        type: 'schedule_config_updated',
+                        key: row.key || null,
+                    });
+                })
                 .subscribe((status) => {
                     wsConnected = status === 'SUBSCRIBED';
                     updateStatusIndicators();
