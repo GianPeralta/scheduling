@@ -53,7 +53,7 @@
             <div class="dash-head">
                 <div>
                     <p class="muted small" id="todayLabel"></p>
-                    <h1>Consultations</h1>
+                    <h1 id="adminPageHeading">Consultations</h1>
                 </div>
                 <div class="dash-actions">
                     <button type="button" class="btn btn-primary" id="openScheduleTabBtn">
@@ -105,13 +105,37 @@
                 </div>
             </div>
 
+            <!-- Top-Level Admin Section Navigation (No Scrolling Needed) -->
+            <nav class="admin-view-nav" id="adminViewNav" role="tablist" aria-label="Dashboard sections">
+                <button type="button" class="admin-view-btn active" role="tab" aria-selected="true" data-admin-view="consultations">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    <span class="admin-view-label">Consultations</span>
+                    <span class="count" id="navCountConsultations">0</span>
+                </button>
+                <button type="button" class="admin-view-btn" role="tab" aria-selected="false" data-admin-view="schedule">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                    <span class="admin-view-label">Schedule &amp; Hours</span>
+                    <span class="count" id="countScheduleOpen">0</span>
+                </button>
+                <button type="button" class="admin-view-btn" role="tab" aria-selected="false" data-admin-view="students">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span class="admin-view-label">Student Groups</span>
+                    <span class="count" id="navCountStudents">0</span>
+                </button>
+                <button type="button" class="admin-view-btn" role="tab" aria-selected="false" data-admin-view="emails">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                    <span class="admin-view-label">Email Activity</span>
+                    <span class="count" id="navCountEmails">0</span>
+                </button>
+            </nav>
+
+            <!-- Panel 1 & 2: Consultations List + Schedule & Availability Manager -->
             <div class="card bookings-card" id="mainBookingsCard">
-                <div class="toolbar">
+                <div class="toolbar" id="consultationsToolbar">
                     <div class="tabs" role="tablist">
-                        <button class="tab active" data-tab="upcoming">Upcoming <span class="count" id="countUpcoming">0</span></button>
-                        <button class="tab" data-tab="schedule">Schedule &amp; Availability <span class="count" id="countScheduleOpen">0</span></button>
-                        <button class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
-                        <button class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
+                        <button type="button" class="tab active" data-tab="upcoming">Upcoming <span class="count" id="countUpcoming">0</span></button>
+                        <button type="button" class="tab" data-tab="past">Past <span class="count" id="countPast">0</span></button>
+                        <button type="button" class="tab" data-tab="cancelled">Cancelled <span class="count" id="countCancelled">0</span></button>
                     </div>
                     <label class="search" id="mainSearchLabel">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -415,19 +439,18 @@
                 </div>
             </div>
 
-            <!-- Separate Section: Sent Emails & System Email Activity -->
-            <div class="admin-section-head admin-section-head-row" id="emailLogsSection">
-                <div>
-                    <h2>Email Activity</h2>
-                    <p class="muted small">Track all emails sent by you or automatically by the system, and filter between reminders and other notifications.</p>
+            <!-- Panel 4: Sent Emails & System Email Activity -->
+            <div class="card bookings-card email-logs-card hidden" id="adminEmailsCard">
+                <div class="admin-panel-banner">
+                    <div>
+                        <strong>Sent Emails &amp; System Notifications</strong>
+                        <p class="muted small">Track emails sent manually by you or automatically by the system, and filter between reminders and other notifications.</p>
+                    </div>
+                    <button type="button" class="btn btn-primary-soft btn-sm" id="composeEmailFromLogsBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                        Send Email
+                    </button>
                 </div>
-                <button type="button" class="btn btn-primary-soft btn-sm" id="composeEmailFromLogsBtn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                    Send Email
-                </button>
-            </div>
-
-            <div class="card bookings-card email-logs-card">
                 <div class="toolbar">
                     <div class="tabs email-sender-tabs" role="tablist" aria-label="Filter emails by sender">
                         <button type="button" class="tab email-sender-tab active" data-email-sender="all">All Emails <span class="count" id="countEmailsAll">0</span></button>
@@ -453,21 +476,20 @@
                 <div class="email-logs-list" id="emailLogsList"></div>
             </div>
 
-            <!-- Separate Section: Registered Students & Groups -->
-            <div class="admin-section-head">
-                <div>
-                    <h2>Student Groups</h2>
-                    <p class="muted small">Registered Capstone &amp; Thesis groups, members, course level, and your role.</p>
+            <!-- Panel 3: Registered Students & Groups -->
+            <div class="card bookings-card students-card hidden" id="adminStudentsCard">
+                <div class="admin-panel-banner">
+                    <div>
+                        <strong>Registered Student Groups</strong>
+                        <p class="muted small">Registered Capstone &amp; Thesis groups, members, groupmate emails, course level, and profile update history.</p>
+                    </div>
                 </div>
-            </div>
-
-            <div class="card bookings-card students-card">
                 <div class="toolbar">
                     <div class="tabs student-tabs" role="tablist">
-                        <button class="tab student-tab active" data-role="all">All Groups <span class="count" id="countStudentsAll">0</span></button>
-                        <button class="tab student-tab" data-role="adviser">Adviser <span class="count" id="countStudentsAdviser">0</span></button>
-                        <button class="tab student-tab" data-role="panel">Panel <span class="count" id="countStudentsPanel">0</span></button>
-                        <button class="tab student-tab" data-role="logs">Update Logs <span class="count" id="countStudentsLogs">0</span></button>
+                        <button type="button" class="tab student-tab active" data-role="all">All Groups <span class="count" id="countStudentsAll">0</span></button>
+                        <button type="button" class="tab student-tab" data-role="adviser">Adviser <span class="count" id="countStudentsAdviser">0</span></button>
+                        <button type="button" class="tab student-tab" data-role="panel">Panel <span class="count" id="countStudentsPanel">0</span></button>
+                        <button type="button" class="tab student-tab" data-role="logs">Update Logs <span class="count" id="countStudentsLogs">0</span></button>
                     </div>
                     <label class="search">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -485,7 +507,7 @@
             <div class="modal-head">
                 <h3 id="sendEmailModalTitle">Send Email to Student</h3>
                 <div class="modal-head-actions">
-                    <button type="button" class="link-btn" id="jumpToEmailLogsBtn">View sent emails ↓</button>
+                    <button type="button" class="link-btn" id="jumpToEmailLogsBtn">View sent emails →</button>
                     <button type="button" class="icon-btn" id="closeSendEmailModalBtn" aria-label="Close">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                     </button>

@@ -4641,8 +4641,138 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 
 /* ==========================================================================
-   Admin Email Activity & Sent Logs Tracker
+   Admin Top-Level Section Switcher & Email Activity Tracker
    ========================================================================== */
+.admin-view-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+    scroll-margin-top: 76px;
+}
+
+.admin-view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1.5px solid var(--border);
+    background-color: var(--surface);
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    font-weight: 700;
+    box-shadow: var(--shadow-xs);
+    transition: border-color 0.16s var(--ease), background-color 0.16s var(--ease), color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.admin-view-btn svg {
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+    color: var(--muted);
+    transition: color 0.16s var(--ease);
+}
+
+.admin-view-btn:hover {
+    border-color: var(--primary-border);
+    background-color: var(--surface-subtle);
+    color: var(--text);
+}
+
+.admin-view-btn.active {
+    border-color: var(--primary);
+    background-color: var(--primary-soft);
+    color: var(--primary-hover);
+    box-shadow: 0 0 0 2px var(--primary-tint), var(--shadow-xs);
+}
+
+.admin-view-btn.active svg {
+    color: var(--primary);
+}
+
+.admin-view-btn .count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    font-size: 0.73rem;
+    font-weight: 800;
+    background-color: var(--surface-muted);
+    color: var(--text-soft);
+}
+
+.admin-view-btn.active .count {
+    background-color: var(--primary);
+    color: #ffffff;
+}
+
+.admin-panel-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    background-color: var(--surface-subtle);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.admin-panel-banner strong {
+    display: block;
+    font-size: 0.96rem;
+    font-weight: 800;
+    color: var(--text);
+    margin-bottom: 2px;
+}
+
+@media (max-width: 920px) {
+    .admin-view-nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+}
+
+@media (max-width: 680px) {
+    .admin-view-nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+    .admin-view-btn {
+        min-height: 46px;
+        padding: 9px 10px;
+        font-size: 0.82rem;
+        gap: 6px;
+    }
+    .admin-view-btn svg {
+        width: 15px;
+        height: 15px;
+    }
+    .admin-panel-banner {
+        padding: 13px 14px;
+    }
+    .admin-panel-banner .btn {
+        width: 100%;
+        min-height: 40px;
+    }
+}
+
+@media (max-width: 400px) {
+    .admin-view-btn svg {
+        display: none;
+    }
+    .admin-view-btn {
+        padding: 8px 8px;
+        font-size: 0.78rem;
+    }
+}
+
 .admin-section-head.admin-section-head-row {
     display: flex;
     align-items: flex-end;

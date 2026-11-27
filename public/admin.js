@@ -24,7 +24,8 @@
         today: '',
         currentHour: 0,
         currentMinute: 0,
-        tab: 'upcoming',
+        adminView: 'consultations', // 'consultations' | 'schedule' | 'students' | 'emails'
+        tab: 'upcoming', // 'upcoming' | 'past' | 'cancelled'
         search: '',
         studentRoleFilter: 'all',
         studentSearch: '',
@@ -200,6 +201,7 @@
         state.studentUpdateLogs = [];
         state.emailLogs = [];
         state.expandedEmailLogIds = new Set();
+        state.adminView = 'consultations';
         showLogin();
     }
 
@@ -374,15 +376,43 @@
 
     const makeDateStr = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
 
-    function switchAdminTab(tabName, scrollIntoView = false) {
-        state.tab = tabName;
-        document.querySelectorAll('.tab[data-tab]').forEach((t) => {
-            t.classList.toggle('active', t.dataset.tab === tabName);
+    const ADMIN_VIEW_TITLES = {
+        consultations: 'Consultations',
+        schedule: 'Schedule & Availability',
+        students: 'Student Groups',
+        emails: 'Email Activity',
+    };
+
+    function switchAdminView(viewName, scrollIntoView = false) {
+        const normalized = Object.prototype.hasOwnProperty.call(ADMIN_VIEW_TITLES, viewName)
+            ? viewName
+            : 'consultations';
+        state.adminView = normalized;
+        document.querySelectorAll('.admin-view-btn[data-admin-view]').forEach((btn) => {
+            const isActive = btn.dataset.adminView === normalized;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         });
+        if ($('#adminPageHeading')) {
+            $('#adminPageHeading').textContent = ADMIN_VIEW_TITLES[normalized];
+        }
         render();
         if (scrollIntoView) {
-            $('#mainBookingsCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            $('#adminViewNav')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+    }
+
+    function switchAdminTab(tabName, scrollIntoView = false) {
+        if (tabName === 'schedule') {
+            switchAdminView('schedule', scrollIntoView);
+            return;
+        }
+        state.adminView = 'consultations';
+        state.tab = ['upcoming', 'past', 'cancelled'].includes(tabName) ? tabName : 'upcoming';
+        document.querySelectorAll('.tab[data-tab]').forEach((t) => {
+            t.classList.toggle('active', t.dataset.tab === state.tab);
+        });
+        switchAdminView('consultations', scrollIntoView);
     }
 
     function getSortedSelectedDates() {
@@ -2826,17 +2856,39 @@
         $('#countUpcoming').textContent = upcoming.length;
         $('#countPast').textContent = past.length;
         if ($('#countCancelled')) $('#countCancelled').textContent = cancelled.length;
+        if ($('#navCountConsultations')) $('#navCountConsultations').textContent = upcoming.length;
+        if ($('#navCountStudents')) $('#navCountStudents').textContent = state.students.length;
+        if ($('#navCountEmails')) $('#navCountEmails').textContent = state.emailLogs.length;
+
+        document.querySelectorAll('.admin-view-btn[data-admin-view]').forEach((btn) => {
+            const isActive = btn.dataset.adminView === state.adminView;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        if ($('#adminPageHeading')) {
+            $('#adminPageHeading').textContent = ADMIN_VIEW_TITLES[state.adminView] || 'Consultations';
+        }
+
+        const isConsultationsView = state.adminView === 'consultations';
+        const isScheduleView = state.adminView === 'schedule';
+        const isStudentsView = state.adminView === 'students';
+        const isEmailsView = state.adminView === 'emails';
+
+        $('#mainBookingsCard')?.classList.toggle('hidden', !isConsultationsView && !isScheduleView);
+        $('#consultationsToolbar')?.classList.toggle('hidden', !isConsultationsView);
+        $('#bookingList')?.classList.toggle('hidden', !isConsultationsView);
+        $('#scheduleManagerView')?.classList.toggle('hidden', !isScheduleView);
+        $('#adminStudentsCard')?.classList.toggle('hidden', !isStudentsView);
+        $('#adminEmailsCard')?.classList.toggle('hidden', !isEmailsView);
 
         renderEmailLogsSection();
         renderStudentsSection();
 
-        const isScheduleTab = state.tab === 'schedule';
-        $('#mainSearchLabel')?.classList.toggle('hidden', isScheduleTab);
-        $('#scheduleManagerView')?.classList.toggle('hidden', !isScheduleTab);
-        $('#bookingList')?.classList.toggle('hidden', isScheduleTab);
-
-        if (isScheduleTab) {
+        if (isScheduleView) {
             renderScheduleManager();
+            return;
+        }
+        if (!isConsultationsView) {
             return;
         }
 
@@ -3086,10 +3138,14 @@
         state.search = e.target.value.trim();
         render();
     });
+    document.querySelectorAll('.admin-view-btn[data-admin-view]').forEach((btn) => {
+        btn.addEventListener('click', () => switchAdminView(btn.dataset.adminView));
+    });
     document.querySelectorAll('.tab[data-tab]').forEach((tab) => {
         tab.addEventListener('click', () => {
             document.querySelectorAll('.tab[data-tab]').forEach((t) => t.classList.toggle('active', t === tab));
             state.tab = tab.dataset.tab;
+            state.adminView = 'consultations';
             render();
         });
     });
@@ -3106,7 +3162,7 @@
     });
 
     // Unified Schedule & Availability Manager bindings
-    $('#openScheduleTabBtn')?.addEventListener('click', () => switchAdminTab('schedule', true));
+    $('#openScheduleTabBtn')?.addEventListener('click', () => switchAdminView('schedule', true));
     document.querySelectorAll('.sched-mode-pill[data-select-mode]').forEach((btn) => {
         btn.addEventListener('click', () => setSchedSelectMode(btn.dataset.selectMode));
     });
@@ -3281,7 +3337,7 @@
     $('#composeEmailFromLogsBtn')?.addEventListener('click', () => openSendEmailModal());
     $('#jumpToEmailLogsBtn')?.addEventListener('click', () => {
         closeSendEmailModal();
-        $('#emailLogsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        switchAdminView('emails', true);
     });
 
     // Manual Send Email modal bindings
