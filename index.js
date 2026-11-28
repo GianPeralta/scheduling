@@ -4370,6 +4370,12 @@ function buildCompleteEmailLogs({ storedLogs = [], rawAppointmentRows = [], book
             if (log.emailType.startsWith('booking_cancelled')) {
                 recordedBookingTypes.add(`${log.bookingId}|booking_cancelled`);
             }
+            if (log.emailType === 'defense_scheduled_admin') {
+                recordedBookingTypes.add(`${log.bookingId}|booking_confirmed`);
+            }
+            if (log.emailType === 'defense_rescheduled_admin') {
+                recordedBookingTypes.add(`${log.bookingId}|booking_rescheduled`);
+            }
         }
         if (log.category === 'pickup_notice') {
             recordedPickupTimes.push({
@@ -5894,6 +5900,428 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
     });
 });
 
+// Schedule (or reschedule) a Capstone / Thesis defense directly as Admin / Panel
+app.post('/api/admin/defenses', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const rawStudentId = String(body.studentId || '').trim();
+    const rawReplaceId = String(body.replaceBookingId || '').trim();
+    const replaceBookingId = rawReplaceId ? rawReplaceId : null;
+
+    if (replaceBookingId && !/^[0-9a-f-]{36}$/i.test(replaceBookingId)) {
+        return res.status(400).json({ error: 'Invalid existing appointment ID.' });
+    }
+
+    let studentRow = null;
+    if (rawStudentId) {
+        if (!/^[0-9a-f-]{36}$/i.test(rawStudentId)) {
+            return res.status(400).json({ error: 'Invalid student group ID.' });
+        }
+        const { data, error: stuErr } = await db()
+            .from(STUDENTS_TABLE)
+            .select('*')
+            .eq('id', rawStudentId)
+            .maybeSingle();
+        if (stuErr) return res.status(500).json({ error: stuErr.message });
+        if (!data) return res.status(404).json({ error: 'Selected student group not found.' });
+        studentRow = data;
+    }
+
+    let existingBookingRow = null;
+    if (replaceBookingId) {
+        const { data: repData, error: repErr } = await db()
+            .from(TABLE)
+            .select('*')
+            .eq('id', replaceBookingId)
+            .maybeSingle();
+        if (repErr) return res.status(500).json({ error: repErr.message });
+        if (!repData) return res.status(404).json({ error: 'Existing defense appointment not found.' });
+        if (repData.status === 'cancelled') {
+            return res.status(400).json({ error: 'Cancelled appointments cannot be rescheduled — please schedule a new defense instead.' });
+        }
+        if (repData.status === 'completed' || repData.status === 'no_show') {
+            return res.status(400).json({ error: 'Completed or recorded appointments cannot be moved — please schedule a new defense instead.' });
+        }
+        existingBookingRow = repData;
+        if (!studentRow && existingBookingRow.student_id) {
+            const { data: linkedStu } = await db()
+                .from(STUDENTS_TABLE)
+                .select('*')
+                .eq('id', existingBookingRow.student_id)
+                .maybeSingle();
+            if (linkedStu) studentRow = linkedStu;
+        }
+    }
+
+    const rawPrimaryEmail = normalizeEmail(body.studentEmail || studentRow?.email || existingBookingRow?.student_email || '');
+    if (rawPrimaryEmail && (rawPrimaryEmail.length > 254 || !EMAIL_RE.test(rawPrimaryEmail))) {
+        return res.status(400).json({
+            field: 'defGroupEmailInput',
+            error: 'Please enter a valid email address or leave it blank.',
+        });
+    }
+
+    if (!studentRow && rawPrimaryEmail) {
+        studentRow = await findStudentByEmail(rawPrimaryEmail).catch(() => null);
+    }
+
+    const defenseLevel = normalizeDefenseLevel(body.defenseLevel)
+        || normalizeDefenseLevel(studentRow?.project_level)
+        || normalizeDefenseLevel(existingBookingRow?.defense_level);
+    if (!defenseLevel) {
+        return res.status(400).json({
+            field: 'defLevelField',
+            error: 'Please select the defense course level (Capstone 1, Capstone 2, Thesis 1, or Thesis 2).',
+        });
+    }
+
+    const durationMinutes = DEFENSE_LEVELS[defenseLevel].durationMinutes;
+    const capstoneTitle = cleanName(
+        body.capstoneTitle
+        || studentRow?.capstone_title
+        || existingBookingRow?.capstone_title
+        || existingBookingRow?.team_name
+        || ''
+    );
+    if (capstoneTitle.length < 2 || capstoneTitle.length > 200) {
+        return res.status(400).json({
+            field: 'defCapstoneInput',
+            error: 'Please enter the Capstone / Thesis title (2–200 characters).',
+        });
+    }
+
+    let members = [];
+    if (Array.isArray(body.members) && body.members.some((m) => cleanName(m))) {
+        members = body.members.map(cleanName).filter(Boolean).slice(0, MAX_MEMBERS);
+    } else if (studentRow) {
+        members = (Array.isArray(studentRow.members) && studentRow.members.length
+            ? studentRow.members
+            : [studentRow.full_name])
+            .map(cleanName)
+            .filter(Boolean)
+            .slice(0, MAX_MEMBERS);
+    } else if (existingBookingRow && Array.isArray(existingBookingRow.members) && existingBookingRow.members.length) {
+        members = existingBookingRow.members.map(cleanName).filter(Boolean).slice(0, MAX_MEMBERS);
+    }
+
+    if (studentRow && members.length) {
+        // If registered group is selected and members weren't explicitly overridden, ensure rep is first
+        if (!Array.isArray(body.members) || !body.members.length) {
+            members[0] = studentRow.full_name;
+        }
+    }
+
+    if (members.length < MIN_MEMBERS) {
+        return res.status(400).json({
+            field: 'defMembersWrap',
+            error: 'Please enter at least 1 group member name.',
+        });
+    }
+    if (members.length > MAX_MEMBERS) {
+        return res.status(400).json({
+            field: 'defMembersWrap',
+            error: `Only up to ${MAX_MEMBERS} members are allowed in a Capstone / Thesis group.`,
+        });
+    }
+    if (members.some((m) => m.length < 2 || m.length > 100)) {
+        return res.status(400).json({
+            field: 'defMembersWrap',
+            error: 'Each member name must be 2–100 characters long.',
+        });
+    }
+
+    const instructorRole = body.instructorRole === 'adviser'
+        ? 'adviser'
+        : body.instructorRole === 'panel'
+            ? 'panel'
+            : (studentRow?.instructor_role || existingBookingRow?.instructor_role || 'panel');
+
+    const date = String(body.date ?? '').trim();
+    if (!parseDate(date)) {
+        return res.status(400).json({ field: 'defDateInput', error: 'Please select a valid defense date.' });
+    }
+
+    const now = nowInTz();
+    if (date < now.date) {
+        return res.status(400).json({
+            field: 'defDateInput',
+            error: 'Please select today or a future date for the defense.',
+        });
+    }
+
+    const startMinute = Number(body.startMinute);
+    if (!Number.isInteger(startMinute) || startMinute < 0 || startMinute >= 1440) {
+        return res.status(400).json({ field: 'defStartTimeInput', error: 'Please enter a valid start time.' });
+    }
+    const slotStart = startMinute;
+    const slotEnd = slotStart + durationMinutes;
+    if (slotEnd > 1440) {
+        return res.status(400).json({
+            field: 'defStartTimeInput',
+            error: `A ${DEFENSE_LEVELS[defenseLevel].durationLabel} defense starting at ${formatMinute(slotStart)} would extend past midnight. Please choose an earlier start time.`,
+        });
+    }
+
+    let rawReason = String(body.reason ?? '').trim();
+    if (!rawReason) {
+        rawReason = existingBookingRow?.reason
+            || `${DEFENSE_LEVELS[defenseLevel].label} defense (scheduled by panel).`;
+    }
+    if (rawReason.length < 5) {
+        rawReason = `${DEFENSE_LEVELS[defenseLevel].label} defense — ${rawReason}`;
+    }
+    if (rawReason.length > 1000) {
+        return res.status(400).json({
+            field: 'defReasonInput',
+            error: 'Notes / details must be 1000 characters or fewer.',
+        });
+    }
+
+    if (existingBookingRow
+        && existingBookingRow.appointment_date === date
+        && Number(existingBookingRow.start_minute) === slotStart
+        && Number(existingBookingRow.duration_minutes) === durationMinutes
+        && existingBookingRow.defense_level === defenseLevel
+        && existingBookingRow.reason === rawReason) {
+        return res.status(400).json({
+            error: 'This defense is already scheduled for that exact date, time, and course level.',
+        });
+    }
+
+    // Check against active timed appointments on the target date so no double-booking occurs
+    const { data: dayRows, error: dayErr } = await db()
+        .from(TABLE)
+        .select('*')
+        .eq('appointment_date', date);
+    if (dayErr) return res.status(500).json({ error: dayErr.message });
+
+    const conflictingRows = (dayRows || []).filter((r) => {
+        if (!isActiveRow(r) || !isTimedRow(r)) return false;
+        if (existingBookingRow && r.id === existingBookingRow.id) return false;
+        const [rs, re] = rowInterval(r);
+        return slotStart < re && slotEnd > rs;
+    });
+
+    if (conflictingRows.length > 0) {
+        const firstConflict = conflictingRows[0];
+        const [cs, ce] = rowInterval(firstConflict);
+        const conflictTitle = firstConflict.capstone_title || firstConflict.team_name || firstConflict.student_name || 'existing appointment';
+        const conflictType = formatConsultationTitle(firstConflict.consultation_type, firstConflict.defense_level);
+        return res.status(409).json({
+            code: 'SLOT_OVERLAP',
+            field: 'defStartTimeInput',
+            error: `${formatMinute(slotStart)} – ${formatMinute(slotEnd)} overlaps with ${conflictType} (${conflictTitle}, ${formatMinute(cs)} – ${formatMinute(ce)}). Please choose another time or cancel/move that appointment first.`,
+        });
+    }
+
+    let savedRow = null;
+    let previousBooking = null;
+
+    if (existingBookingRow) {
+        previousBooking = toBooking(existingBookingRow, now, studentRow);
+        const [prevStart] = rowInterval(existingBookingRow);
+        const timeChanged = existingBookingRow.appointment_date !== date || prevStart !== slotStart;
+        const rescheduledAt = timeChanged ? new Date().toISOString() : (existingBookingRow.rescheduled_at || null);
+        const nextCount = timeChanged
+            ? (Number(existingBookingRow.rescheduled_count) || 0) + 1
+            : (Number(existingBookingRow.rescheduled_count) || 0);
+
+        const updatePayload = {
+            student_name: members[0],
+            team_name: capstoneTitle,
+            capstone_title: capstoneTitle,
+            members,
+            reason: rawReason,
+            appointment_date: date,
+            start_hour: Math.floor(slotStart / 60),
+            start_minute: slotStart,
+            duration_minutes: durationMinutes,
+            consultation_type: 'defense',
+            defense_level: defenseLevel,
+            instructor_role: instructorRole,
+            student_id: studentRow?.id || existingBookingRow.student_id || null,
+            student_email: rawPrimaryEmail || studentRow?.email || existingBookingRow.student_email || null,
+            reminder_sent_at: null,
+            student_reminder_sent_at: null,
+            ...(timeChanged ? {
+                previous_date: existingBookingRow.appointment_date,
+                previous_start_minute: prevStart,
+                rescheduled_at: rescheduledAt,
+                rescheduled_count: nextCount,
+            } : {}),
+        };
+
+        let { data: upd, error: updErr } = await db()
+            .from(TABLE)
+            .update(updatePayload)
+            .eq('id', existingBookingRow.id)
+            .select('*')
+            .maybeSingle();
+
+        if (updErr && ['42703', 'PGRST204'].includes(updErr.code)) {
+            const {
+                previous_date: _pd,
+                previous_start_minute: _pm,
+                rescheduled_at: _ra,
+                rescheduled_count: _rc,
+                ...corePayload
+            } = updatePayload;
+            const retry = await db()
+                .from(TABLE)
+                .update(corePayload)
+                .eq('id', existingBookingRow.id)
+                .select('*')
+                .maybeSingle();
+            upd = retry.data;
+            updErr = retry.error;
+        }
+
+        if (updErr) {
+            if (updErr.code === '23505' || updErr.code === '23P01') {
+                return res.status(409).json({
+                    code: 'SLOT_OVERLAP',
+                    error: `${formatMinute(slotStart)} – ${formatMinute(slotEnd)} overlaps with an existing appointment on ${date}. Please choose another time.`,
+                });
+            }
+            if (['23514', '42703', 'PGRST204'].includes(updErr.code)) {
+                return res.status(500).json({
+                    error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+                });
+            }
+            return res.status(500).json({ error: updErr.message });
+        }
+        if (!upd) return res.status(404).json({ error: 'Appointment could not be updated.' });
+
+        remindedAppointmentIds.delete(existingBookingRow.id);
+        remindedStudentAppointmentIds.delete(existingBookingRow.id);
+        savedRow = upd;
+    } else {
+        const insertPayload = {
+            student_name: members[0],
+            team_name: capstoneTitle,
+            capstone_title: capstoneTitle,
+            members,
+            reason: rawReason,
+            appointment_date: date,
+            start_hour: Math.floor(slotStart / 60),
+            start_minute: slotStart,
+            duration_minutes: durationMinutes,
+            consultation_type: 'defense',
+            defense_level: defenseLevel,
+            instructor_role: instructorRole,
+            student_id: studentRow?.id || null,
+            student_email: rawPrimaryEmail || studentRow?.email || null,
+        };
+
+        const { data: ins, error: insErr } = await db()
+            .from(TABLE)
+            .insert([insertPayload])
+            .select('*')
+            .single();
+
+        if (insErr) {
+            if (insErr.code === '23505' || insErr.code === '23P01') {
+                return res.status(409).json({
+                    code: 'SLOT_OVERLAP',
+                    error: `${formatMinute(slotStart)} – ${formatMinute(slotEnd)} overlaps with an existing appointment on ${date}. Please choose another time.`,
+                });
+            }
+            if (['23514', '42703', 'PGRST204'].includes(insErr.code)) {
+                return res.status(500).json({
+                    error: 'Database schema needs updating: please run supabase/schema.sql in your Supabase SQL Editor.',
+                });
+            }
+            return res.status(500).json({ error: insErr.message });
+        }
+        savedRow = ins;
+    }
+
+    // Keep the registered group's project_level in sync if changed
+    if (studentRow && studentRow.project_level !== defenseLevel) {
+        const { data: updatedStu, error: lvlErr } = await db()
+            .from(STUDENTS_TABLE)
+            .update({ project_level: defenseLevel })
+            .eq('id', studentRow.id)
+            .select('*')
+            .maybeSingle();
+        if (!lvlErr && updatedStu) {
+            studentRow = updatedStu;
+        }
+    }
+
+    const booking = toBooking(savedRow, now, studentRow);
+
+    // Build recipient list if sendEmail is enabled
+    const sendEmail = body.sendEmail !== false;
+    const includeGroupmates = body.includeGroupmates !== false;
+    const extraCustomEmails = Array.isArray(body.extraEmails)
+        ? body.extraEmails.map(normalizeEmail).filter((e) => e && e.length <= 254 && EMAIL_RE.test(e))
+        : [];
+
+    let recipients = [];
+    if (sendEmail) {
+        if (includeGroupmates) {
+            recipients = getGroupRecipientEmails({
+                primaryEmail: rawPrimaryEmail || studentRow?.email || null,
+                memberEmails: extraCustomEmails,
+                studentRow,
+                booking,
+            });
+        } else {
+            const single = normalizeEmail(rawPrimaryEmail || studentRow?.email || booking.studentEmail || '');
+            if (single && EMAIL_RE.test(single)) recipients = [single];
+            extraCustomEmails.forEach((e) => {
+                if (!recipients.includes(e)) recipients.push(e);
+            });
+        }
+    }
+
+    let emailSent = false;
+    let emailError = null;
+    const siteOrigin = resolveSiteOrigin(req);
+
+    const rtPromise = notifyRealtimeListeners({
+        type: existingBookingRow ? 'booking_rescheduled' : 'booking_created',
+        date: booking.date,
+        ...(previousBooking?.date ? { previousDate: previousBooking.date } : {}),
+        bookingId: booking.id,
+        by: 'admin',
+    });
+
+    if (sendEmail && recipients.length > 0) {
+        try {
+            if (existingBookingRow) {
+                await sendStudentRescheduleEmail(booking, previousBooking, siteOrigin, {
+                    scheduledByAdmin: true,
+                    recipientsOverride: recipients,
+                });
+            } else {
+                await sendStudentBookingConfirmationEmail(booking, siteOrigin, {
+                    scheduledByAdmin: true,
+                    recipientsOverride: recipients,
+                });
+            }
+            emailSent = true;
+        } catch (err) {
+            console.error('Failed to send admin-scheduled defense email:', err.message || err);
+            emailError = err.message || 'Could not send email notification.';
+        }
+    }
+
+    if (process.env.VERCEL) {
+        await rtPromise;
+    }
+
+    res.status(existingBookingRow ? 200 : 201).json({
+        ok: true,
+        rescheduled: Boolean(existingBookingRow),
+        booking,
+        previousBooking,
+        emailSent,
+        emailError,
+        recipients,
+    });
+});
+
 // Fetch the student account linked to a booking row so serialized bookings retain student-level metadata & groupmate emails.
 async function fetchStudentForBooking(row) {
     if (!row) return null;
@@ -6283,20 +6711,36 @@ function formatStudentGroupGreeting(booking, recipientsCount = 1) {
     return `Hi ${booking?.name || 'Student'},`;
 }
 
-async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
-    const recipients = getGroupRecipientEmails({ booking });
+async function sendStudentBookingConfirmationEmail(
+    booking,
+    siteOrigin = '',
+    { scheduledByAdmin = false, recipientsOverride = null } = {}
+) {
+    const recipients = Array.isArray(recipientsOverride) && recipientsOverride.length
+        ? recipientsOverride
+        : getGroupRecipientEmails({ booking });
     if (!recipients.length) return;
     const { dateLabel } = buildBookingSummaryData(booking);
     const greeting = formatStudentGroupGreeting(booking, recipients.length);
-    const subject = `Confirmed: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
+    const isDefense = booking.consultationType === 'defense';
+    const subject = scheduledByAdmin && isDefense
+        ? `Defense Scheduled: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`
+        : `Confirmed: ${booking.consultationTitle} on ${dateLabel} (${booking.label}) — #${booking.reference}`;
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
     const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
     const rules = studentPolicyReminderText(booking);
+    const introText = scheduledByAdmin
+        ? `Your ${booking.consultationTitle} has been scheduled by ${TEACHER_NAME} (${formatRoleLabel(booking.instructorRole)}).`
+        : `Your ${booking.consultationTitle} with ${TEACHER_NAME} has been scheduled.`;
+    const introHtml = scheduledByAdmin
+        ? `Your <strong>${escapeHtml(booking.consultationTitle)}</strong> has been scheduled by <strong>${escapeHtml(TEACHER_NAME)}</strong> (${escapeHtml(formatRoleLabel(booking.instructorRole))}).`
+        : `Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> is confirmed.`;
+    const cardAccent = isDefense ? '#be123c' : '#0f766e';
 
     const textLines = [
         greeting,
         '',
-        `Your ${booking.consultationTitle} with ${TEACHER_NAME} has been scheduled.`,
+        introText,
         '',
         ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
         '',
@@ -6312,8 +6756,8 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
     const html = `
         <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
             <p>${escapeHtml(greeting)}</p>
-            <p>Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> is confirmed.</p>
-            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
+            <p>${introHtml}</p>
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false, accentColor: cardAccent })}
             ${buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl)}
             <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
                 <strong>Reminders:</strong>
@@ -6327,6 +6771,8 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
     const bodyText = textLines.join('\n');
     const recipientName = Array.isArray(booking.members) && booking.members.length ? booking.members.join(', ') : (booking.name || null);
     const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+    const logSentBy = scheduledByAdmin ? 'instructor' : 'system';
+    const logEmailType = scheduledByAdmin && isDefense ? 'defense_scheduled_admin' : 'booking_confirmed';
 
     try {
         await mailer().sendMail({
@@ -6344,9 +6790,9 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
             ],
         });
         await recordEmailLog({
-            sentBy: 'system',
+            sentBy: logSentBy,
             category: 'booking',
-            emailType: 'booking_confirmed',
+            emailType: logEmailType,
             status: 'sent',
             subject,
             recipients,
@@ -6358,9 +6804,9 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
         });
     } catch (err) {
         await recordEmailLog({
-            sentBy: 'system',
+            sentBy: logSentBy,
             category: 'booking',
-            emailType: 'booking_confirmed',
+            emailType: logEmailType,
             status: 'failed',
             subject,
             recipients,
@@ -6375,8 +6821,15 @@ async function sendStudentBookingConfirmationEmail(booking, siteOrigin = '') {
     }
 }
 
-async function sendStudentRescheduleEmail(booking, previousBooking = null, siteOrigin = '') {
-    const recipients = getGroupRecipientEmails({ booking });
+async function sendStudentRescheduleEmail(
+    booking,
+    previousBooking = null,
+    siteOrigin = '',
+    { scheduledByAdmin = false, recipientsOverride = null } = {}
+) {
+    const recipients = Array.isArray(recipientsOverride) && recipientsOverride.length
+        ? recipientsOverride
+        : getGroupRecipientEmails({ booking });
     if (!recipients.length) return;
     const { dateLabel } = buildBookingSummaryData(booking);
     const prevDateLabel = previousBooking?.date ? formatLongDateStr(previousBooking.date) : null;
@@ -6384,16 +6837,24 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
         ? `${prevDateLabel} (${previousBooking.label})`
         : null;
     const greeting = formatStudentGroupGreeting(booking, recipients.length);
+    const isDefense = booking.consultationType === 'defense';
     const subject = `Rescheduled: ${booking.consultationTitle} moved to ${dateLabel} (${booking.label}) — #${booking.reference}`;
     const appointmentsUrl = siteOrigin ? `${siteOrigin}/appointments.html` : '';
     const outlookCalUrl = booking.outlookCalendarUrl || buildOutlookCalendarUrl(booking);
     const rules = studentPolicyReminderText(booking);
     const sequence = Math.max(1, booking.rescheduledCount || 1);
+    const introText = scheduledByAdmin
+        ? `Your ${booking.consultationTitle} has been rescheduled by ${TEACHER_NAME} (${formatRoleLabel(booking.instructorRole)}).`
+        : `Your ${booking.consultationTitle} with ${TEACHER_NAME} has been rescheduled.`;
+    const introHtml = scheduledByAdmin
+        ? `Your <strong>${escapeHtml(booking.consultationTitle)}</strong> has been rescheduled by <strong>${escapeHtml(TEACHER_NAME)}</strong> (${escapeHtml(formatRoleLabel(booking.instructorRole))}).`
+        : `Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> has been rescheduled.`;
+    const cardAccent = isDefense ? '#be123c' : '#0f766e';
 
     const textLines = [
         greeting,
         '',
-        `Your ${booking.consultationTitle} with ${TEACHER_NAME} has been rescheduled.`,
+        introText,
         ...(prevSummary ? [`Moved from: ${prevSummary}`] : []),
         '',
         ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
@@ -6417,9 +6878,9 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
     const html = `
         <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#0f172a;line-height:1.55">
             <p>${escapeHtml(greeting)}</p>
-            <p>Your <strong>${escapeHtml(booking.consultationTitle)}</strong> with <strong>${escapeHtml(TEACHER_NAME)}</strong> has been rescheduled.</p>
+            <p>${introHtml}</p>
             ${movedFromHtml}
-            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false })}
+            ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false, accentColor: cardAccent })}
             ${buildEmailActionButtonsHtml(outlookCalUrl, appointmentsUrl)}
             <div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">
                 <strong>Reminders:</strong>
@@ -6433,6 +6894,8 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
     const bodyText = textLines.join('\n');
     const recipientName = Array.isArray(booking.members) && booking.members.length ? booking.members.join(', ') : (booking.name || null);
     const capstoneTitle = booking.capstoneTitle || booking.teamName || null;
+    const logSentBy = scheduledByAdmin ? 'instructor' : 'system';
+    const logEmailType = scheduledByAdmin && isDefense ? 'defense_rescheduled_admin' : 'booking_rescheduled';
 
     try {
         await mailer().sendMail({
@@ -6450,9 +6913,9 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
             ],
         });
         await recordEmailLog({
-            sentBy: 'system',
+            sentBy: logSentBy,
             category: 'booking',
-            emailType: 'booking_rescheduled',
+            emailType: logEmailType,
             status: 'sent',
             subject,
             recipients,
@@ -6464,9 +6927,9 @@ async function sendStudentRescheduleEmail(booking, previousBooking = null, siteO
         });
     } catch (err) {
         await recordEmailLog({
-            sentBy: 'system',
+            sentBy: logSentBy,
             category: 'booking',
-            emailType: 'booking_rescheduled',
+            emailType: logEmailType,
             status: 'failed',
             subject,
             recipients,

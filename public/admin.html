@@ -56,6 +56,10 @@
                     <h1 id="adminPageHeading">Consultations</h1>
                 </div>
                 <div class="dash-actions">
+                    <button type="button" class="btn btn-rose" id="openScheduleDefenseModalBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                        Schedule Defense
+                    </button>
                     <button type="button" class="btn btn-primary" id="openScheduleTabBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
                         Manage Schedule
@@ -483,6 +487,10 @@
                         <strong>Registered Student Groups</strong>
                         <p class="muted small">Registered Capstone &amp; Thesis groups, members, groupmate emails, course level, and profile update history.</p>
                     </div>
+                    <button type="button" class="btn btn-rose-soft btn-sm" id="scheduleDefenseFromStudentsBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                        Schedule Defense
+                    </button>
                 </div>
                 <div class="toolbar">
                     <div class="tabs student-tabs" role="tablist">
@@ -500,6 +508,174 @@
             </div>
         </section>
     </main>
+
+    <!-- Admin Schedule Group for Defense Modal -->
+    <div class="modal-backdrop hidden" id="scheduleDefenseModal" role="dialog" aria-modal="true" aria-labelledby="scheduleDefenseModalTitle">
+        <div class="modal-card modal-defense">
+            <div class="modal-head">
+                <div class="modal-title-with-badge">
+                    <h3 id="scheduleDefenseModalTitle">Schedule Group for Defense</h3>
+                    <span class="badge rose" id="scheduleDefenseModeBadge">Panel Schedule</span>
+                </div>
+                <button type="button" class="icon-btn" id="closeScheduleDefenseModalBtn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form class="modal-body" id="scheduleDefenseForm" novalidate>
+                <p class="muted small def-modal-intro">
+                    Assign a group’s defense date and time agreed upon by the panel — works on any date and time without needing to open public self-booking slots for other students.
+                </p>
+
+                <label class="field">
+                    <span>Student group <small class="muted">(pick a registered group or enter manually)</small></span>
+                    <select id="defStudentSelect">
+                        <option value="">Manual / Unregistered group (enter details below)</option>
+                    </select>
+                </label>
+
+                <div class="def-existing-callout hidden" id="defExistingDefenseBox">
+                    <div class="def-existing-info">
+                        <strong id="defExistingDefenseTitle">Existing Upcoming Defense Found</strong>
+                        <p class="small" id="defExistingDefenseText"></p>
+                    </div>
+                    <label class="block-cancel-check">
+                        <input type="checkbox" id="defReplaceExistingCheck" checked />
+                        <span>Move / reschedule this existing defense to the new date &amp; time below</span>
+                    </label>
+                </div>
+
+                <label class="field">
+                    <span>Capstone / Thesis title</span>
+                    <input type="text" id="defCapstoneInput" maxlength="200" placeholder="e.g. Web-Based Consultation Scheduling System" required />
+                </label>
+
+                <div class="def-course-role-grid">
+                    <div class="field" id="defLevelField">
+                        <span>Course &amp; duration</span>
+                        <div class="segmented level-segmented" role="radiogroup" aria-label="Defense course level">
+                            <label>
+                                <input type="radio" name="defLevel" value="capstone1" checked />
+                                <span>Capstone 1 <small>(1h)</small></span>
+                            </label>
+                            <label>
+                                <input type="radio" name="defLevel" value="capstone2" />
+                                <span>Capstone 2 <small>(2h)</small></span>
+                            </label>
+                            <label>
+                                <input type="radio" name="defLevel" value="thesis1" />
+                                <span>Thesis 1 <small>(1h)</small></span>
+                            </label>
+                            <label>
+                                <input type="radio" name="defLevel" value="thesis2" />
+                                <span>Thesis 2 <small>(2h)</small></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="field" id="defRoleField">
+                        <span>Your role for this group</span>
+                        <div class="segmented" role="radiogroup" aria-label="Instructor role">
+                            <label>
+                                <input type="radio" name="defRole" value="panel" checked />
+                                <span>Panel Member</span>
+                            </label>
+                            <label>
+                                <input type="radio" name="defRole" value="adviser" />
+                                <span>Adviser</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="field" id="defMembersWrap">
+                    <div class="notes-section-head">
+                        <span>Group members <small class="muted" id="defMembersCountLabel">(1/3)</small></span>
+                        <button type="button" class="link-btn" id="defAddMemberBtn">+ Add member (max 3)</button>
+                    </div>
+                    <div class="member-list" id="defMemberList"></div>
+                </div>
+
+                <div class="def-datetime-card">
+                    <div class="def-datetime-grid">
+                        <label class="field">
+                            <span>Defense date</span>
+                            <input type="date" id="defDateInput" required />
+                        </label>
+                        <label class="field">
+                            <span>Start time</span>
+                            <input type="time" id="defStartTimeInput" value="09:00" step="300" required />
+                        </label>
+                    </div>
+
+                    <div class="def-computed-window">
+                        <span class="muted small">Defense time block:</span>
+                        <strong id="defCalculatedWindowText">—</strong>
+                    </div>
+
+                    <div class="quick-reasons">
+                        <span class="muted small">Quick start times</span>
+                        <div class="quick-reason-chips" id="defTimePresets">
+                            <button type="button" class="reason-chip def-time-chip" data-time="08:00">8:00 AM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="09:00">9:00 AM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="10:00">10:00 AM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="10:30">10:30 AM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="13:00">1:00 PM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="13:30">1:30 PM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="14:00">2:00 PM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="15:00">3:00 PM</button>
+                            <button type="button" class="reason-chip def-time-chip" data-time="16:00">4:00 PM</button>
+                        </div>
+                    </div>
+
+                    <div class="def-day-preview" id="defDayPreviewBox">
+                        <div class="def-day-preview-status" id="defDayStatusBanner"></div>
+                        <div class="def-day-appts hidden" id="defDayAppointmentsWrap">
+                            <span class="student-field-label" id="defDayAppointmentsHeading">Scheduled on this date</span>
+                            <div class="def-day-appts-list" id="defDayAppointmentsList"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <label class="field">
+                    <span>Panel notes / room / instructions <small class="muted">(optional — visible to group)</small></span>
+                    <textarea id="defReasonInput" rows="2" maxlength="1000" placeholder="e.g. Scheduled by panel · Room 302 — please bring hardbound/printed copies."></textarea>
+                </label>
+
+                <div class="def-email-box" id="defEmailBox">
+                    <div class="email-recipient-grid" id="defManualEmailsWrap">
+                        <label class="field">
+                            <span>Representative email <small class="muted">(optional for unregistered groups)</small></span>
+                            <input type="email" id="defGroupEmailInput" maxlength="254" placeholder="student@university.edu.ph" />
+                        </label>
+                        <label class="field">
+                            <span>Groupmate emails <small class="muted">(optional, comma-separated)</small></span>
+                            <input type="text" id="defExtraEmailsInput" maxlength="500" placeholder="member2@univ.edu.ph, member3@univ.edu.ph" />
+                        </label>
+                    </div>
+
+                    <label class="block-cancel-check" id="defSendEmailWrap">
+                        <input type="checkbox" id="defSendEmailCheck" checked />
+                        <span id="defSendEmailLabel">Send defense confirmation email &amp; calendar invite (.ics) to the group</span>
+                    </label>
+
+                    <label class="block-cancel-check hidden" id="defIncludeGroupmatesWrap">
+                        <input type="checkbox" id="defIncludeGroupmatesCheck" checked />
+                        <span id="defIncludeGroupmatesText">Also send to groupmates’ emails</span>
+                    </label>
+                </div>
+
+                <div class="form-error hidden" id="defFormError" role="alert"></div>
+
+                <div class="modal-actions modal-actions-row">
+                    <button type="button" class="btn btn-ghost" id="cancelScheduleDefenseBtn">Cancel</button>
+                    <button type="submit" class="btn btn-rose" id="confirmScheduleDefenseBtn">
+                        <span class="btn-label" id="confirmScheduleDefenseLabel">Schedule defense</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Manual Send Email Modal -->
     <div class="modal-backdrop hidden" id="sendEmailModal" role="dialog" aria-modal="true" aria-labelledby="sendEmailModalTitle">

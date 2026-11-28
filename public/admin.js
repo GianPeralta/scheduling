@@ -62,6 +62,11 @@
         emailSearch: '',
         emailVisibleLimit: 20,
         expandedEmailLogIds: new Set(),
+        defModalOpen: false,
+        defSaving: false,
+        defExplicitRescheduleTarget: null,
+        defAutoDetectedUpcomingDefense: null,
+        defDraftMembers: [''],
     };
 
     const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -191,6 +196,7 @@
         closeCancelModal();
         closeNotesModal();
         closeSendEmailModal();
+        closeScheduleDefenseModal();
         state.bookings = [];
         state.blockedSchedules = [];
         state.letterPickupSchedules = [];
@@ -836,6 +842,14 @@
                 row.append(info, unblockBtn);
                 currentListEl.appendChild(row);
             });
+            if (!state.today || ds >= state.today) {
+                const quickDefRow = el('div', 'sched-quick-defense-row');
+                const quickDefBtn = el('button', 'btn btn-rose-soft btn-sm btn-block', `Schedule Group for Defense on ${shortDate(ds)}`);
+                quickDefBtn.type = 'button';
+                quickDefBtn.addEventListener('click', () => openScheduleDefenseModal({ prefillDate: ds }));
+                quickDefRow.appendChild(quickDefBtn);
+                currentListEl.appendChild(quickDefRow);
+            }
         } else {
             const first = selected[0];
             const last = selected[selected.length - 1];
@@ -1236,7 +1250,7 @@
         if ($('#countScheduleOpen')) {
             $('#countScheduleOpen').textContent = countUpcomingOpenScheduleItems();
         }
-        if (state.tab !== 'schedule') return;
+        if (state.adminView !== 'schedule') return;
         renderScheduleCalendar();
         renderScheduleInspector();
         renderRegularHoursSection();
@@ -1914,6 +1928,648 @@
         thesis1: 'Thesis 1',
         thesis2: 'Thesis 2',
     };
+
+    const DEFENSE_DURATIONS = {
+        capstone1: { minutes: 60, label: '1 hour' },
+        capstone2: { minutes: 120, label: '2 hours' },
+        thesis1: { minutes: 60, label: '1 hour' },
+        thesis2: { minutes: 120, label: '2 hours' },
+    };
+
+    /* ---------------- admin schedule group for defense modal ---------------- */
+    function setDefenseFormError(msg = '', invalidFieldId = '') {
+        document.querySelectorAll('#scheduleDefenseForm .input-invalid').forEach((inp) => {
+            inp.classList.remove('input-invalid');
+        });
+        if (invalidFieldId) {
+            const target = document.getElementById(invalidFieldId);
+            if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+                target.classList.add('input-invalid');
+            }
+        }
+        const errEl = $('#defFormError');
+        if (!errEl) return;
+        errEl.textContent = msg || '';
+        errEl.classList.toggle('hidden', !msg);
+    }
+
+    function getSelectedDefenseLevel() {
+        const checked = document.querySelector('input[name="defLevel"]:checked')?.value || 'capstone1';
+        return Object.prototype.hasOwnProperty.call(DEFENSE_DURATIONS, checked) ? checked : 'capstone1';
+    }
+
+    function getSelectedDefenseRole() {
+        const checked = document.querySelector('input[name="defRole"]:checked')?.value || 'panel';
+        return checked === 'adviser' ? 'adviser' : 'panel';
+    }
+
+    function findUpcomingDefenseForStudent(student) {
+        if (!student) return null;
+        return state.bookings.find((b) => {
+            if (isCancelled(b) || isPast(b) || b.consultationType !== 'defense') return false;
+            if (b.studentId && student.id && b.studentId === student.id) return true;
+            if (b.studentEmail && student.email && b.studentEmail.toLowerCase() === student.email.toLowerCase()) return true;
+            return false;
+        }) || null;
+    }
+
+    function getActiveReplaceDefenseBooking() {
+        if (state.defExplicitRescheduleTarget) return state.defExplicitRescheduleTarget;
+        if (state.defAutoDetectedUpcomingDefense && $('#defReplaceExistingCheck')?.checked) {
+            return state.defAutoDetectedUpcomingDefense;
+        }
+        return null;
+    }
+
+    function populateDefenseStudentOptions() {
+        const select = $('#defStudentSelect');
+        if (!select) return;
+        select.innerHTML = '';
+
+        const manualOpt = document.createElement('option');
+        manualOpt.value = '';
+        manualOpt.textContent = 'Manual / Unregistered group (enter details below)';
+        select.appendChild(manualOpt);
+
+        // Sort Panel groups first since panel scheduling is the primary workflow, then alphabetical by title
+        const sorted = state.students.slice().sort((a, b) => {
+            const aPanel = a.instructorRole === 'panel' ? 0 : 1;
+            const bPanel = b.instructorRole === 'panel' ? 0 : 1;
+            if (aPanel !== bPanel) return aPanel - bPanel;
+            return (a.capstoneTitle || a.name || '').localeCompare(b.capstoneTitle || b.name || '');
+        });
+
+        sorted.forEach((s) => {
+            const upcomingDef = findUpcomingDefenseForStudent(s);
+            const title = s.capstoneTitle || s.name || 'Student Group';
+            const rep = s.name && s.capstoneTitle ? ` — ${s.name}` : '';
+            const roleTag = s.instructorRole === 'panel'
+                ? 'Panel'
+                : s.instructorRole === 'adviser'
+                    ? 'Adviser'
+                    : '';
+            const lvlTag = LEVEL_LABELS[s.projectLevel] || '';
+            const metaTags = [lvlTag, roleTag].filter(Boolean).join(' · ');
+            const defNote = upcomingDef ? ` [Defense: ${shortDate(upcomingDef.date)}]` : '';
+
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = `${title}${rep}${metaTags ? ` (${metaTags})` : ''}${defNote}`;
+            select.appendChild(opt);
+        });
+    }
+
+    function renderDefenseMemberInputs() {
+        const list = $('#defMemberList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        if (!Array.isArray(state.defDraftMembers) || !state.defDraftMembers.length) {
+            state.defDraftMembers = [''];
+        }
+        state.defDraftMembers = state.defDraftMembers.slice(0, 3);
+
+        state.defDraftMembers.forEach((val, idx) => {
+            const row = el('div', 'member-row');
+            const inp = document.createElement('input');
+            inp.type = 'text';
+            inp.maxLength = 100;
+            inp.value = val;
+            inp.placeholder = idx === 0 ? 'Member 1 / Representative full name' : `Member ${idx + 1} full name`;
+            inp.addEventListener('input', () => {
+                state.defDraftMembers[idx] = inp.value;
+                setDefenseFormError('');
+            });
+            row.appendChild(inp);
+
+            if (state.defDraftMembers.length > 1) {
+                const rmBtn = el('button', 'remove-member');
+                rmBtn.type = 'button';
+                rmBtn.title = `Remove member ${idx + 1}`;
+                rmBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+                rmBtn.addEventListener('click', () => {
+                    state.defDraftMembers.splice(idx, 1);
+                    renderDefenseMemberInputs();
+                });
+                row.appendChild(rmBtn);
+            }
+
+            list.appendChild(row);
+        });
+
+        if ($('#defMembersCountLabel')) {
+            $('#defMembersCountLabel').textContent = `(${state.defDraftMembers.length}/3)`;
+        }
+        $('#defAddMemberBtn')?.classList.toggle('hidden', state.defDraftMembers.length >= 3);
+    }
+
+    function syncDefenseEmailControls() {
+        const selectedId = $('#defStudentSelect')?.value || '';
+        const student = state.students.find((s) => s.id === selectedId) || null;
+        const manualWrap = $('#defManualEmailsWrap');
+        const groupmatesWrap = $('#defIncludeGroupmatesWrap');
+        const groupmatesText = $('#defIncludeGroupmatesText');
+        const sendLabel = $('#defSendEmailLabel');
+        const sendCheck = $('#defSendEmailCheck');
+
+        const isRescheduling = Boolean(getActiveReplaceDefenseBooking());
+        const actionWord = isRescheduling ? 'reschedule update' : 'defense confirmation';
+
+        if (student) {
+            manualWrap?.classList.add('hidden');
+            const extraEmails = (Array.isArray(student.memberEmails) ? student.memberEmails.slice(1) : [])
+                .map((e) => String(e || '').trim().toLowerCase())
+                .filter((e) => e && e !== String(student.email || '').toLowerCase());
+            if (sendLabel) {
+                sendLabel.textContent = student.email
+                    ? `Send ${actionWord} email & calendar invite (.ics) to ${student.email}`
+                    : `Send ${actionWord} email & calendar invite (.ics) to the group`;
+            }
+            if (extraEmails.length > 0 && sendCheck?.checked) {
+                if (groupmatesText) {
+                    groupmatesText.textContent = `Also send to groupmate${extraEmails.length > 1 ? 's' : ''} (${extraEmails.join(', ')})`;
+                }
+                groupmatesWrap?.classList.remove('hidden');
+            } else {
+                groupmatesWrap?.classList.add('hidden');
+            }
+        } else {
+            manualWrap?.classList.remove('hidden');
+            groupmatesWrap?.classList.add('hidden');
+            const manualPrimary = ($('#defGroupEmailInput')?.value || '').trim().toLowerCase();
+            const manualExtras = ($('#defExtraEmailsInput')?.value || '')
+                .split(/[,;\s]+/)
+                .map((e) => e.trim().toLowerCase())
+                .filter(Boolean);
+            const count = (manualPrimary ? 1 : 0) + manualExtras.length;
+            if (sendLabel) {
+                sendLabel.textContent = count > 0
+                    ? `Send ${actionWord} email & calendar invite (.ics) (${count} email${count === 1 ? '' : 's'})`
+                    : `Send ${actionWord} email & calendar invite (.ics) if an email is entered above`;
+            }
+        }
+    }
+
+    function syncDefenseSubmitLabel() {
+        const replaceTarget = getActiveReplaceDefenseBooking();
+        const badge = $('#scheduleDefenseModeBadge');
+        const title = $('#scheduleDefenseModalTitle');
+        if (state.defExplicitRescheduleTarget) {
+            if (title) title.textContent = 'Reschedule Group Defense';
+            if (badge) badge.textContent = 'Reschedule';
+        } else {
+            if (title) title.textContent = 'Schedule Group for Defense';
+            if (badge) badge.textContent = replaceTarget ? 'Move Existing' : 'Panel Schedule';
+        }
+        if ($('#confirmScheduleDefenseLabel') && !state.defSaving) {
+            $('#confirmScheduleDefenseLabel').textContent = replaceTarget
+                ? 'Move & save defense'
+                : 'Schedule defense';
+        }
+        syncDefenseEmailControls();
+    }
+
+    function syncDefenseExistingBox(student) {
+        const box = $('#defExistingDefenseBox');
+        const titleEl = $('#defExistingDefenseTitle');
+        const textEl = $('#defExistingDefenseText');
+        const replaceCheck = $('#defReplaceExistingCheck');
+        if (!box || !textEl || !replaceCheck) return;
+
+        if (state.defExplicitRescheduleTarget) {
+            const b = state.defExplicitRescheduleTarget;
+            state.defAutoDetectedUpcomingDefense = b;
+            box.classList.remove('hidden');
+            if (titleEl) titleEl.textContent = 'Rescheduling Scheduled Defense';
+            textEl.textContent = `Current schedule: ${longDate(b.date)} · ${b.label} (#${b.reference}). Choose the new panel-agreed date and time below.`;
+            replaceCheck.checked = true;
+            replaceCheck.parentElement?.classList.add('hidden');
+            syncDefenseSubmitLabel();
+            return;
+        }
+
+        replaceCheck.parentElement?.classList.remove('hidden');
+        const detected = findUpcomingDefenseForStudent(student);
+        state.defAutoDetectedUpcomingDefense = detected;
+        if (detected) {
+            box.classList.remove('hidden');
+            if (titleEl) titleEl.textContent = 'This group already has an upcoming defense';
+            textEl.textContent = `Currently scheduled on ${longDate(detected.date)} · ${detected.label} (#${detected.reference}).`;
+            replaceCheck.checked = true;
+        } else {
+            box.classList.add('hidden');
+            replaceCheck.checked = false;
+        }
+        syncDefenseSubmitLabel();
+    }
+
+    function applySelectedDefenseStudent(clearIfEmpty = false) {
+        const selectedId = $('#defStudentSelect')?.value || '';
+        const student = state.students.find((s) => s.id === selectedId) || null;
+
+        if (student) {
+            if ($('#defCapstoneInput')) $('#defCapstoneInput').value = student.capstoneTitle || '';
+            const level = Object.prototype.hasOwnProperty.call(DEFENSE_DURATIONS, student.projectLevel)
+                ? student.projectLevel
+                : getSelectedDefenseLevel();
+            document.querySelectorAll('input[name="defLevel"]').forEach((r) => {
+                r.checked = r.value === level;
+            });
+            const role = student.instructorRole === 'adviser' ? 'adviser' : 'panel';
+            document.querySelectorAll('input[name="defRole"]').forEach((r) => {
+                r.checked = r.value === role;
+            });
+            state.defDraftMembers = (Array.isArray(student.members) && student.members.length
+                ? [...student.members]
+                : [student.name || '']).slice(0, 3);
+            if ($('#defGroupEmailInput')) $('#defGroupEmailInput').value = student.email || '';
+            if ($('#defExtraEmailsInput')) {
+                const extras = (Array.isArray(student.memberEmails) ? student.memberEmails.slice(1) : []).filter(Boolean);
+                $('#defExtraEmailsInput').value = extras.join(', ');
+            }
+            if ($('#defIncludeGroupmatesCheck')) $('#defIncludeGroupmatesCheck').checked = true;
+        } else if (clearIfEmpty) {
+            if ($('#defCapstoneInput')) $('#defCapstoneInput').value = '';
+            document.querySelectorAll('input[name="defRole"]').forEach((r) => {
+                r.checked = r.value === 'panel';
+            });
+            state.defDraftMembers = [''];
+            if ($('#defGroupEmailInput')) $('#defGroupEmailInput').value = '';
+            if ($('#defExtraEmailsInput')) $('#defExtraEmailsInput').value = '';
+        }
+
+        renderDefenseMemberInputs();
+        syncDefenseExistingBox(student);
+        syncDefenseEmailControls();
+        renderDefenseDayPreview();
+        setDefenseFormError('');
+    }
+
+    function renderDefenseDayPreview() {
+        const dateVal = ($('#defDateInput')?.value || '').trim();
+        const timeVal = ($('#defStartTimeInput')?.value || '').trim();
+        const level = getSelectedDefenseLevel();
+        const durInfo = DEFENSE_DURATIONS[level] || DEFENSE_DURATIONS.capstone1;
+        const startMin = timeValToMinute(timeVal);
+        const endMin = startMin !== null ? startMin + durInfo.minutes : null;
+
+        const windowTextEl = $('#defCalculatedWindowText');
+        if (windowTextEl) {
+            if (startMin === null) {
+                windowTextEl.textContent = `Select a start time (${durInfo.label})`;
+            } else if (endMin > 1440) {
+                windowTextEl.textContent = `${formatMinute12(startMin)} – extends past midnight (${durInfo.label})`;
+            } else {
+                windowTextEl.textContent = `${formatMinute12(startMin)} – ${formatMinute12(endMin)} · ${LEVEL_LABELS[level]} (${durInfo.label})`;
+            }
+        }
+
+        // Highlight active preset time chip
+        document.querySelectorAll('#defTimePresets .def-time-chip').forEach((chip) => {
+            chip.classList.toggle('is-active', chip.dataset.time === timeVal);
+        });
+
+        const statusBanner = $('#defDayStatusBanner');
+        const apptsWrap = $('#defDayAppointmentsWrap');
+        const apptsHeading = $('#defDayAppointmentsHeading');
+        const apptsList = $('#defDayAppointmentsList');
+        if (!statusBanner || !apptsWrap || !apptsList) return;
+
+        statusBanner.className = 'def-day-preview-status';
+        statusBanner.textContent = '';
+        apptsList.innerHTML = '';
+
+        if (!dateVal || !/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+            statusBanner.classList.add('is-neutral');
+            statusBanner.textContent = 'Pick a date above to check your schedule for conflicts.';
+            apptsWrap.classList.add('hidden');
+            return;
+        }
+
+        if (state.today && dateVal < state.today) {
+            statusBanner.classList.add('is-conflict');
+            statusBanner.textContent = `${longDate(dateVal)} is in the past — please pick today or a future date.`;
+            apptsWrap.classList.add('hidden');
+            return;
+        }
+
+        const replaceTarget = getActiveReplaceDefenseBooking();
+        const dayBookings = (state.bookings || []).filter(
+            (b) => !isCancelled(b) && b.date === dateVal && (!replaceTarget || b.id !== replaceTarget.id)
+        );
+        const timedDayBookings = dayBookings.filter((b) => !b.isDropoff && b.consultationType !== 'dropoff' && (b.durationMinutes ?? 15) > 0);
+        const dayBlocks = (state.blockedSchedules || []).filter((blk) => blk.date === dateVal);
+
+        let overlappingBooking = null;
+        let overlappingBlock = null;
+
+        if (startMin !== null && endMin !== null && endMin <= 1440) {
+            overlappingBooking = timedDayBookings.find((b) => {
+                const bs = b.startMinute ?? (b.hour || 0) * 60;
+                const be = b.endMinute ?? (bs + (b.durationMinutes || 15));
+                return startMin < be && endMin > bs;
+            }) || null;
+
+            overlappingBlock = dayBlocks.find((blk) => {
+                const bs = blk.isFullDay ? 0 : (blk.startMinute ?? 0);
+                const be = blk.isFullDay ? 1440 : (blk.endMinute ?? 1440);
+                return startMin < be && endMin > bs;
+            }) || null;
+        }
+
+        if (startMin === null || endMin === null) {
+            statusBanner.classList.add('is-neutral');
+            statusBanner.textContent = 'Enter a valid start time to check availability.';
+        } else if (endMin > 1440) {
+            statusBanner.classList.add('is-conflict');
+            statusBanner.textContent = `A ${durInfo.label} defense starting at ${formatMinute12(startMin)} goes past midnight — pick an earlier start time.`;
+        } else if (overlappingBooking) {
+            const cTitle = overlappingBooking.capstoneTitle || overlappingBooking.teamName || overlappingBooking.name;
+            statusBanner.classList.add('is-conflict');
+            statusBanner.textContent = `Conflict: ${formatMinute12(startMin)} – ${formatMinute12(endMin)} overlaps with ${overlappingBooking.consultationTitle || 'Appointment'} (${cTitle}, ${overlappingBooking.label}).`;
+        } else if (overlappingBlock) {
+            statusBanner.classList.add('is-warning');
+            statusBanner.textContent = `Note: ${longDate(dateVal)} has a block (${overlappingBlock.label}${overlappingBlock.reason ? ` — ${overlappingBlock.reason}` : ''}), but you can still schedule this panel defense here.`;
+        } else {
+            statusBanner.classList.add('is-clear');
+            statusBanner.textContent = `Available ✓ — ${formatMinute12(startMin)} – ${formatMinute12(endMin)} is clear on ${shortDate(dateVal)}.`;
+        }
+
+        if (timedDayBookings.length > 0) {
+            apptsWrap.classList.remove('hidden');
+            if (apptsHeading) {
+                apptsHeading.textContent = `${timedDayBookings.length} timed appointment${timedDayBookings.length === 1 ? '' : 's'} on ${shortDate(dateVal)}`;
+            }
+            timedDayBookings.forEach((b) => {
+                const bs = b.startMinute ?? (b.hour || 0) * 60;
+                const be = b.endMinute ?? (bs + (b.durationMinutes || 15));
+                const isConflict = startMin !== null && endMin !== null && startMin < be && endMin > bs;
+                const item = el('div', 'def-day-appt-pill' + (isConflict ? ' is-conflict' : ''));
+                item.appendChild(el('strong', '', b.label));
+                const gName = b.capstoneTitle || b.teamName || b.name;
+                item.appendChild(el('span', '', `${b.consultationTitle || 'Consultation'} · ${gName}`));
+                apptsList.appendChild(item);
+            });
+        } else {
+            apptsWrap.classList.add('hidden');
+        }
+    }
+
+    function openScheduleDefenseModal({ student = null, bookingToReschedule = null, prefillDate = null } = {}) {
+        state.defModalOpen = true;
+        state.defExplicitRescheduleTarget = bookingToReschedule || null;
+        state.defAutoDetectedUpcomingDefense = null;
+
+        populateDefenseStudentOptions();
+
+        const select = $('#defStudentSelect');
+        let matchedStudent = student || null;
+        if (!matchedStudent && bookingToReschedule) {
+            matchedStudent = state.students.find(
+                (s) => (bookingToReschedule.studentId && s.id === bookingToReschedule.studentId)
+                    || (bookingToReschedule.studentEmail && s.email && s.email.toLowerCase() === bookingToReschedule.studentEmail.toLowerCase())
+            ) || null;
+        }
+
+        if (select) {
+            select.value = matchedStudent?.id || '';
+            select.disabled = Boolean(bookingToReschedule);
+        }
+
+        const defaultDate = prefillDate
+            || bookingToReschedule?.date
+            || (state.today ? addDays(state.today, 1) : '');
+        const dateInput = $('#defDateInput');
+        if (dateInput) {
+            if (state.today) dateInput.min = state.today;
+            dateInput.value = defaultDate;
+        }
+
+        const startInput = $('#defStartTimeInput');
+        if (startInput) {
+            startInput.value = bookingToReschedule && Number.isFinite(bookingToReschedule.startMinute)
+                ? minuteToTimeVal(bookingToReschedule.startMinute)
+                : '09:00';
+        }
+
+        if (bookingToReschedule) {
+            if ($('#defCapstoneInput')) {
+                $('#defCapstoneInput').value = bookingToReschedule.capstoneTitle || bookingToReschedule.teamName || matchedStudent?.capstoneTitle || '';
+            }
+            const level = Object.prototype.hasOwnProperty.call(DEFENSE_DURATIONS, bookingToReschedule.defenseLevel || bookingToReschedule.projectLevel)
+                ? (bookingToReschedule.defenseLevel || bookingToReschedule.projectLevel)
+                : (matchedStudent?.projectLevel || 'capstone1');
+            document.querySelectorAll('input[name="defLevel"]').forEach((r) => {
+                r.checked = r.value === level;
+            });
+            const role = (bookingToReschedule.instructorRole || matchedStudent?.instructorRole) === 'adviser' ? 'adviser' : 'panel';
+            document.querySelectorAll('input[name="defRole"]').forEach((r) => {
+                r.checked = r.value === role;
+            });
+            state.defDraftMembers = (Array.isArray(bookingToReschedule.members) && bookingToReschedule.members.length
+                ? [...bookingToReschedule.members]
+                : [bookingToReschedule.name || '']).slice(0, 3);
+            if ($('#defReasonInput')) {
+                $('#defReasonInput').value = bookingToReschedule.reason || '';
+            }
+            if ($('#defGroupEmailInput')) {
+                $('#defGroupEmailInput').value = bookingToReschedule.studentEmail || matchedStudent?.email || '';
+            }
+            if ($('#defExtraEmailsInput')) {
+                const extras = (Array.isArray(bookingToReschedule.memberEmails) ? bookingToReschedule.memberEmails.slice(1) : []).filter(Boolean);
+                $('#defExtraEmailsInput').value = extras.join(', ');
+            }
+            renderDefenseMemberInputs();
+            syncDefenseExistingBox(matchedStudent);
+        } else {
+            if ($('#defReasonInput')) $('#defReasonInput').value = '';
+            if (matchedStudent) {
+                applySelectedDefenseStudent(false);
+            } else {
+                if ($('#defCapstoneInput')) $('#defCapstoneInput').value = '';
+                document.querySelectorAll('input[name="defLevel"]').forEach((r) => {
+                    r.checked = r.value === 'capstone1';
+                });
+                document.querySelectorAll('input[name="defRole"]').forEach((r) => {
+                    r.checked = r.value === 'panel';
+                });
+                state.defDraftMembers = [''];
+                if ($('#defGroupEmailInput')) $('#defGroupEmailInput').value = '';
+                if ($('#defExtraEmailsInput')) $('#defExtraEmailsInput').value = '';
+                renderDefenseMemberInputs();
+                syncDefenseExistingBox(null);
+            }
+        }
+
+        if ($('#defSendEmailCheck')) $('#defSendEmailCheck').checked = true;
+        if ($('#defIncludeGroupmatesCheck')) $('#defIncludeGroupmatesCheck').checked = true;
+        syncDefenseEmailControls();
+        renderDefenseDayPreview();
+        setDefenseFormError('');
+
+        $('#scheduleDefenseModal')?.classList.remove('hidden');
+        syncModalBodyLock();
+
+        if (window.matchMedia('(hover: hover)').matches) {
+            setTimeout(() => {
+                if (bookingToReschedule || matchedStudent) $('#defDateInput')?.focus();
+                else $('#defStudentSelect')?.focus();
+            }, 40);
+        }
+    }
+
+    function closeScheduleDefenseModal() {
+        if (state.defSaving) return;
+        state.defModalOpen = false;
+        state.defExplicitRescheduleTarget = null;
+        state.defAutoDetectedUpcomingDefense = null;
+        if ($('#defStudentSelect')) $('#defStudentSelect').disabled = false;
+        $('#scheduleDefenseModal')?.classList.add('hidden');
+        syncModalBodyLock();
+        setDefenseFormError('');
+    }
+
+    async function submitScheduleDefense(e) {
+        e.preventDefault();
+        if (state.defSaving) return;
+        setDefenseFormError('');
+
+        const studentId = ($('#defStudentSelect')?.value || '').trim();
+        const student = state.students.find((s) => s.id === studentId) || null;
+        const capstoneTitle = ($('#defCapstoneInput')?.value || '').trim();
+        const defenseLevel = getSelectedDefenseLevel();
+        const instructorRole = getSelectedDefenseRole();
+        const members = state.defDraftMembers.map((m) => String(m || '').trim()).filter(Boolean);
+        const date = ($('#defDateInput')?.value || '').trim();
+        const timeVal = ($('#defStartTimeInput')?.value || '').trim();
+        const startMinute = timeValToMinute(timeVal);
+        const reason = ($('#defReasonInput')?.value || '').trim();
+
+        if (capstoneTitle.length < 2) {
+            setDefenseFormError('Please enter the Capstone / Thesis title (at least 2 characters).', 'defCapstoneInput');
+            $('#defCapstoneInput')?.focus();
+            return;
+        }
+        if (!members.length || members.some((m) => m.length < 2)) {
+            setDefenseFormError('Please enter the full name (at least 2 characters) for each listed group member.');
+            return;
+        }
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            setDefenseFormError('Please select a valid defense date.', 'defDateInput');
+            $('#defDateInput')?.focus();
+            return;
+        }
+        if (state.today && date < state.today) {
+            setDefenseFormError('Please select today or a future date for the defense.', 'defDateInput');
+            $('#defDateInput')?.focus();
+            return;
+        }
+        if (startMinute === null) {
+            setDefenseFormError('Please enter a valid start time.', 'defStartTimeInput');
+            $('#defStartTimeInput')?.focus();
+            return;
+        }
+        const durMinutes = DEFENSE_DURATIONS[defenseLevel].minutes;
+        if (startMinute + durMinutes > 1440) {
+            setDefenseFormError(`A ${DEFENSE_DURATIONS[defenseLevel].label} defense starting at ${formatMinute12(startMinute)} extends past midnight. Choose an earlier start time.`, 'defStartTimeInput');
+            $('#defStartTimeInput')?.focus();
+            return;
+        }
+
+        const primaryEmail = student
+            ? (student.email || '')
+            : ($('#defGroupEmailInput')?.value || '').trim().toLowerCase();
+        if (primaryEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(primaryEmail)) {
+            setDefenseFormError('Please enter a valid representative email address, or leave it blank.', 'defGroupEmailInput');
+            $('#defGroupEmailInput')?.focus();
+            return;
+        }
+
+        const extraEmails = student
+            ? []
+            : ($('#defExtraEmailsInput')?.value || '')
+                .split(/[,;\s]+/)
+                .map((x) => x.trim().toLowerCase())
+                .filter(Boolean);
+        const invalidExtra = extraEmails.find((x) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+        if (invalidExtra) {
+            setDefenseFormError(`Invalid groupmate email "${invalidExtra}". Separate multiple emails with commas.`, 'defExtraEmailsInput');
+            $('#defExtraEmailsInput')?.focus();
+            return;
+        }
+
+        const replaceTarget = getActiveReplaceDefenseBooking();
+        const sendEmail = Boolean($('#defSendEmailCheck')?.checked);
+        const includeGroupmates = Boolean(
+            !student || $('#defIncludeGroupmatesWrap')?.classList.contains('hidden') || $('#defIncludeGroupmatesCheck')?.checked
+        );
+
+        state.defSaving = true;
+        const submitBtn = $('#confirmScheduleDefenseBtn');
+        const cancelBtn = $('#cancelScheduleDefenseBtn');
+        const closeBtn = $('#closeScheduleDefenseModalBtn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.querySelector('.spinner')?.classList.remove('hidden');
+            if ($('#confirmScheduleDefenseLabel')) {
+                $('#confirmScheduleDefenseLabel').textContent = replaceTarget ? 'Moving…' : 'Scheduling…';
+            }
+        }
+        if (cancelBtn) cancelBtn.disabled = true;
+        if (closeBtn) closeBtn.disabled = true;
+
+        try {
+            const res = await api('/api/admin/defenses', {
+                method: 'POST',
+                body: JSON.stringify({
+                    studentId: studentId || null,
+                    replaceBookingId: replaceTarget?.id || null,
+                    capstoneTitle,
+                    defenseLevel,
+                    instructorRole,
+                    members,
+                    date,
+                    startMinute,
+                    reason,
+                    studentEmail: primaryEmail || null,
+                    extraEmails,
+                    sendEmail,
+                    includeGroupmates,
+                }),
+            });
+
+            state.defSaving = false;
+            closeScheduleDefenseModal();
+            await loadBookings();
+            window.SchedulerRealtime?.notifyLocal({
+                type: res.rescheduled ? 'booking_rescheduled' : 'booking_created',
+                bookingId: res.booking?.id,
+                date: res.booking?.date,
+            });
+
+            const emailNote = res.emailSent && Array.isArray(res.recipients) && res.recipients.length
+                ? ` Email & calendar invite sent to ${res.recipients.join(', ')}.`
+                : res.emailError
+                    ? ` (Scheduled, but email could not be sent: ${res.emailError})`
+                    : '';
+            const actionLabel = res.rescheduled ? 'Rescheduled' : 'Scheduled';
+            toast(
+                `${actionLabel} ${LEVEL_LABELS[defenseLevel]} Defense for "${capstoneTitle}" on ${shortDate(date)} (${res.booking?.label || ''}).${emailNote}`,
+                'success'
+            );
+        } catch (err) {
+            setDefenseFormError(err.message);
+        } finally {
+            state.defSaving = false;
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.querySelector('.spinner')?.classList.add('hidden');
+            }
+            if (cancelBtn) cancelBtn.disabled = false;
+            if (closeBtn) closeBtn.disabled = false;
+            syncDefenseSubmitLabel();
+        }
+    }
 
     /* ---------------- consultation notes, revision checklist & attendance ---------------- */
     function bookingStudentKey(b) {
@@ -2603,10 +3259,15 @@
                 identity.appendChild(el('span', 'muted small', s.email));
             }
             footer.appendChild(identity);
+            const footerActions = el('div', 'student-card-actions');
+            const defBtn = el('button', 'btn btn-rose-soft btn-sm', 'Schedule Defense');
+            defBtn.type = 'button';
+            defBtn.addEventListener('click', () => openScheduleDefenseModal({ student: s }));
             const emailBtn = el('button', 'btn btn-primary-soft btn-sm', 'Send Email');
             emailBtn.type = 'button';
             emailBtn.addEventListener('click', () => openSendEmailModal(s));
-            footer.appendChild(emailBtn);
+            footerActions.append(defBtn, emailBtn);
+            footer.appendChild(footerActions);
             card.appendChild(footer);
 
             container.appendChild(card);
@@ -2621,7 +3282,9 @@
         manuscript_ready: { label: 'Pickup · Manuscript Ready', cls: 'violet' },
         letter_ready: { label: 'Pickup · Comm. Letter Ready', cls: 'violet' },
         booking_confirmed: { label: 'Booking Confirmed', cls: 'teal' },
+        defense_scheduled_admin: { label: 'Defense Scheduled (Panel)', cls: 'rose' },
         booking_rescheduled: { label: 'Booking Rescheduled', cls: 'sky' },
+        defense_rescheduled_admin: { label: 'Defense Rescheduled (Panel)', cls: 'rose' },
         booking_cancelled_admin: { label: 'Cancelled (Instructor)', cls: 'rose' },
         booking_cancelled_student: { label: 'Cancelled (Student)', cls: 'rose' },
         booking_cancelled: { label: 'Cancellation Notice', cls: 'rose' },
@@ -2883,6 +3546,9 @@
 
         renderEmailLogsSection();
         renderStudentsSection();
+        if (state.defModalOpen && !state.defSaving) {
+            renderDefenseDayPreview();
+        }
 
         if (isScheduleView) {
             renderScheduleManager();
@@ -3107,6 +3773,12 @@
                     notifyLetterBtn.type = 'button';
                     notifyLetterBtn.addEventListener('click', () => notifyLetterReady(b, notifyLetterBtn));
                     actions.appendChild(notifyLetterBtn);
+                }
+                if (state.tab === 'upcoming' && !isCancelled(b) && b.consultationType === 'defense') {
+                    const reschedDefBtn = el('button', 'btn btn-rose-soft btn-sm', 'Reschedule');
+                    reschedDefBtn.type = 'button';
+                    reschedDefBtn.addEventListener('click', () => openScheduleDefenseModal({ bookingToReschedule: b }));
+                    actions.appendChild(reschedDefBtn);
                 }
                 if (state.tab === 'upcoming' && !isCancelled(b)) {
                     const btn = el('button', 'btn btn-danger-soft', 'Cancel');
@@ -3340,6 +4012,63 @@
         switchAdminView('emails', true);
     });
 
+    // Admin Schedule Group for Defense modal bindings
+    $('#openScheduleDefenseModalBtn')?.addEventListener('click', () => openScheduleDefenseModal());
+    $('#scheduleDefenseFromStudentsBtn')?.addEventListener('click', () => openScheduleDefenseModal());
+    $('#closeScheduleDefenseModalBtn')?.addEventListener('click', closeScheduleDefenseModal);
+    $('#cancelScheduleDefenseBtn')?.addEventListener('click', closeScheduleDefenseModal);
+    $('#scheduleDefenseModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'scheduleDefenseModal') closeScheduleDefenseModal();
+    });
+    $('#defStudentSelect')?.addEventListener('change', () => applySelectedDefenseStudent(true));
+    $('#defReplaceExistingCheck')?.addEventListener('change', () => {
+        syncDefenseSubmitLabel();
+        renderDefenseDayPreview();
+    });
+    document.querySelectorAll('input[name="defLevel"]').forEach((r) => {
+        r.addEventListener('change', () => {
+            setDefenseFormError('');
+            renderDefenseDayPreview();
+        });
+    });
+    document.querySelectorAll('input[name="defRole"]').forEach((r) => {
+        r.addEventListener('change', () => setDefenseFormError(''));
+    });
+    $('#defAddMemberBtn')?.addEventListener('click', () => {
+        if (state.defDraftMembers.length >= 3) return;
+        state.defDraftMembers.push('');
+        renderDefenseMemberInputs();
+        const inputs = document.querySelectorAll('#defMemberList input');
+        inputs[inputs.length - 1]?.focus();
+    });
+    $('#defDateInput')?.addEventListener('input', () => {
+        setDefenseFormError('');
+        renderDefenseDayPreview();
+    });
+    $('#defStartTimeInput')?.addEventListener('input', () => {
+        setDefenseFormError('');
+        renderDefenseDayPreview();
+    });
+    document.querySelectorAll('#defTimePresets .def-time-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            if ($('#defStartTimeInput')) $('#defStartTimeInput').value = chip.dataset.time || '09:00';
+            setDefenseFormError('');
+            renderDefenseDayPreview();
+        });
+    });
+    $('#defCapstoneInput')?.addEventListener('input', () => setDefenseFormError(''));
+    $('#defReasonInput')?.addEventListener('input', () => setDefenseFormError(''));
+    $('#defGroupEmailInput')?.addEventListener('input', () => {
+        setDefenseFormError('');
+        syncDefenseEmailControls();
+    });
+    $('#defExtraEmailsInput')?.addEventListener('input', () => {
+        setDefenseFormError('');
+        syncDefenseEmailControls();
+    });
+    $('#defSendEmailCheck')?.addEventListener('change', () => syncDefenseEmailControls());
+    $('#scheduleDefenseForm')?.addEventListener('submit', submitScheduleDefense);
+
     // Manual Send Email modal bindings
     $('#openSendEmailModalBtn')?.addEventListener('click', () => openSendEmailModal());
     $('#closeSendEmailModalBtn')?.addEventListener('click', closeSendEmailModal);
@@ -3367,6 +4096,7 @@
             closeCancelModal();
             closeNotesModal();
             closeSendEmailModal();
+            closeScheduleDefenseModal();
         }
     });
 

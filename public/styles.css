@@ -4979,3 +4979,228 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         font-size: 0.76rem;
     }
 }
+
+/* ==========================================================================
+   Admin Direct Defense Scheduling Modal & Triggers
+   ========================================================================== */
+.btn-rose {
+    background-color: var(--rose-text);
+    border-color: var(--rose-text);
+    color: #ffffff;
+    box-shadow: var(--shadow-sm);
+}
+.btn-rose:hover:not(:disabled) {
+    background-color: #9f1239;
+    border-color: #9f1239;
+    transform: translateY(-1px);
+}
+.btn-rose-soft {
+    background-color: var(--rose-soft);
+    color: var(--rose-text);
+    border-color: var(--rose-border);
+    padding: 8px 14px;
+    font-size: 0.84rem;
+}
+.btn-rose-soft:hover:not(:disabled) {
+    background-color: #ffe4e6;
+    border-color: #fda4af;
+}
+
+.student-card-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.sched-quick-defense-row {
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+}
+
+.modal-card.modal-defense {
+    max-width: 660px;
+}
+
+.modal-title-with-badge {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+}
+
+.def-modal-intro {
+    margin-top: -4px;
+    line-height: 1.45;
+}
+
+.def-existing-callout {
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background-color: var(--amber-soft);
+    border: 1px solid var(--amber-border);
+    border-left: 3px solid var(--amber-text);
+    display: grid;
+    gap: 8px;
+}
+.def-existing-info {
+    display: grid;
+    gap: 2px;
+}
+.def-existing-info strong {
+    font-size: 0.86rem;
+    color: var(--amber-text);
+}
+.def-existing-info p {
+    font-size: 0.83rem;
+    color: var(--text);
+}
+
+.def-course-role-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+}
+
+.def-course-role-grid .level-segmented label > span small {
+    font-weight: 600;
+    opacity: 0.82;
+}
+
+.def-datetime-card {
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border);
+    display: grid;
+    gap: 12px;
+}
+
+.def-datetime-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.def-computed-window {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    background-color: var(--rose-soft);
+    border: 1px solid var(--rose-border);
+    color: var(--rose-text);
+}
+.def-computed-window strong {
+    font-size: 0.9rem;
+    font-weight: 800;
+}
+
+.reason-chip.def-time-chip.is-active {
+    background-color: var(--rose-text);
+    border-color: var(--rose-text);
+    color: #ffffff;
+}
+
+.def-day-preview {
+    display: grid;
+    gap: 8px;
+}
+
+.def-day-preview-status {
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.83rem;
+    font-weight: 600;
+    line-height: 1.42;
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    color: var(--text-soft);
+}
+.def-day-preview-status.is-clear {
+    background-color: var(--primary-soft);
+    border-color: var(--primary-border);
+    color: var(--primary-hover);
+}
+.def-day-preview-status.is-conflict {
+    background-color: var(--danger-soft);
+    border-color: var(--danger-border);
+    color: #991b1b;
+}
+.def-day-preview-status.is-warning {
+    background-color: var(--amber-soft);
+    border-color: var(--amber-border);
+    color: var(--amber-text);
+}
+
+.def-day-appts {
+    display: grid;
+    gap: 6px;
+}
+.def-day-appts-list {
+    display: grid;
+    gap: 5px;
+    max-height: 140px;
+    overflow-y: auto;
+}
+.def-day-appt-pill {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 0.79rem;
+    color: var(--text-soft);
+}
+.def-day-appt-pill strong {
+    color: var(--text);
+    font-weight: 700;
+}
+.def-day-appt-pill.is-conflict {
+    background-color: var(--danger-soft);
+    border-color: var(--danger-border);
+    color: #991b1b;
+}
+.def-day-appt-pill.is-conflict strong {
+    color: #991b1b;
+}
+
+.def-email-box {
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border);
+    display: grid;
+    gap: 10px;
+}
+
+@media (max-width: 680px) {
+    .modal-card.modal-defense {
+        max-width: 100%;
+    }
+    .def-datetime-grid {
+        grid-template-columns: 1fr;
+    }
+    .student-card-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+    .student-card-actions .btn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 420px) {
+    .student-card-actions {
+        grid-template-columns: 1fr;
+    }
+}
