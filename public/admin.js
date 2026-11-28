@@ -1000,7 +1000,7 @@
             }
             const emptyBox = el('div', 'admin-slots-closed');
             emptyBox.appendChild(el('p', 'muted small', `${CATEGORY_META[meta.category]?.label || 'Schedule'} are currently closed on ${shortDate(ds)}.`));
-            const quickOpenBtn = el('button', 'btn btn-primary-soft btn-sm', `Select ${CATEGORY_META[meta.category]?.shortTag || 'Category'} in Open Form ↓`);
+            const quickOpenBtn = el('button', 'btn btn-primary-soft btn-sm', `Open ${CATEGORY_META[meta.category]?.shortTag || 'Category'} in Form →`);
             quickOpenBtn.type = 'button';
             quickOpenBtn.addEventListener('click', () => {
                 state.schedActionMode = 'open';

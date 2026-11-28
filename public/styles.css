@@ -3973,11 +3973,20 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 .sched-workspace {
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
     gap: 22px;
     align-items: start;
     width: 100%;
     min-width: 0;
+}
+
+.sched-left-column {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .sched-calendar-panel {
@@ -4252,6 +4261,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     gap: 14px;
     min-width: 0;
     max-width: 100%;
+    scroll-margin-top: 76px;
 }
 .sched-status-head h3 {
     font-size: 1.06rem;
@@ -5299,11 +5309,21 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 .admin-slot-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     max-height: 280px;
     overflow-y: auto;
     padding-right: 2px;
+}
+@media (max-width: 680px) {
+    .admin-slot-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media (max-width: 420px) {
+    .admin-slot-grid {
+        grid-template-columns: 1fr;
+    }
 }
 .admin-slot-pill {
     padding: 8px 10px;

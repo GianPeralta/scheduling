@@ -163,51 +163,73 @@
                     </div>
 
                     <div class="sched-workspace">
-                        <!-- Left Column: Interactive Calendar -->
-                        <div class="sched-calendar-panel">
-                            <div class="sched-cal-top">
-                                <div class="sched-select-modes" role="radiogroup" aria-label="Date selection mode">
-                                    <button type="button" class="sched-mode-pill active" data-select-mode="single">Single Date</button>
-                                    <button type="button" class="sched-mode-pill" data-select-mode="multi">Multiple Dates</button>
-                                    <button type="button" class="sched-mode-pill" data-select-mode="range">Date Range</button>
+                        <!-- Left Column: Interactive Calendar + Available / Free Times Below -->
+                        <div class="sched-left-column">
+                            <div class="sched-calendar-panel">
+                                <div class="sched-cal-top">
+                                    <div class="sched-select-modes" role="radiogroup" aria-label="Date selection mode">
+                                        <button type="button" class="sched-mode-pill active" data-select-mode="single">Single Date</button>
+                                        <button type="button" class="sched-mode-pill" data-select-mode="multi">Multiple Dates</button>
+                                        <button type="button" class="sched-mode-pill" data-select-mode="range">Date Range</button>
+                                    </div>
+                                    <label class="sched-skip-sun hidden" id="schedRangeSkipSunWrap" title="Automatically skip Sundays when selecting a date range">
+                                        <input type="checkbox" id="schedRangeSkipSun" checked />
+                                        <span>Mon–Sat only</span>
+                                    </label>
                                 </div>
-                                <label class="sched-skip-sun hidden" id="schedRangeSkipSunWrap" title="Automatically skip Sundays when selecting a date range">
-                                    <input type="checkbox" id="schedRangeSkipSun" checked />
-                                    <span>Mon–Sat only</span>
-                                </label>
-                            </div>
 
-                            <div class="sched-selection-hint-bar" id="schedSelectionHintBar">
-                                <span id="schedSelectionHintText">Click a date on the calendar to inspect, open, or block it.</span>
-                                <div class="sched-hint-actions">
-                                    <button type="button" class="btn btn-primary-soft btn-sm sched-jump-inspector-btn hidden" id="schedJumpInspectorBtn">Times &amp; Actions ↓</button>
-                                    <button type="button" class="link-btn hidden" id="schedClearSelectionBtn">Clear</button>
+                                <div class="sched-selection-hint-bar" id="schedSelectionHintBar">
+                                    <span id="schedSelectionHintText">Click a date on the calendar to inspect, open, or block it.</span>
+                                    <div class="sched-hint-actions">
+                                        <button type="button" class="btn btn-primary-soft btn-sm sched-jump-inspector-btn hidden" id="schedJumpInspectorBtn">Times &amp; Actions ↓</button>
+                                        <button type="button" class="link-btn hidden" id="schedClearSelectionBtn">Clear</button>
+                                    </div>
+                                </div>
+
+                                <div class="calendar-head sched-calendar-head">
+                                    <h3 id="schedMonthLabel">—</h3>
+                                    <div class="calendar-nav">
+                                        <button type="button" class="btn btn-ghost btn-sm sched-today-btn" id="schedTodayBtn">Today</button>
+                                        <button type="button" class="icon-btn" id="schedPrevMonth" aria-label="Previous month">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn" id="schedNextMonth" aria-label="Next month">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="weekdays">
+                                    <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                                </div>
+                                <div class="sched-days" id="schedDays"></div>
+
+                                <div class="sched-legend">
+                                    <span><i class="sched-legend-swatch teal"></i> Consultations</span>
+                                    <span><i class="sched-legend-swatch rose"></i> Defense</span>
+                                    <span><i class="sched-legend-swatch violet"></i> Letter Pickup</span>
+                                    <span><i class="sched-legend-swatch danger"></i> Blocked</span>
                                 </div>
                             </div>
 
-                            <div class="calendar-head sched-calendar-head">
-                                <h3 id="schedMonthLabel">—</h3>
-                                <div class="calendar-nav">
-                                    <button type="button" class="btn btn-ghost btn-sm sched-today-btn" id="schedTodayBtn">Today</button>
-                                    <button type="button" class="icon-btn" id="schedPrevMonth" aria-label="Previous month">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                                    </button>
-                                    <button type="button" class="icon-btn" id="schedNextMonth" aria-label="Next month">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-                                    </button>
+                            <!-- Available / Free Time Slots Preview (placed directly below the calendar) -->
+                            <div class="sched-slots-card hidden" id="schedSlotsCard">
+                                <div class="sched-slots-head">
+                                    <div>
+                                        <span class="selection-label">Free &amp; Available Times</span>
+                                        <h3 id="schedSlotsTitle">Time Slots Preview</h3>
+                                    </div>
+                                    <span class="badge teal" id="schedSlotsSummaryBadge">0 open</span>
                                 </div>
-                            </div>
-
-                            <div class="weekdays">
-                                <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
-                            </div>
-                            <div class="sched-days" id="schedDays"></div>
-
-                            <div class="sched-legend">
-                                <span><i class="sched-legend-swatch teal"></i> Consultations</span>
-                                <span><i class="sched-legend-swatch rose"></i> Defense</span>
-                                <span><i class="sched-legend-swatch violet"></i> Letter Pickup</span>
-                                <span><i class="sched-legend-swatch danger"></i> Blocked</span>
+                                <div class="profile-filter-pills sched-slots-pills" id="schedSlotsTypePills" role="tablist" aria-label="Preview slot duration">
+                                    <button type="button" class="profile-pill active" data-slot-preview="defense_1h">Defense · 1h</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="defense_2h">Defense · 2h</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="system">System · 15m</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="other">Other · 10m</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="retrieval">Retrieval / Letter · 5m</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="letter_pickup">Pickup · 5m</button>
+                                </div>
+                                <div class="sched-slots-body" id="schedSlotsPreviewBody"></div>
                             </div>
                         </div>
 
@@ -222,26 +244,6 @@
                                     </div>
                                 </div>
                                 <div class="sched-current-list" id="schedCurrentList"></div>
-                            </div>
-
-                            <!-- Available Time Slots Preview (Student Booking View) -->
-                            <div class="sched-slots-card hidden" id="schedSlotsCard">
-                                <div class="sched-slots-head">
-                                    <div>
-                                        <span class="selection-label">Available Times</span>
-                                        <h3 id="schedSlotsTitle">Time Slots Preview</h3>
-                                    </div>
-                                    <span class="badge teal" id="schedSlotsSummaryBadge">0 open</span>
-                                </div>
-                                <div class="profile-filter-pills sched-slots-pills" id="schedSlotsTypePills" role="tablist" aria-label="Preview slot duration">
-                                    <button type="button" class="profile-pill active" data-slot-preview="defense_1h">Defense · 1h</button>
-                                    <button type="button" class="profile-pill" data-slot-preview="defense_2h">Defense · 2h</button>
-                                    <button type="button" class="profile-pill" data-slot-preview="system">System · 15m</button>
-                                    <button type="button" class="profile-pill" data-slot-preview="other">Other · 10m</button>
-                                    <button type="button" class="profile-pill" data-slot-preview="retrieval">Retrieval / Letter · 5m</button>
-                                    <button type="button" class="profile-pill" data-slot-preview="letter_pickup">Pickup · 5m</button>
-                                </div>
-                                <div class="sched-slots-body" id="schedSlotsPreviewBody"></div>
                             </div>
 
                             <!-- Open vs Block Action Card -->
