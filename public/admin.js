@@ -147,7 +147,12 @@
         const pwInput = $('#passwordInput');
         if (pwInput) {
             pwInput.classList.toggle('input-invalid', Boolean(error));
-            setTimeout(() => pwInput.focus(), 50);
+            const focusPw = () => setTimeout(() => pwInput.focus(), 40);
+            if (document.readyState === 'complete') {
+                focusPw();
+            } else {
+                window.addEventListener('load', focusPw, { once: true });
+            }
         }
     }
 

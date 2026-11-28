@@ -192,6 +192,7 @@ const LETTER_PICKUP_TABLE = 'letter_pickup_schedules';
 const SETTINGS_TABLE = 'scheduler_settings';
 const BOOKING_END_DATE_KEY = 'booking_end_date';
 const SCHEDULE_CONFIG_KEY = 'schedule_config_v1';
+const REALTIME_PULSE_KEY = 'realtime_pulse_v1';
 const BLOCKED_SETTING_SENTINEL_DATE = '1970-01-01';
 const BLOCKED_SETTING_PREFIX = '__SETTING_BOOKING_END_DATE__:';
 
@@ -210,10 +211,10 @@ function getSupabaseServerKey() {
 
 function getSupabasePublicKey() {
     return (
-        process.env.SUPABASE_PUBLISHABLE_KEY
-        || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-        || process.env.SUPABASE_ANON_KEY
+        process.env.SUPABASE_ANON_KEY
         || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+        || process.env.SUPABASE_PUBLISHABLE_KEY
+        || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
         || null
     );
 }
@@ -260,6 +261,51 @@ if (!process.env.VERCEL) {
     if (keepaliveTimer.unref) keepaliveTimer.unref();
 }
 
+let lastPulseDbReadAt = 0;
+
+async function persistRealtimePulse(eventPayload) {
+    if (!process.env.SUPABASE_URL || !getSupabaseServerKey()) return;
+    try {
+        await db()
+            .from(SETTINGS_TABLE)
+            .upsert(
+                [{
+                    key: REALTIME_PULSE_KEY,
+                    value: JSON.stringify(eventPayload),
+                    updated_at: new Date().toISOString(),
+                }],
+                { onConflict: 'key' }
+            );
+    } catch {
+        // Ignore transient pulse persistence errors
+    }
+}
+
+async function readSharedRealtimePulse() {
+    const nowMs = Date.now();
+    if (!process.env.SUPABASE_URL || !getSupabaseServerKey() || nowMs - lastPulseDbReadAt < 1500) {
+        return { version: realtimeVersion, lastEvent: lastRealtimeEvent };
+    }
+    lastPulseDbReadAt = nowMs;
+    try {
+        const { data, error } = await db()
+            .from(SETTINGS_TABLE)
+            .select('value')
+            .eq('key', REALTIME_PULSE_KEY)
+            .maybeSingle();
+        if (!error && data?.value) {
+            const parsed = JSON.parse(data.value);
+            if (parsed && typeof parsed.version === 'number' && parsed.version > realtimeVersion) {
+                realtimeVersion = parsed.version;
+                lastRealtimeEvent = parsed;
+            }
+        }
+    } catch {
+        // Fall back to in-memory pulse state
+    }
+    return { version: realtimeVersion, lastEvent: lastRealtimeEvent };
+}
+
 function notifyRealtimeListeners(event = {}, { fromSupabaseWs = false } = {}) {
     realtimeVersion = Date.now();
     lastRealtimeEvent = {
@@ -275,7 +321,9 @@ function notifyRealtimeListeners(event = {}, { fromSupabaseWs = false } = {}) {
             sseClients.delete(res);
         }
     }
+    const tasks = [];
     if (!fromSupabaseWs && process.env.SUPABASE_URL && getSupabaseServerKey()) {
+        tasks.push(persistRealtimePulse(lastRealtimeEvent));
         try {
             if (serverRealtimeChannel && typeof serverRealtimeChannel.send === 'function') {
                 const res = serverRealtimeChannel.send({
@@ -283,28 +331,28 @@ function notifyRealtimeListeners(event = {}, { fromSupabaseWs = false } = {}) {
                     event: 'schedule_change',
                     payload: lastRealtimeEvent,
                 });
-                if (res && typeof res.catch === 'function') res.catch(() => {});
-                return res;
-            }
-            if (process.env.VERCEL) {
+                if (res && typeof res.catch === 'function') tasks.push(res.catch(() => {}));
+            } else if (process.env.VERCEL) {
                 const tmpClient = db();
                 const tmpChannel = tmpClient.channel(REALTIME_CHANNEL);
                 if (typeof tmpChannel.httpSend === 'function') {
-                    return tmpChannel
-                        .httpSend('schedule_change', lastRealtimeEvent)
-                        .catch(() => {})
-                        .finally(() => {
-                            if (typeof tmpClient.removeChannel === 'function') {
-                                Promise.resolve(tmpClient.removeChannel(tmpChannel)).catch(() => {});
-                            }
-                        });
+                    tasks.push(
+                        tmpChannel
+                            .httpSend('schedule_change', lastRealtimeEvent)
+                            .catch(() => {})
+                            .finally(() => {
+                                if (typeof tmpClient.removeChannel === 'function') {
+                                    Promise.resolve(tmpClient.removeChannel(tmpChannel)).catch(() => {});
+                                }
+                            })
+                    );
                 }
             }
         } catch (err) {
             console.error('Supabase Realtime broadcast error:', err.message || err);
         }
     }
-    return Promise.resolve();
+    return tasks.length ? Promise.allSettled(tasks) : Promise.resolve();
 }
 
 function startServerRealtimeSubscription() {
@@ -353,6 +401,7 @@ function startServerRealtimeSubscription() {
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: SETTINGS_TABLE }, (payload) => {
                 const row = payload?.new || payload?.old || {};
+                if (row.key === REALTIME_PULSE_KEY || row.key === EMAIL_LOGS_FALLBACK_KEY) return;
                 lastScheduleConfigLoadedAt = 0;
                 lastSettingsLoadedAt = 0;
                 notifyRealtimeListeners(
@@ -2060,12 +2109,15 @@ app.get('/api/config', async (req, res) => {
     });
 });
 
-app.get('/api/realtime/pulse', (req, res) => {
-    const now = nowInTz();
+app.get('/api/realtime/pulse', async (req, res) => {
+    const [pulseState, now] = await Promise.all([
+        readSharedRealtimePulse(),
+        Promise.resolve(nowInTz()),
+    ]);
     res.set('Cache-Control', 'no-store');
     res.json({
-        version: realtimeVersion,
-        lastEvent: lastRealtimeEvent,
+        version: pulseState.version,
+        lastEvent: pulseState.lastEvent,
         today: now.date,
         currentMinute: now.minuteOfDay,
     });

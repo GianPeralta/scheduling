@@ -2,6 +2,11 @@
     'use strict';
 
     const STORAGE_CHANNEL = 'ag_scheduler_realtime';
+    const WS_SKIP_CACHE_KEY = 'ag_ws_unavailable_until_v1';
+    const WS_SKIP_TTL_MS = 10 * 60 * 1000; // Remember unreachable WS for 10 min per session to avoid console spam
+    const WS_CONNECT_TIMEOUT_MS = 5500;
+    const PULSE_INTERVAL_MS = 8000;
+
     const listeners = new Set();
 
     let initialized = false;
@@ -9,6 +14,7 @@
     let eventSource = null;
     let supabaseClient = null;
     let supabaseChannel = null;
+    let wsConnectTimer = null;
     let broadcastChannel = null;
     let pulseTimer = null;
     let emitTimer = null;
@@ -16,9 +22,32 @@
     let lastPulseCheckAt = 0;
     let sseConnected = false;
     let wsConnected = false;
+    let wsFailedOver = false;
+    let pulseHealthy = false;
+
+    function isWsTemporarilySkipped() {
+        try {
+            const raw = Number(sessionStorage.getItem(WS_SKIP_CACHE_KEY) || 0);
+            return Number.isFinite(raw) && raw > Date.now();
+        } catch {
+            return false;
+        }
+    }
+
+    function markWsTemporarilyUnavailable() {
+        try {
+            sessionStorage.setItem(WS_SKIP_CACHE_KEY, String(Date.now() + WS_SKIP_TTL_MS));
+        } catch { /* ignore restricted sessionStorage */ }
+    }
+
+    function clearWsUnavailableMark() {
+        try {
+            sessionStorage.removeItem(WS_SKIP_CACHE_KEY);
+        } catch { /* ignore */ }
+    }
 
     function updateStatusIndicators() {
-        const isOnline = sseConnected || wsConnected;
+        const isOnline = sseConnected || wsConnected || pulseHealthy;
         const pill = document.getElementById('realtimeStatusPill');
         if (pill) {
             pill.classList.toggle('is-live', isOnline);
@@ -50,6 +79,46 @@
                 }
             }
         }, 160);
+    }
+
+    function startPulsePolling() {
+        if (!pulseTimer) {
+            pulseTimer = setInterval(checkPulse, PULSE_INTERVAL_MS);
+        }
+        checkPulse();
+    }
+
+    function teardownSupabaseWebSocket({ fallbackToPulse = true } = {}) {
+        clearTimeout(wsConnectTimer);
+        wsConnectTimer = null;
+        wsConnected = false;
+
+        const client = supabaseClient;
+        const channel = supabaseChannel;
+        supabaseClient = null;
+        supabaseChannel = null;
+
+        if (client) {
+            try {
+                if (channel && typeof client.removeChannel === 'function') {
+                    Promise.resolve(client.removeChannel(channel)).catch(() => {});
+                } else if (typeof client.removeAllChannels === 'function') {
+                    Promise.resolve(client.removeAllChannels()).catch(() => {});
+                }
+            } catch { /* ignore */ }
+            try {
+                if (client.realtime && typeof client.realtime.disconnect === 'function') {
+                    client.realtime.disconnect();
+                }
+            } catch { /* ignore */ }
+        }
+
+        if (fallbackToPulse && !wsFailedOver) {
+            wsFailedOver = true;
+            markWsTemporarilyUnavailable();
+            startPulsePolling();
+        }
+        updateStatusIndicators();
     }
 
     function connectEventSource() {
@@ -91,56 +160,60 @@
 
     function connectSupabaseWebSocket(cfg) {
         const rt = cfg?.realtime;
-        if (!rt?.supabaseUrl || !rt?.supabaseAnonKey || !window.supabase?.createClient || supabaseChannel) {
+        if (!rt?.supabaseUrl || !rt?.supabaseAnonKey || !window.supabase?.createClient || supabaseChannel || wsFailedOver) {
+            if (!wsConnected) startPulsePolling();
             return;
         }
+
+        if (isWsTemporarilySkipped()) {
+            wsFailedOver = true;
+            startPulsePolling();
+            return;
+        }
+
         try {
             supabaseClient = window.supabase.createClient(rt.supabaseUrl, rt.supabaseAnonKey, {
                 auth: { persistSession: false, autoRefreshToken: false },
+                realtime: {
+                    // Prevent aggressive infinite retry loops when WSS is blocked by browser/firewall
+                    reconnectAfterMs: (tries) => (tries > 1 ? 600000 : 2500),
+                },
             });
+
+            if (supabaseClient.realtime && typeof supabaseClient.realtime.onError === 'function') {
+                supabaseClient.realtime.onError(() => {
+                    if (!wsConnected) {
+                        teardownSupabaseWebSocket({ fallbackToPulse: true });
+                    }
+                });
+            }
+
+            clearTimeout(wsConnectTimer);
+            wsConnectTimer = setTimeout(() => {
+                if (!wsConnected) {
+                    teardownSupabaseWebSocket({ fallbackToPulse: true });
+                }
+            }, WS_CONNECT_TIMEOUT_MS);
+
             const channelName = rt.channel || 'scheduler-live';
             supabaseChannel = supabaseClient
                 .channel(channelName, { config: { broadcast: { self: false } } })
                 .on('broadcast', { event: 'schedule_change' }, ({ payload }) => {
                     scheduleEmit(payload || { type: 'ws_broadcast' });
                 })
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, (payload) => {
-                    const row = payload?.new || payload?.old || {};
-                    scheduleEmit({
-                        type: 'ws_appointments',
-                        date: row.appointment_date || null,
-                        bookingId: row.id || null,
-                    });
-                })
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'blocked_schedules' }, (payload) => {
-                    const row = payload?.new || payload?.old || {};
-                    scheduleEmit({
-                        type: 'ws_blocked',
-                        date: row.blocked_date || null,
-                    });
-                })
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'letter_pickup_schedules' }, (payload) => {
-                    const row = payload?.new || payload?.old || {};
-                    scheduleEmit({
-                        type: 'ws_letter_pickup_schedules',
-                        date: row.available_date || null,
-                    });
-                })
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduler_settings' }, (payload) => {
-                    const row = payload?.new || payload?.old || {};
-                    scheduleEmit({
-                        type: 'schedule_config_updated',
-                        key: row.key || null,
-                    });
-                })
                 .subscribe((status) => {
-                    wsConnected = status === 'SUBSCRIBED';
-                    updateStatusIndicators();
+                    if (status === 'SUBSCRIBED') {
+                        clearTimeout(wsConnectTimer);
+                        wsConnectTimer = null;
+                        wsConnected = true;
+                        clearWsUnavailableMark();
+                        updateStatusIndicators();
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        teardownSupabaseWebSocket({ fallbackToPulse: true });
+                    }
                 });
-        } catch (err) {
-            wsConnected = false;
-            updateStatusIndicators();
-            console.warn('Supabase browser WebSocket unavailable, using SSE/pulse fallback:', err.message || err);
+        } catch {
+            teardownSupabaseWebSocket({ fallbackToPulse: true });
         }
     }
 
@@ -156,14 +229,20 @@
 
     async function checkPulse() {
         if (document.visibilityState === 'hidden') return;
-        if (wsConnected || configRef?.realtime?.serverless) return;
+        if (wsConnected || sseConnected) return;
         const now = Date.now();
         if (now - lastPulseCheckAt < 1500) return;
         lastPulseCheckAt = now;
         try {
             const res = await fetch('/api/realtime/pulse', { cache: 'no-store' });
-            if (!res.ok) return;
+            if (!res.ok) {
+                pulseHealthy = false;
+                updateStatusIndicators();
+                return;
+            }
             const pulse = await res.json();
+            pulseHealthy = true;
+            updateStatusIndicators();
             if (typeof pulse?.version === 'number') {
                 if (lastVersion === 0) {
                     lastVersion = pulse.version;
@@ -171,7 +250,10 @@
                     scheduleEmit(pulse.lastEvent || { type: 'pulse', version: pulse.version });
                 }
             }
-        } catch { /* ignore transient pulse errors */ }
+        } catch {
+            pulseHealthy = false;
+            updateStatusIndicators();
+        }
     }
 
     function init(config = null) {
@@ -182,11 +264,8 @@
             connectSupabaseWebSocket(configRef);
             if (!configRef.realtime?.serverless) {
                 connectEventSource();
-                if (!pulseTimer) {
-                    pulseTimer = setInterval(checkPulse, 8000);
-                }
-                checkPulse();
             }
+            startPulsePolling();
         }
 
         updateStatusIndicators();
