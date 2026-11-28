@@ -180,7 +180,7 @@
                             <div class="sched-selection-hint-bar" id="schedSelectionHintBar">
                                 <span id="schedSelectionHintText">Click a date on the calendar to inspect, open, or block it.</span>
                                 <div class="sched-hint-actions">
-                                    <button type="button" class="btn btn-primary-soft btn-sm sched-jump-inspector-btn hidden" id="schedJumpInspectorBtn">Open / Block ↓</button>
+                                    <button type="button" class="btn btn-primary-soft btn-sm sched-jump-inspector-btn hidden" id="schedJumpInspectorBtn">Times &amp; Actions ↓</button>
                                     <button type="button" class="link-btn hidden" id="schedClearSelectionBtn">Clear</button>
                                 </div>
                             </div>
@@ -222,6 +222,26 @@
                                     </div>
                                 </div>
                                 <div class="sched-current-list" id="schedCurrentList"></div>
+                            </div>
+
+                            <!-- Available Time Slots Preview (Student Booking View) -->
+                            <div class="sched-slots-card hidden" id="schedSlotsCard">
+                                <div class="sched-slots-head">
+                                    <div>
+                                        <span class="selection-label">Available Times</span>
+                                        <h3 id="schedSlotsTitle">Time Slots Preview</h3>
+                                    </div>
+                                    <span class="badge teal" id="schedSlotsSummaryBadge">0 open</span>
+                                </div>
+                                <div class="profile-filter-pills sched-slots-pills" id="schedSlotsTypePills" role="tablist" aria-label="Preview slot duration">
+                                    <button type="button" class="profile-pill active" data-slot-preview="defense_1h">Defense · 1h</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="defense_2h">Defense · 2h</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="system">System · 15m</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="other">Other · 10m</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="retrieval">Retrieval / Letter · 5m</button>
+                                    <button type="button" class="profile-pill" data-slot-preview="letter_pickup">Pickup · 5m</button>
+                                </div>
+                                <div class="sched-slots-body" id="schedSlotsPreviewBody"></div>
                             </div>
 
                             <!-- Open vs Block Action Card -->
@@ -598,35 +618,56 @@
                 </div>
 
                 <div class="def-datetime-card">
-                    <div class="def-datetime-grid">
-                        <label class="field">
-                            <span>Defense date</span>
-                            <input type="date" id="defDateInput" required />
-                        </label>
-                        <label class="field">
-                            <span>Start time</span>
-                            <input type="time" id="defStartTimeInput" value="09:00" step="300" required />
-                        </label>
+                    <div class="def-scheduler-grid">
+                        <!-- Mini Calendar Picker (Student Booking Style) -->
+                        <div class="def-cal-col">
+                            <div class="calendar-head def-cal-head">
+                                <h4 id="defCalMonthLabel">—</h4>
+                                <div class="calendar-nav">
+                                    <button type="button" class="icon-btn" id="defCalPrevBtn" aria-label="Previous month">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                                    </button>
+                                    <button type="button" class="icon-btn" id="defCalNextBtn" aria-label="Next month">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="weekdays def-cal-weekdays">
+                                <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+                            </div>
+                            <div class="days def-cal-days" id="defCalDays"></div>
+                            <div class="legend def-cal-legend">
+                                <span><i class="dot dot-open"></i> Open Defense</span>
+                                <span><i class="dot dot-panel-free"></i> Panel Free</span>
+                                <span><i class="dot dot-blocked"></i> Blocked / Busy</span>
+                            </div>
+                        </div>
+
+                        <!-- Available Times & Exact Start Time -->
+                        <div class="def-slots-col">
+                            <div class="def-slots-head">
+                                <strong id="defSelectedDateHeading">Select a date</strong>
+                                <p class="muted small" id="defFreeWindowsSummary">Tap an available start time below or type a custom time.</p>
+                            </div>
+
+                            <div class="quick-reason-chips def-dynamic-chips" id="defDynamicSlotChips"></div>
+
+                            <div class="def-datetime-grid">
+                                <label class="field">
+                                    <span>Selected date</span>
+                                    <input type="date" id="defDateInput" required />
+                                </label>
+                                <label class="field">
+                                    <span>Custom start time</span>
+                                    <input type="time" id="defStartTimeInput" value="09:00" step="300" required />
+                                </label>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="def-computed-window">
                         <span class="muted small">Defense time block:</span>
                         <strong id="defCalculatedWindowText">—</strong>
-                    </div>
-
-                    <div class="quick-reasons">
-                        <span class="muted small">Quick start times</span>
-                        <div class="quick-reason-chips" id="defTimePresets">
-                            <button type="button" class="reason-chip def-time-chip" data-time="08:00">8:00 AM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="09:00">9:00 AM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="10:00">10:00 AM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="10:30">10:30 AM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="13:00">1:00 PM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="13:30">1:30 PM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="14:00">2:00 PM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="15:00">3:00 PM</button>
-                            <button type="button" class="reason-chip def-time-chip" data-time="16:00">4:00 PM</button>
-                        </div>
                     </div>
 
                     <div class="def-day-preview" id="defDayPreviewBox">

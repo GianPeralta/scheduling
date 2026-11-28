@@ -67,6 +67,9 @@
         defExplicitRescheduleTarget: null,
         defAutoDetectedUpcomingDefense: null,
         defDraftMembers: [''],
+        defCalYear: 0,
+        defCalMonth: 0,
+        schedSlotPreviewType: 'defense_1h',
     };
 
     const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -754,6 +757,319 @@
         $('#schedAddCustomWinBtn')?.classList.toggle('hidden', state.schedCustomWindows.length >= 4);
     }
 
+    const ADMIN_SLOT_PREVIEW_META = {
+        defense_1h: { label: 'Defense · 1h', category: 'defense', duration: 60, isDefense: true, defaultLevel: 'capstone1' },
+        defense_2h: { label: 'Defense · 2h', category: 'defense', duration: 120, isDefense: true, defaultLevel: 'capstone2' },
+        system: { label: 'System · 15m', category: 'consultation', duration: 15, isDefense: false },
+        other: { label: 'Other · 10m', category: 'consultation', duration: 10, isDefense: false },
+        retrieval: { label: 'Retrieval / Letter · 5m', category: 'consultation', duration: 5, isDefense: false },
+        letter_pickup: { label: 'Comm. Letter Pickup · 5m', category: 'letter_pickup', duration: 5, isDefense: false },
+    };
+
+    const PANEL_WORKDAY_START = 7 * 60 + 30; // 7:30 AM
+    const PANEL_WORKDAY_END = 18 * 60;       // 6:00 PM
+
+    function getTimedBookingsOnDate(ds, excludeId = null) {
+        return (state.bookings || []).filter((b) => {
+            if (isCancelled(b) || b.date !== ds) return false;
+            if (excludeId && b.id === excludeId) return false;
+            if (b.isDropoff || b.consultationType === 'dropoff') return false;
+            return (b.durationMinutes ?? 15) > 0;
+        });
+    }
+
+    function computeFreeGapsInWindows(windows, busyIntervals, minDuration = 5) {
+        const results = [];
+        for (const [ws, we] of windows) {
+            const clipped = busyIntervals
+                .filter(([s, e]) => s < we && e > ws)
+                .map(([s, e]) => [Math.max(s, ws), Math.min(e, we)])
+                .sort((a, b) => a[0] - b[0]);
+
+            const merged = [];
+            for (const [s, e] of clipped) {
+                const last = merged[merged.length - 1];
+                if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+                else merged.push([s, e]);
+            }
+
+            const free = [];
+            let cursor = ws;
+            for (const [s, e] of merged) {
+                if (s > cursor) free.push([cursor, s]);
+                cursor = Math.max(cursor, e);
+            }
+            if (cursor < we) free.push([cursor, we]);
+
+            for (const [fs, fe] of free) {
+                const earliest = Math.ceil(fs / 5) * 5;
+                const latest = Math.floor((fe - minDuration) / 5) * 5;
+                if (latest >= earliest) {
+                    results.push({
+                        startMinute: fs,
+                        endMinute: fe,
+                        earliestStart: earliest,
+                        latestStart: latest,
+                        label: `${formatMinute12(fs)} – ${formatMinute12(fe)}`,
+                    });
+                }
+            }
+        }
+        return results;
+    }
+
+    function buildSuggestedDefenseStarts(gaps, stepMinutes = 30) {
+        const starts = [];
+        const seen = new Set();
+        gaps.forEach((g) => {
+            // Start at earliest, then nice 30-min (or hour/half-hour) marks, plus latestStart
+            const add = (m) => {
+                if (!seen.has(m)) {
+                    seen.add(m);
+                    starts.push(m);
+                }
+            };
+            add(g.earliestStart);
+            const firstHalfHour = Math.ceil(g.earliestStart / stepMinutes) * stepMinutes;
+            for (let m = firstHalfHour; m <= g.latestStart; m += stepMinutes) {
+                add(m);
+            }
+            add(g.latestStart);
+        });
+        return starts.sort((a, b) => a - b);
+    }
+
+    function getOpenedCategoryWindowsOnDate(ds, category) {
+        const openByDate = getOpenEntriesByDateMap();
+        const entry = openByDate.get(ds)?.[category] || null;
+        const wins = (entry?.effectiveWindows || []).map((w) => [w.startMinute, w.endMinute]);
+        if (category === 'letter_pickup' && !wins.length) {
+            const legacy = (state.letterPickupSchedules || [])
+                .filter((p) => p.date === ds)
+                .map((p) => [p.startMinute, p.endMinute]);
+            return legacy;
+        }
+        return wins;
+    }
+
+    function renderScheduleSlotsPreviewCard(selectedDates) {
+        const card = $('#schedSlotsCard');
+        const body = $('#schedSlotsPreviewBody');
+        const badge = $('#schedSlotsSummaryBadge');
+        const titleEl = $('#schedSlotsTitle');
+        if (!card || !body) return;
+
+        if (!selectedDates || selectedDates.length !== 1) {
+            card.classList.add('hidden');
+            return;
+        }
+
+        const ds = selectedDates[0];
+        card.classList.remove('hidden');
+
+        const previewKey = Object.prototype.hasOwnProperty.call(ADMIN_SLOT_PREVIEW_META, state.schedSlotPreviewType)
+            ? state.schedSlotPreviewType
+            : 'defense_1h';
+        state.schedSlotPreviewType = previewKey;
+        const meta = ADMIN_SLOT_PREVIEW_META[previewKey];
+
+        if (titleEl) {
+            titleEl.textContent = `Available Times · ${shortDate(ds)}`;
+        }
+
+        document.querySelectorAll('#schedSlotsTypePills [data-slot-preview]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.slotPreview === previewKey);
+        });
+
+        body.innerHTML = '';
+
+        const dayBookings = getTimedBookingsOnDate(ds);
+        const dayBlocks = (state.blockedSchedules || []).filter((blk) => blk.date === ds);
+        const fullBlock = dayBlocks.find((b) => b.isFullDay) || null;
+        const bookedIntervals = dayBookings.map((b) => [
+            b.startMinute ?? (b.hour || 0) * 60,
+            b.endMinute ?? ((b.startMinute ?? (b.hour || 0) * 60) + (b.durationMinutes || 15)),
+        ]);
+        const blockedIntervals = dayBlocks.map((blk) => [
+            blk.isFullDay ? 0 : (blk.startMinute ?? 0),
+            blk.isFullDay ? 1440 : (blk.endMinute ?? 1440),
+        ]);
+        const allBusyIntervals = [...bookedIntervals, ...blockedIntervals];
+        const openedWins = getOpenedCategoryWindowsOnDate(ds, meta.category);
+
+        if (meta.isDefense) {
+            // 1) Student-Bookable Defense Windows (if opened & not full-day blocked)
+            const studentGaps = (!fullBlock && openedWins.length)
+                ? computeFreeGapsInWindows(openedWins, allBusyIntervals, meta.duration)
+                : [];
+            // 2) Panel Free Windows (7:30 AM – 6:00 PM minus actual booked appointments, so admin can see all open gaps for panel scheduling)
+            const panelGaps = computeFreeGapsInWindows([[PANEL_WORKDAY_START, PANEL_WORKDAY_END]], bookedIntervals, meta.duration);
+
+            if (openedWins.length && !fullBlock) {
+                if (badge) {
+                    badge.className = `badge ${studentGaps.length ? 'rose' : 'muted-badge'}`;
+                    badge.textContent = studentGaps.length
+                        ? `${studentGaps.length} open window${studentGaps.length === 1 ? '' : 's'}`
+                        : 'Full';
+                }
+                const box = el('div', 'admin-slots-section');
+                const noteRow = el('div', 'admin-slots-note is-open');
+                noteRow.textContent = studentGaps.length
+                    ? `Open to students (${meta.duration === 120 ? '2-hour' : '1-hour'}): ${studentGaps.map((g) => g.label).join(' · ')}`
+                    : `Defense hours are open on ${shortDate(ds)}, but no ${meta.duration === 120 ? '2-hour' : '1-hour'} gap remains.`;
+                box.appendChild(noteRow);
+
+                const starts = buildSuggestedDefenseStarts(studentGaps, 30);
+                if (starts.length) {
+                    box.appendChild(el('span', 'student-field-label', 'Tap a start time to schedule a group for defense:'));
+                    const chips = el('div', 'defense-chip-list');
+                    starts.forEach((m) => {
+                        const chip = el('button', 'defense-time-chip', `${formatMinute12(m)} – ${formatMinute12(m + meta.duration)}`);
+                        chip.type = 'button';
+                        chip.addEventListener('click', () => {
+                            openScheduleDefenseModal({
+                                prefillDate: ds,
+                                prefillTime: minuteToTimeVal(m),
+                                prefillLevel: meta.defaultLevel,
+                            });
+                        });
+                        chips.appendChild(chip);
+                    });
+                    box.appendChild(chips);
+                }
+                body.appendChild(box);
+            } else {
+                if (badge) {
+                    badge.className = `badge ${panelGaps.length ? 'sky' : 'danger'}`;
+                    badge.textContent = fullBlock
+                        ? 'Blocked (Students)'
+                        : panelGaps.length
+                            ? `${panelGaps.length} panel gap${panelGaps.length === 1 ? '' : 's'}`
+                            : 'Busy';
+                }
+                const closedBanner = el('div', 'admin-slots-note');
+                closedBanner.textContent = fullBlock
+                    ? `Blocked for student self-booking (${fullBlock.reason || 'Full day block'}). Panel free windows below ignore blocks and check only real appointments:`
+                    : `Closed to student self-booking on ${shortDate(ds)}. Free gaps on your schedule (7:30 AM – 6:00 PM) for panel-assigned defenses:`;
+                body.appendChild(closedBanner);
+
+                if (panelGaps.length) {
+                    const rangeSummary = el('p', 'small admin-free-summary', `Free: ${panelGaps.map((g) => g.label).join(' · ')}`);
+                    body.appendChild(rangeSummary);
+                    const starts = buildSuggestedDefenseStarts(panelGaps, 30);
+                    if (starts.length) {
+                        const chips = el('div', 'defense-chip-list');
+                        starts.forEach((m) => {
+                            const chip = el('button', 'defense-time-chip', `${formatMinute12(m)} – ${formatMinute12(m + meta.duration)}`);
+                            chip.type = 'button';
+                            chip.addEventListener('click', () => {
+                                openScheduleDefenseModal({
+                                    prefillDate: ds,
+                                    prefillTime: minuteToTimeVal(m),
+                                    prefillLevel: meta.defaultLevel,
+                                });
+                            });
+                            chips.appendChild(chip);
+                        });
+                        body.appendChild(chips);
+                    }
+                } else {
+                    body.appendChild(el('p', 'muted small', 'No free gap fits this defense duration between 7:30 AM and 6:00 PM.'));
+                }
+            }
+
+            if (dayBookings.length > 0) {
+                const busyWrap = el('div', 'admin-booked-summary');
+                busyWrap.appendChild(el('span', 'student-field-label', `Booked on ${shortDate(ds)} (${dayBookings.length}):`));
+                dayBookings.forEach((b) => {
+                    const pill = el('div', 'def-day-appt-pill');
+                    pill.appendChild(el('strong', '', b.label));
+                    pill.appendChild(el('span', '', `${b.consultationTitle || 'Consultation'} · ${b.capstoneTitle || b.teamName || b.name}`));
+                    busyWrap.appendChild(pill);
+                });
+                body.appendChild(busyWrap);
+            }
+            return;
+        }
+
+        // Consultation / Letter Pickup slot grid (mirrors student booking view)
+        if (!openedWins.length) {
+            if (badge) {
+                badge.className = 'badge muted-badge';
+                badge.textContent = 'Closed';
+            }
+            const emptyBox = el('div', 'admin-slots-closed');
+            emptyBox.appendChild(el('p', 'muted small', `${CATEGORY_META[meta.category]?.label || 'Schedule'} are currently closed on ${shortDate(ds)}.`));
+            const quickOpenBtn = el('button', 'btn btn-primary-soft btn-sm', `Select ${CATEGORY_META[meta.category]?.shortTag || 'Category'} in Open Form ↓`);
+            quickOpenBtn.type = 'button';
+            quickOpenBtn.addEventListener('click', () => {
+                state.schedActionMode = 'open';
+                state.schedCategory = meta.category;
+                renderScheduleInspector();
+                $('#schedActionCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+            emptyBox.appendChild(quickOpenBtn);
+            body.appendChild(emptyBox);
+            return;
+        }
+
+        const slots = [];
+        openedWins.forEach(([ws, we]) => {
+            for (let m = ws; m + meta.duration <= we; m += meta.duration) {
+                const sEnd = m + meta.duration;
+                const matchedBooking = dayBookings.find((b) => {
+                    const bs = b.startMinute ?? (b.hour || 0) * 60;
+                    const be = b.endMinute ?? (bs + (b.durationMinutes || 15));
+                    return m < be && sEnd > bs;
+                }) || null;
+                const matchedBlock = dayBlocks.find((blk) => {
+                    const bs = blk.isFullDay ? 0 : (blk.startMinute ?? 0);
+                    const be = blk.isFullDay ? 1440 : (blk.endMinute ?? 1440);
+                    return m < be && sEnd > bs;
+                }) || null;
+                slots.push({
+                    startMinute: m,
+                    endMinute: sEnd,
+                    label: `${formatMinute12(m)} – ${formatMinute12(sEnd)}`,
+                    booking: matchedBooking,
+                    block: matchedBlock,
+                    available: !matchedBooking && !matchedBlock,
+                });
+            }
+        });
+
+        const openCount = slots.filter((s) => s.available).length;
+        if (badge) {
+            badge.className = `badge ${openCount > 0 ? 'teal' : 'danger'}`;
+            badge.textContent = `${openCount}/${slots.length} open`;
+        }
+
+        if (!slots.length) {
+            body.appendChild(el('p', 'muted small', 'Opened window is shorter than this slot duration.'));
+            return;
+        }
+
+        const grid = el('div', 'admin-slot-grid');
+        slots.forEach((s) => {
+            const cls = s.available
+                ? 'admin-slot-pill is-open'
+                : s.booking
+                    ? 'admin-slot-pill is-booked'
+                    : 'admin-slot-pill is-blocked';
+            const cardEl = el('div', cls);
+            cardEl.appendChild(el('strong', 'admin-slot-time', s.label));
+            const statusText = s.available
+                ? 'Available'
+                : s.booking
+                    ? `Booked · ${s.booking.capstoneTitle || s.booking.teamName || s.booking.name}`
+                    : `Blocked${s.block?.reason ? ` · ${s.block.reason}` : ''}`;
+            cardEl.appendChild(el('span', 'admin-slot-status', statusText));
+            cardEl.title = `${s.label} — ${statusText}`;
+            grid.appendChild(cardEl);
+        });
+        body.appendChild(grid);
+    }
+
     function renderScheduleInspector() {
         const selected = getSortedSelectedDates();
         const eyebrowEl = $('#schedStatusEyebrow');
@@ -1017,6 +1333,8 @@
         if ($('#schedBlockSubmitBtn')) {
             $('#schedBlockSubmitBtn').disabled = state.schedBusy || selected.length === 0;
         }
+
+        renderScheduleSlotsPreviewCard(selected);
     }
 
     function renderRegularHoursSection() {
@@ -2212,6 +2530,112 @@
         setDefenseFormError('');
     }
 
+    function renderDefenseModalCalendar() {
+        const daysEl = $('#defCalDays');
+        const monthLabelEl = $('#defCalMonthLabel');
+        if (!daysEl || !monthLabelEl) return;
+
+        const selectedDate = ($('#defDateInput')?.value || '').trim();
+        if ((!state.defCalYear || !Number.isInteger(state.defCalMonth)) && (selectedDate || state.today)) {
+            const ref = selectedDate || state.today;
+            const [ry, rm] = ref.split('-').map(Number);
+            state.defCalYear = ry;
+            state.defCalMonth = rm - 1;
+        }
+
+        const y = state.defCalYear || 2026;
+        const m = Number.isInteger(state.defCalMonth) ? state.defCalMonth : 0;
+        monthLabelEl.textContent = new Date(Date.UTC(y, m, 1)).toLocaleDateString('en-US', {
+            month: 'long',
+            year: 'numeric',
+            timeZone: 'UTC',
+        });
+
+        const prevBtn = $('#defCalPrevBtn');
+        if (prevBtn && state.today) {
+            const [ty, tm] = state.today.split('-').map(Number);
+            prevBtn.disabled = y < ty || (y === ty && m <= tm - 1);
+        }
+
+        daysEl.innerHTML = '';
+        const firstDow = new Date(Date.UTC(y, m, 1)).getUTCDay();
+        const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+        for (let i = 0; i < firstDow; i += 1) {
+            daysEl.appendChild(el('span', 'day-spacer'));
+        }
+
+        const level = getSelectedDefenseLevel();
+        const durMinutes = (DEFENSE_DURATIONS[level] || DEFENSE_DURATIONS.capstone1).minutes;
+        const replaceTarget = getActiveReplaceDefenseBooking();
+        const openByDate = getOpenEntriesByDateMap();
+        const blocksByDate = getBlocksByDateMap();
+
+        for (let d = 1; d <= daysInMonth; d += 1) {
+            const ds = makeDateStr(y, m, d);
+            const btn = el('button', 'day', String(d));
+            btn.type = 'button';
+            btn.dataset.date = ds;
+
+            if (state.today && ds < state.today) {
+                btn.disabled = true;
+                daysEl.appendChild(btn);
+                continue;
+            }
+
+            if (ds === state.today) btn.classList.add('today');
+            if (ds === selectedDate) btn.classList.add('selected');
+
+            const dayBookings = getTimedBookingsOnDate(ds, replaceTarget?.id || null);
+            const bookedIntervals = dayBookings.map((b) => [
+                b.startMinute ?? (b.hour || 0) * 60,
+                b.endMinute ?? ((b.startMinute ?? (b.hour || 0) * 60) + (b.durationMinutes || 15)),
+            ]);
+            const dayBlocks = blocksByDate.get(ds) || [];
+            const hasFullBlock = dayBlocks.some((b) => b.isFullDay);
+            const blockedIntervals = dayBlocks.map((blk) => [
+                blk.isFullDay ? 0 : (blk.startMinute ?? 0),
+                blk.isFullDay ? 1440 : (blk.endMinute ?? 1440),
+            ]);
+
+            const defEntry = openByDate.get(ds)?.defense || null;
+            const defWins = (defEntry?.effectiveWindows || []).map((w) => [w.startMinute, w.endMinute]);
+            const openDefenseGaps = (!hasFullBlock && defWins.length)
+                ? computeFreeGapsInWindows(defWins, [...bookedIntervals, ...blockedIntervals], durMinutes)
+                : [];
+            const panelGaps = computeFreeGapsInWindows([[PANEL_WORKDAY_START, PANEL_WORKDAY_END]], bookedIntervals, durMinutes);
+
+            if (openDefenseGaps.length > 0) {
+                btn.classList.add('available');
+                btn.title = `${longDate(ds)} — Open defense hours (${openDefenseGaps.map((g) => g.label).join(', ')})`;
+            } else if (hasFullBlock || panelGaps.length === 0) {
+                btn.classList.add('blocked');
+                btn.title = hasFullBlock
+                    ? `${longDate(ds)} — Blocked all day (tap to override for panel defense)`
+                    : `${longDate(ds)} — No ${durMinutes / 60}h gap between 7:30 AM and 6:00 PM`;
+            } else {
+                btn.classList.add('panel-free');
+                btn.title = `${longDate(ds)} — Free for panel schedule (${panelGaps.map((g) => g.label).join(', ')})`;
+            }
+
+            btn.addEventListener('click', () => {
+                if ($('#defDateInput')) $('#defDateInput').value = ds;
+                setDefenseFormError('');
+                renderDefenseDayPreview();
+            });
+            daysEl.appendChild(btn);
+        }
+    }
+
+    function changeDefenseCalMonth(delta) {
+        let m = (Number.isInteger(state.defCalMonth) ? state.defCalMonth : 0) + delta;
+        let y = state.defCalYear || 2026;
+        if (m < 0) { m = 11; y -= 1; }
+        if (m > 11) { m = 0; y += 1; }
+        state.defCalYear = y;
+        state.defCalMonth = m;
+        renderDefenseModalCalendar();
+    }
+
     function renderDefenseDayPreview() {
         const dateVal = ($('#defDateInput')?.value || '').trim();
         const timeVal = ($('#defStartTimeInput')?.value || '').trim();
@@ -2219,6 +2643,8 @@
         const durInfo = DEFENSE_DURATIONS[level] || DEFENSE_DURATIONS.capstone1;
         const startMin = timeValToMinute(timeVal);
         const endMin = startMin !== null ? startMin + durInfo.minutes : null;
+
+        renderDefenseModalCalendar();
 
         const windowTextEl = $('#defCalculatedWindowText');
         if (windowTextEl) {
@@ -2231,11 +2657,9 @@
             }
         }
 
-        // Highlight active preset time chip
-        document.querySelectorAll('#defTimePresets .def-time-chip').forEach((chip) => {
-            chip.classList.toggle('is-active', chip.dataset.time === timeVal);
-        });
-
+        const dateHeadingEl = $('#defSelectedDateHeading');
+        const freeSummaryEl = $('#defFreeWindowsSummary');
+        const chipsContainer = $('#defDynamicSlotChips');
         const statusBanner = $('#defDayStatusBanner');
         const apptsWrap = $('#defDayAppointmentsWrap');
         const apptsHeading = $('#defDayAppointmentsHeading');
@@ -2245,15 +2669,21 @@
         statusBanner.className = 'def-day-preview-status';
         statusBanner.textContent = '';
         apptsList.innerHTML = '';
+        if (chipsContainer) chipsContainer.innerHTML = '';
 
         if (!dateVal || !/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+            if (dateHeadingEl) dateHeadingEl.textContent = 'Select a date on the calendar';
+            if (freeSummaryEl) freeSummaryEl.textContent = 'Pick a date to see available start times.';
             statusBanner.classList.add('is-neutral');
             statusBanner.textContent = 'Pick a date above to check your schedule for conflicts.';
             apptsWrap.classList.add('hidden');
             return;
         }
 
+        if (dateHeadingEl) dateHeadingEl.textContent = longDate(dateVal);
+
         if (state.today && dateVal < state.today) {
+            if (freeSummaryEl) freeSummaryEl.textContent = 'Past date — select today or a future date.';
             statusBanner.classList.add('is-conflict');
             statusBanner.textContent = `${longDate(dateVal)} is in the past — please pick today or a future date.`;
             apptsWrap.classList.add('hidden');
@@ -2261,11 +2691,51 @@
         }
 
         const replaceTarget = getActiveReplaceDefenseBooking();
-        const dayBookings = (state.bookings || []).filter(
-            (b) => !isCancelled(b) && b.date === dateVal && (!replaceTarget || b.id !== replaceTarget.id)
-        );
-        const timedDayBookings = dayBookings.filter((b) => !b.isDropoff && b.consultationType !== 'dropoff' && (b.durationMinutes ?? 15) > 0);
+        const timedDayBookings = getTimedBookingsOnDate(dateVal, replaceTarget?.id || null);
         const dayBlocks = (state.blockedSchedules || []).filter((blk) => blk.date === dateVal);
+        const hasFullBlock = dayBlocks.some((b) => b.isFullDay);
+        const bookedIntervals = timedDayBookings.map((b) => [
+            b.startMinute ?? (b.hour || 0) * 60,
+            b.endMinute ?? ((b.startMinute ?? (b.hour || 0) * 60) + (b.durationMinutes || 15)),
+        ]);
+        const blockedIntervals = dayBlocks.map((blk) => [
+            blk.isFullDay ? 0 : (blk.startMinute ?? 0),
+            blk.isFullDay ? 1440 : (blk.endMinute ?? 1440),
+        ]);
+
+        // Populate dynamic non-overlapping start-time chips (student-booking style!)
+        const openedDefWins = getOpenedCategoryWindowsOnDate(dateVal, 'defense');
+        const openedGaps = (!hasFullBlock && openedDefWins.length)
+            ? computeFreeGapsInWindows(openedDefWins, [...bookedIntervals, ...blockedIntervals], durInfo.minutes)
+            : [];
+        const panelGaps = computeFreeGapsInWindows([[PANEL_WORKDAY_START, PANEL_WORKDAY_END]], bookedIntervals, durInfo.minutes);
+        const activeGaps = openedGaps.length ? openedGaps : panelGaps;
+
+        if (freeSummaryEl) {
+            if (openedGaps.length) {
+                freeSummaryEl.textContent = `Open Defense Hours: ${openedGaps.map((g) => g.label).join(' · ')}`;
+            } else if (panelGaps.length) {
+                freeSummaryEl.textContent = `Free on schedule: ${panelGaps.map((g) => g.label).join(' · ')}`;
+            } else {
+                freeSummaryEl.textContent = `No free ${durInfo.label} gap between 7:30 AM and 6:00 PM.`;
+            }
+        }
+
+        if (chipsContainer) {
+            const suggestedStarts = buildSuggestedDefenseStarts(activeGaps, 30);
+            suggestedStarts.forEach((m) => {
+                const tVal = minuteToTimeVal(m);
+                const chip = el('button', 'reason-chip def-time-chip' + (tVal === timeVal ? ' is-active' : ''), formatMinute12(m));
+                chip.type = 'button';
+                chip.title = `${formatMinute12(m)} – ${formatMinute12(m + durInfo.minutes)} (${durInfo.label})`;
+                chip.addEventListener('click', () => {
+                    if ($('#defStartTimeInput')) $('#defStartTimeInput').value = tVal;
+                    setDefenseFormError('');
+                    renderDefenseDayPreview();
+                });
+                chipsContainer.appendChild(chip);
+            });
+        }
 
         let overlappingBooking = null;
         let overlappingBlock = null;
@@ -2322,7 +2792,13 @@
         }
     }
 
-    function openScheduleDefenseModal({ student = null, bookingToReschedule = null, prefillDate = null } = {}) {
+    function openScheduleDefenseModal({
+        student = null,
+        bookingToReschedule = null,
+        prefillDate = null,
+        prefillTime = null,
+        prefillLevel = null,
+    } = {}) {
         state.defModalOpen = true;
         state.defExplicitRescheduleTarget = bookingToReschedule || null;
         state.defAutoDetectedUpcomingDefense = null;
@@ -2351,12 +2827,18 @@
             if (state.today) dateInput.min = state.today;
             dateInput.value = defaultDate;
         }
+        if (defaultDate && /^\d{4}-\d{2}-\d{2}$/.test(defaultDate)) {
+            const [dy, dm] = defaultDate.split('-').map(Number);
+            state.defCalYear = dy;
+            state.defCalMonth = dm - 1;
+        }
 
         const startInput = $('#defStartTimeInput');
         if (startInput) {
-            startInput.value = bookingToReschedule && Number.isFinite(bookingToReschedule.startMinute)
-                ? minuteToTimeVal(bookingToReschedule.startMinute)
-                : '09:00';
+            startInput.value = prefillTime
+                || (bookingToReschedule && Number.isFinite(bookingToReschedule.startMinute)
+                    ? minuteToTimeVal(bookingToReschedule.startMinute)
+                    : '09:00');
         }
 
         if (bookingToReschedule) {
@@ -2394,8 +2876,11 @@
                 applySelectedDefenseStudent(false);
             } else {
                 if ($('#defCapstoneInput')) $('#defCapstoneInput').value = '';
+                const initLevel = Object.prototype.hasOwnProperty.call(DEFENSE_DURATIONS, prefillLevel)
+                    ? prefillLevel
+                    : 'capstone1';
                 document.querySelectorAll('input[name="defLevel"]').forEach((r) => {
-                    r.checked = r.value === 'capstone1';
+                    r.checked = r.value === initLevel;
                 });
                 document.querySelectorAll('input[name="defRole"]').forEach((r) => {
                     r.checked = r.value === 'panel';
@@ -3857,7 +4342,17 @@
         renderScheduleManager();
     });
     $('#schedJumpInspectorBtn')?.addEventListener('click', () => {
-        $('#schedInspectorPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const slotsCard = $('#schedSlotsCard');
+        const target = slotsCard && !slotsCard.classList.contains('hidden')
+            ? slotsCard
+            : $('#schedInspectorPanel');
+        target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    document.querySelectorAll('#schedSlotsTypePills [data-slot-preview]').forEach((pill) => {
+        pill.addEventListener('click', () => {
+            state.schedSlotPreviewType = pill.dataset.slotPreview || 'defense_1h';
+            renderScheduleSlotsPreviewCard(getSortedSelectedDates());
+        });
     });
     $('#schedPrevMonth')?.addEventListener('click', () => changeSchedMonth(-1));
     $('#schedNextMonth')?.addEventListener('click', () => changeSchedMonth(1));
@@ -4055,6 +4550,12 @@
         inputs[inputs.length - 1]?.focus();
     });
     $('#defDateInput')?.addEventListener('input', () => {
+        const val = ($('#defDateInput')?.value || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+            const [vy, vm] = val.split('-').map(Number);
+            state.defCalYear = vy;
+            state.defCalMonth = vm - 1;
+        }
         setDefenseFormError('');
         renderDefenseDayPreview();
     });
@@ -4062,13 +4563,8 @@
         setDefenseFormError('');
         renderDefenseDayPreview();
     });
-    document.querySelectorAll('#defTimePresets .def-time-chip').forEach((chip) => {
-        chip.addEventListener('click', () => {
-            if ($('#defStartTimeInput')) $('#defStartTimeInput').value = chip.dataset.time || '09:00';
-            setDefenseFormError('');
-            renderDefenseDayPreview();
-        });
-    });
+    $('#defCalPrevBtn')?.addEventListener('click', () => changeDefenseCalMonth(-1));
+    $('#defCalNextBtn')?.addEventListener('click', () => changeDefenseCalMonth(1));
     $('#defCapstoneInput')?.addEventListener('input', () => setDefenseFormError(''));
     $('#defReasonInput')?.addEventListener('input', () => setDefenseFormError(''));
     $('#defGroupEmailInput')?.addEventListener('input', () => {
