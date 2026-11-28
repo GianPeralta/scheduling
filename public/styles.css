@@ -1359,7 +1359,8 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
 }
 .instructor-email-link {
     min-width: 0;
@@ -3026,6 +3027,24 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         grid-template-columns: 1fr;
         gap: 12px;
     }
+    .instructor-contact-box {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        padding: 10px 14px;
+    }
+    .instructor-contact-actions {
+        justify-content: flex-start;
+        gap: 8px;
+    }
+    .copy-email-btn,
+    .copy-email-btn-inline {
+        min-height: 32px;
+        padding: 5px 10px;
+        font-size: 0.76rem;
+    }
 
     /* Stack Calendar above Time Slots on portrait tablets, and show slots in a roomy 2-column grid */
     #step2 {
@@ -3187,9 +3206,19 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         padding: 9px 12px;
     }
     .appointments-info-bar {
+        flex-direction: column;
+        align-items: stretch;
         padding: 10px 13px;
-        gap: 6px 12px;
-        font-size: 0.81rem;
+        gap: 8px;
+        font-size: 0.82rem;
+    }
+    .appointments-info-contact {
+        width: 100%;
+        padding-top: 7px;
+        border-top: 1px dashed var(--border);
+    }
+    .appointments-info-contact .copy-email-btn-inline {
+        margin-left: auto;
     }
 
     .selection {
@@ -3520,10 +3549,12 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         font-size: 0.76rem;
         min-height: 36px;
     }
-    .topbar-actions a.topbar-link[href="/admin.html"] span {
+    .topbar-actions a.topbar-link[href="/admin.html"] span,
+    .topbar-actions a.topbar-link[href="/"] span {
         display: none;
     }
-    .topbar-actions a.topbar-link[href="/admin.html"] {
+    .topbar-actions a.topbar-link[href="/admin.html"],
+    .topbar-actions a.topbar-link[href="/"] {
         padding: 7px 10px;
     }
     .student-card-footer {
@@ -4857,6 +4888,20 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
         grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
         gap: 5px;
     }
+    .sched-custom-win-row input[type="time"] {
+        min-width: 0;
+        width: 100%;
+        padding: 8px 6px;
+        font-size: 0.92rem;
+    }
+    .sched-custom-win-row .remove-member {
+        width: 36px;
+        height: 42px;
+    }
+    .def-course-role-grid .level-segmented label > span {
+        font-size: 0.8rem;
+        padding: 8px 6px;
+    }
 }
 
 /* ==========================================================================
@@ -5475,9 +5520,10 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     }
     .sched-slots-pills .profile-pill {
         flex-shrink: 0;
+        min-height: 36px;
+        padding: 6px 12px;
     }
     .admin-slot-grid {
-        grid-template-columns: minmax(0, 1fr);
         max-height: 250px;
     }
 }
