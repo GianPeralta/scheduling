@@ -1331,105 +1331,58 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     padding: 24px 16px 32px;
     color: var(--muted);
     font-size: 0.84rem;
-    display: grid;
-    gap: 6px;
 }
-.footer-contact {
-    color: var(--text-soft);
-    font-size: 0.86rem;
-}
-.footer-contact a {
+.footer a {
     color: var(--primary);
-    font-weight: 700;
+    font-weight: 600;
     text-decoration: underline;
     text-underline-offset: 2px;
 }
-.footer-contact a:hover {
+.footer a:hover {
     color: var(--primary-hover);
 }
 
 /* ---------- instructor school email contact cards & banners ---------- */
 .instructor-contact-box {
-    padding: 13px 15px;
+    padding: 10px 13px;
     border-radius: var(--radius);
     background-color: var(--primary-soft);
     border: 1px solid var(--primary-border);
-    box-shadow: var(--shadow-xs);
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     display: grid;
-    gap: 10px;
+    gap: 4px;
 }
-.instructor-contact-head {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-}
-.instructor-contact-icon {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    background-color: var(--surface);
-    border: 1px solid var(--primary-border);
-    color: var(--primary);
-    flex-shrink: 0;
-}
-.instructor-contact-icon svg {
-    width: 16px;
-    height: 16px;
-}
-.instructor-contact-copy {
-    min-width: 0;
-    display: grid;
-    gap: 1px;
-}
-.instructor-contact-copy .selection-label {
+.instructor-contact-box .selection-label {
     margin-bottom: 0;
-}
-.instructor-contact-desc {
-    font-size: 0.81rem;
-    color: var(--text-soft);
-    line-height: 1.35;
 }
 .instructor-contact-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
 }
-.instructor-email-chip {
-    flex: 1 1 auto;
+.instructor-email-link {
     min-width: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 10px;
-    border-radius: var(--radius-sm);
-    background-color: var(--surface);
-    border: 1px solid var(--primary-border);
     color: var(--primary);
-    font-size: 0.81rem;
+    font-size: 0.82rem;
     font-weight: 700;
-    text-decoration: none;
+    text-decoration: underline;
+    text-underline-offset: 2px;
     word-break: break-all;
-    transition: background-color 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
 }
-.instructor-email-chip:hover {
-    background-color: var(--primary);
-    border-color: var(--primary);
-    color: #ffffff;
+.instructor-email-link:hover {
+    color: var(--primary-hover);
 }
 .copy-email-btn {
     flex-shrink: 0;
-    padding: 6px 10px;
-    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    border-radius: 6px;
     border: 1px solid var(--primary-border);
     background-color: var(--surface);
     color: var(--primary);
-    font-size: 0.76rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.25;
     transition: all 0.18s var(--ease);
 }
 .copy-email-btn:hover {
@@ -1442,45 +1395,41 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     color: #ffffff;
 }
 .copy-email-btn-inline {
-    padding: 4px 9px;
-    font-size: 0.75rem;
-    margin-left: auto;
+    padding: 3px 8px;
+    font-size: 0.72rem;
 }
-.instructor-inline-notice {
+.appointments-info-bar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
     flex-wrap: wrap;
-    padding: 11px 14px;
+    gap: 8px 18px;
+    padding: 10px 16px;
+    margin-bottom: 16px;
     border-radius: var(--radius);
-    background-color: var(--primary-soft);
-    border: 1px solid var(--primary-border);
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-xs);
+    font-size: 0.85rem;
     color: var(--text-soft);
-    font-size: 0.875rem;
-    line-height: 1.45;
 }
-.instructor-inline-notice svg {
-    width: 18px;
-    height: 18px;
-    color: var(--primary);
-    flex-shrink: 0;
-}
-.instructor-inline-notice strong {
+.appointments-info-rule strong {
     color: var(--text);
 }
-.instructor-inline-notice a {
+.appointments-info-contact {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.appointments-info-contact a {
     color: var(--primary);
     font-weight: 700;
     text-decoration: underline;
     text-underline-offset: 2px;
-    word-break: break-all;
 }
-.instructor-inline-notice a:hover {
+.appointments-info-contact a:hover {
     color: var(--primary-hover);
-}
-.instructor-inline-notice-compact {
-    font-size: 0.83rem;
-    padding: 10px 13px;
 }
 .modal-contact-note {
     font-size: 0.82rem;
@@ -3230,7 +3179,17 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
     .project-box-title { font-size: 0.86rem; }
     .instructor-contact-box {
         grid-column: 1 / -1;
-        padding: 11px 13px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 6px 12px;
+        padding: 9px 12px;
+    }
+    .appointments-info-bar {
+        padding: 10px 13px;
+        gap: 6px 12px;
+        font-size: 0.81rem;
     }
 
     .selection {

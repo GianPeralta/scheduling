@@ -438,12 +438,8 @@
         const membersHintEl = $('#membersFieldHint');
         if (membersHintEl) {
             const totalSaved = Array.isArray(state.student?.members) ? state.student.members.length : 1;
-            if (meta.requiresAllMembers) {
-                membersHintEl.textContent = state.consultationPurpose === 'retrieval'
-                    ? 'Your registered group is listed below (at least 2 or all members must attend).'
-                    : 'All registered group members are required to attend this schedule.';
-            } else if (totalSaved > 1) {
-                membersHintEl.textContent = 'Pre-filled with your group. Click × to remove any member who will not attend this session.';
+            if (!meta.requiresAllMembers && totalSaved > 1) {
+                membersHintEl.textContent = 'Click × to remove any member not attending this session.';
             } else {
                 membersHintEl.textContent = '';
             }
@@ -2723,19 +2719,15 @@
                 if (emailsStatusEl) {
                     const mEmails = Array.isArray(state.student.memberEmails) ? state.student.memberEmails : [];
                     const configuredCount = [state.student.email, ...mEmails.slice(1)].filter(Boolean).length;
-                    if (count > 1) {
+                    if (count > 1 && configuredCount < count) {
                         emailsStatusEl.classList.remove('hidden');
-                        emailsStatusEl.textContent = configuredCount >= count
-                            ? `Email updates active for all ${count} members ✓`
-                            : `Email updates active for ${configuredCount} of ${count} members`;
+                        emailsStatusEl.textContent = `${configuredCount} of ${count} member emails added`;
                     } else {
                         emailsStatusEl.classList.add('hidden');
                         emailsStatusEl.textContent = '';
                     }
                     if (editBtn) {
-                        editBtn.textContent = count > 1 && configuredCount < count
-                            ? 'Edit info / add groupmate emails'
-                            : 'Edit info';
+                        editBtn.textContent = 'Edit info';
                     }
                 }
                 projBox.classList.remove('hidden');
@@ -2806,16 +2798,14 @@
             .filter((e, idx, arr) => e && arr.indexOf(e) === idx);
 
         const textSpan = document.createElement('span');
-        textSpan.textContent = activeEmails.length > 1
-            ? `Email updates & calendar invites will be sent to: ${activeEmails.join(', ')}. `
-            : `Email updates & calendar invites will be sent to: ${activeEmails[0] || 'your university email'}. `;
+        textSpan.textContent = `Updates emailed to: ${activeEmails.join(', ') || 'your university email'}. `;
 
         const editLink = document.createElement('button');
         editLink.type = 'button';
         editLink.className = 'link-btn';
         editLink.textContent = members.length > 1 && activeEmails.length < members.length
-            ? '+ Add groupmates’ emails'
-            : 'Manage group emails';
+            ? '+ Add groupmate emails'
+            : 'Edit';
         editLink.addEventListener('click', () => openMyBookingsModal(true));
 
         noteEl.append(textSpan, editLink);

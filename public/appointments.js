@@ -187,32 +187,6 @@
             roleBadge.className = `badge ${isPanel ? 'sky' : 'teal'}`;
             roleBadge.classList.toggle('hidden', !s.instructorRole);
         }
-
-        const emailsNote = $('#appointmentsEmailsNote');
-        if (emailsNote) {
-            emailsNote.innerHTML = '';
-            const members = Array.isArray(s.members) && s.members.length ? s.members : [s.name];
-            const mEmails = Array.isArray(s.memberEmails) ? s.memberEmails : [];
-            const activeEmails = [s.email, ...mEmails.slice(1)]
-                .map((e) => String(e || '').trim().toLowerCase())
-                .filter((e, idx, arr) => e && arr.indexOf(e) === idx);
-
-            const txt = document.createElement('span');
-            txt.textContent = activeEmails.length > 1
-                ? `Consultation updates & calendar invites are emailed to: ${activeEmails.join(', ')}. `
-                : `Consultation updates are emailed to ${activeEmails[0] || 'your university email'}. `;
-
-            const editLink = document.createElement('a');
-            editLink.href = '/?editProfile=1';
-            editLink.className = 'link-btn';
-            editLink.style.textDecoration = 'none';
-            editLink.textContent = members.length > 1 && activeEmails.length < members.length
-                ? '+ Add groupmates’ emails'
-                : 'Edit groupmate emails';
-
-            emailsNote.append(txt, editLink);
-            emailsNote.classList.remove('hidden');
-        }
     }
 
     function renderAppointments() {

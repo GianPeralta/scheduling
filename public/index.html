@@ -69,17 +69,9 @@
                 </div>
 
                 <div class="instructor-contact-box" id="sidebarContactBox">
-                    <div class="instructor-contact-head">
-                        <span class="instructor-contact-icon" aria-hidden="true">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                        </span>
-                        <div class="instructor-contact-copy">
-                            <span class="selection-label">Other Concerns?</span>
-                            <p class="instructor-contact-desc">Email Arnemie Gayyed at her school email:</p>
-                        </div>
-                    </div>
+                    <span class="selection-label">Other Concerns?</span>
                     <div class="instructor-contact-actions">
-                        <a class="instructor-email-chip" href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a>
+                        <a class="instructor-email-link" href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a>
                         <button type="button" class="copy-email-btn" data-copy-school-email="abgayyed@uc-bcf.edu.ph" title="Copy school email address">Copy</button>
                     </div>
                 </div>
@@ -149,7 +141,7 @@
                     <!-- Register -->
                     <form class="auth-form hidden" id="registerForm" novalidate>
                         <div class="group-register-notice">
-                            Only <strong>one representative</strong> per Capstone / Thesis group (1–3 members) registers the account and receives the <strong>OTP code</strong>. Add your groupmates’ student emails below so they also receive consultation confirmations, reminders, and updates.
+                            Only <strong>one representative</strong> per group (1–3 members) registers and receives the OTP code. Add groupmates’ student emails below so they also receive booking updates.
                         </div>
 
                         <label class="field">
@@ -201,7 +193,6 @@
                         </div>
                         <div class="field" id="regMembersField">
                             <span>Group members &amp; student emails <small class="muted" id="regMemberCount"></small></span>
-                            <small class="muted field-hint" id="regMembersEmailHint">OTP verification is sent only to Member 1 (you). Groupmates’ emails receive consultation confirmations, reminders &amp; updates.</small>
                             <div class="member-list member-cards-list" id="regMemberList"></div>
                             <button type="button" class="add-member" id="regAddMemberBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -279,7 +270,7 @@
 
                     <div class="type-step-header">
                         <h3>Select a consultation or defense</h3>
-                        <p class="muted">Schedule at least <strong>1 day before</strong> the consultation day. Note: You can reschedule or cancel an appointment at least <strong>2 hours before</strong> the schedule.</p>
+                        <p class="muted">Book at least <strong>1 day ahead</strong> · Reschedule or cancel up to <strong>2 hours before</strong>.</p>
                     </div>
 
                     <div class="type-choice-grid" id="typeChoiceGrid">
@@ -294,7 +285,7 @@
                             <div class="type-choice-content">
                                 <h4>System Consultation</h4>
                                 <div class="type-note teal">
-                                    <strong>Requirement:</strong> All members must be present during System Consultations.
+                                    All members must be present.
                                 </div>
                             </div>
                         </button>
@@ -310,7 +301,7 @@
                             <div class="type-choice-content">
                                 <h4>Drop-off Manuscript</h4>
                                 <div class="type-note amber">
-                                    <strong>Email notice:</strong> Once your manuscript is checked, you will be notified via your registered school email.
+                                    Notified via school email once checked.
                                 </div>
                             </div>
                         </button>
@@ -328,13 +319,8 @@
                             </div>
                             <div class="type-choice-content">
                                 <h4>Retrieval of Manuscript</h4>
-
                                 <div class="type-note sky">
-                                    <strong>Requirements:</strong>
-                                    <ul>
-                                        <li>Make sure you were notified by email that your Manuscript is checked and ready for retrieval before scheduling.</li>
-                                        <li>At least 2 or all members must be present, otherwise you will not be accommodated.</li>
-                                    </ul>
+                                    Schedule after email notice · At least 2 or all members must attend.
                                 </div>
                             </div>
                         </button>
@@ -350,7 +336,7 @@
                             <div class="type-choice-content">
                                 <h4>Communication Letter Signature</h4>
                                 <div class="type-note violet">
-                                    <strong>Prerequisite:</strong> Letter must already have the initial of <strong>Ma’am Melinda Beninsig</strong> first.
+                                    Requires <strong>Ma’am Melinda Beninsig’s</strong> initial first.
                                 </div>
                             </div>
                         </button>
@@ -369,7 +355,7 @@
                             <div class="type-choice-content">
                                 <h4>Pickup of Communication Letter</h4>
                                 <div class="type-note violet">
-                                    <strong>Prerequisite:</strong> Schedule only after receiving the email notification that your signed letter is ready for pickup.
+                                    Schedule after receiving the ready-for-pickup email.
                                 </div>
                             </div>
                         </button>
@@ -385,7 +371,7 @@
                             <div class="type-choice-content">
                                 <h4>Other Consultations</h4>
                                 <div class="type-note sky">
-                                    <strong>All students:</strong> Available for all students for other Capstone / Thesis concerns.
+                                    For other Capstone or Thesis concerns.
                                 </div>
                             </div>
                         </button>
@@ -401,7 +387,7 @@
                             <div class="type-choice-content">
                                 <h4>Capstone / Thesis Defense</h4>
                                 <div class="type-note rose">
-                                    <strong>Requirement:</strong> All members must be present during the defense.
+                                    All members must be present.
                                 </div>
                             </div>
                         </button>
@@ -549,13 +535,8 @@
                     </div>
 
                     <p class="muted small cancel-policy-note">
-                        Note: You can reschedule or cancel an appointment at least <strong>2 hours before</strong> the scheduled time in <a href="/appointments.html" class="accent-text">My Appointments</a>.
+                        Reschedule or cancel up to <strong>2 hours before</strong> in <a href="/appointments.html" class="accent-text">My Appointments</a>.
                     </p>
-
-                    <div class="instructor-inline-notice instructor-inline-notice-compact">
-                        <span><strong>Other concerns or questions?</strong> Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></span>
-                        <button type="button" class="copy-email-btn copy-email-btn-inline" data-copy-school-email="abgayyed@uc-bcf.edu.ph">Copy</button>
-                    </div>
 
                     <div class="step4-actions">
                         <a class="btn btn-primary" href="/appointments.html">View appointments</a>
@@ -704,11 +685,6 @@
                     </div>
                 </div>
 
-                <div class="instructor-inline-notice instructor-inline-notice-compact">
-                    <span><strong>Other concerns?</strong> Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></span>
-                    <button type="button" class="copy-email-btn copy-email-btn-inline" data-copy-school-email="abgayyed@uc-bcf.edu.ph">Copy</button>
-                </div>
-
                 <div class="modal-actions">
                     <button type="button" class="btn btn-primary btn-block" id="openEditProfileBtn">
                         Edit registration info
@@ -812,8 +788,7 @@
     </div>
 
     <footer class="footer">
-        <p class="footer-contact">Have other concerns or questions? Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></p>
-        <p>© <span id="year"></span> Consultation Scheduler · Arnemie Gayyed</p>
+        <p>© <span id="year"></span> Arnemie Gayyed · Other concerns: <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></p>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

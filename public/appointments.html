@@ -81,15 +81,14 @@
                 </div>
             </div>
 
-            <div class="cancel-policy-banner appointments-policy-banner">
-                <strong>Note:</strong> You can reschedule or cancel an appointment at least <strong>2 hours before</strong> the scheduled time. Rescheduling swaps your slot in one step without losing your current spot.
+            <div class="appointments-info-bar">
+                <span class="appointments-info-rule">Reschedule or cancel up to <strong>2 hours before</strong> your schedule.</span>
+                <span class="appointments-info-contact">
+                    <span>Other concerns:</span>
+                    <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a>
+                    <button type="button" class="copy-email-btn copy-email-btn-inline" data-copy-school-email="abgayyed@uc-bcf.edu.ph" title="Copy school email address">Copy</button>
+                </span>
             </div>
-            <div class="instructor-inline-notice appointments-policy-banner">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                <span><strong>Other concerns or questions?</strong> Email Arnemie Gayyed at her school email: <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></span>
-                <button type="button" class="copy-email-btn copy-email-btn-inline" data-copy-school-email="abgayyed@uc-bcf.edu.ph" title="Copy school email address">Copy</button>
-            </div>
-            <div class="booking-recipients-note appointments-policy-banner hidden" id="appointmentsEmailsNote"></div>
 
             <div class="card bookings-card">
                 <div class="toolbar">
@@ -134,7 +133,7 @@
             <div class="modal-head">
                 <div>
                     <h3 id="rescheduleModalTitle">Reschedule Appointment</h3>
-                    <p class="muted small">Pick a new date and time. Your current slot stays reserved until the swap succeeds.</p>
+                    <p class="muted small">Pick a new date and time below.</p>
                 </div>
                 <button type="button" class="icon-btn" id="closeRescheduleModalBtn" aria-label="Close">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -143,7 +142,7 @@
 
             <div class="reschedule-current-banner">
                 <div class="reschedule-current-info">
-                    <span class="selection-label">Current booking (kept safe until swap)</span>
+                    <span class="selection-label">Current schedule</span>
                     <strong id="rescheduleCurrentSummary">—</strong>
                 </div>
                 <span class="badge teal" id="reschedulePurposeBadge">—</span>
@@ -211,8 +210,7 @@
     </div>
 
     <footer class="footer">
-        <p class="footer-contact">Have other concerns or questions? Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></p>
-        <p>© <span id="year"></span> Consultation Scheduler · Arnemie Gayyed</p>
+        <p>© <span id="year"></span> Arnemie Gayyed · Other concerns: <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></p>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
