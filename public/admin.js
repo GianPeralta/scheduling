@@ -784,14 +784,16 @@
             const dayAppts = apptsByDate.get(ds) || [];
 
             if (dayAppts.length > 0) {
+                const hasUpcomingOnDay = dayAppts.some((b) => !isPast(b));
+                const targetTab = hasUpcomingOnDay ? 'upcoming' : 'past';
                 const apptBox = el('div', 'sched-appt-notice');
                 apptBox.appendChild(el('span', '', `${dayAppts.length} scheduled appointment${dayAppts.length === 1 ? '' : 's'} on this date`));
-                const viewBtn = el('button', 'link-btn', 'View in Upcoming →');
+                const viewBtn = el('button', 'link-btn', hasUpcomingOnDay ? 'View in Upcoming →' : 'View in Past →');
                 viewBtn.type = 'button';
                 viewBtn.addEventListener('click', () => {
                     state.search = ds;
                     if ($('#searchInput')) $('#searchInput').value = ds;
-                    switchAdminTab(state.today && ds < state.today ? 'past' : 'upcoming');
+                    switchAdminTab(targetTab, true);
                 });
                 apptBox.appendChild(viewBtn);
                 currentListEl.appendChild(apptBox);
@@ -2981,6 +2983,12 @@
 
     function matchesSearch(b, q) {
         if (!q) return true;
+        if (b.date) {
+            if (b.date.toLowerCase().includes(q)) return true;
+            if (longDate(b.date).toLowerCase().includes(q)) return true;
+            if (shortDate(b.date).toLowerCase().includes(q)) return true;
+        }
+        if (b.label && b.label.toLowerCase().includes(q)) return true;
         if (b.name && b.name.toLowerCase().includes(q)) return true;
         if (b.teamName && b.teamName.toLowerCase().includes(q)) return true;
         if (b.capstoneTitle && b.capstoneTitle.toLowerCase().includes(q)) return true;
