@@ -48,6 +48,7 @@ Built with **Node.js + Express** and **Supabase** (Postgres). Deployable to Verc
    | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | ✅ | SMTP account used to email verification codes |
    | `SMTP_FROM` | | Sender name/address (defaults to `SMTP_USER`) |
    | `TEACHER_EMAIL` | | Instructor email receiving 10-minute appointment reminders (defaults to `nemie07gayyed@gmail.com`) |
+   | `INSTRUCTOR_SCHOOL_EMAIL` | | Instructor school email shown to students for other concerns & set as `Reply-To` on outgoing student emails (defaults to `abgayyed@uc-bcf.edu.ph`) |
    | `MAX_ACTIVE_BOOKINGS_PER_STUDENT` | | Default `2` (`0` = unlimited) |
    | `SESSION_DAYS` | | Default `7` |
    | `MEETING_LOCATION` | | Default `Faculty Office` |

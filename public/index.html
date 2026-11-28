@@ -68,6 +68,22 @@
                     <button type="button" class="link-btn project-profile-link" id="sidebarEditProfileBtn">Edit info</button>
                 </div>
 
+                <div class="instructor-contact-box" id="sidebarContactBox">
+                    <div class="instructor-contact-head">
+                        <span class="instructor-contact-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                        </span>
+                        <div class="instructor-contact-copy">
+                            <span class="selection-label">Other Concerns?</span>
+                            <p class="instructor-contact-desc">Email Arnemie Gayyed at her school email:</p>
+                        </div>
+                    </div>
+                    <div class="instructor-contact-actions">
+                        <a class="instructor-email-chip" href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a>
+                        <button type="button" class="copy-email-btn" data-copy-school-email="abgayyed@uc-bcf.edu.ph" title="Copy school email address">Copy</button>
+                    </div>
+                </div>
+
                 <div class="selection hidden" id="selectionBox">
                     <p class="selection-label">Selection</p>
                     <p class="selection-purpose" id="selectionPurpose"></p>
@@ -536,6 +552,11 @@
                         Note: You can reschedule or cancel an appointment at least <strong>2 hours before</strong> the scheduled time in <a href="/appointments.html" class="accent-text">My Appointments</a>.
                     </p>
 
+                    <div class="instructor-inline-notice instructor-inline-notice-compact">
+                        <span><strong>Other concerns or questions?</strong> Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></span>
+                        <button type="button" class="copy-email-btn copy-email-btn-inline" data-copy-school-email="abgayyed@uc-bcf.edu.ph">Copy</button>
+                    </div>
+
                     <div class="step4-actions">
                         <a class="btn btn-primary" href="/appointments.html">View appointments</a>
                         <button class="btn btn-ghost" id="bookAnother">Book another</button>
@@ -600,6 +621,9 @@
                 <p class="muted" id="retrievalNoText">
                     No manuscript-ready email notification has been sent to your account yet. You can only schedule a <strong>Retrieval of Manuscript</strong> after your instructor emails you confirming that your manuscript has been checked.
                 </p>
+                <p class="modal-contact-note">
+                    Have other concerns? Email <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a>.
+                </p>
                 <div class="modal-actions">
                     <a class="btn btn-primary btn-block hidden" id="retrievalAppointmentsLink" href="/appointments.html">Go to My Appointments</a>
                     <button type="button" class="btn btn-primary btn-block" id="retrievalCloseBtn">
@@ -632,6 +656,9 @@
                 <h3 id="letterPickupNoTitle">Email notification required</h3>
                 <p class="muted" id="letterPickupNoText">
                     No communication-letter pickup email notification has been sent to your account yet. You can only schedule a <strong>Pickup of Communication Letter</strong> after your instructor emails you confirming that your signed letter is ready for pickup.
+                </p>
+                <p class="modal-contact-note">
+                    Have other concerns? Email <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a>.
                 </p>
                 <div class="modal-actions">
                     <a class="btn btn-primary btn-block hidden" id="letterPickupAppointmentsLink" href="/appointments.html">Go to My Appointments</a>
@@ -675,6 +702,11 @@
                         <span class="selection-label">Group members &amp; email updates</span>
                         <div class="profile-member-list" id="profileMemberChips"></div>
                     </div>
+                </div>
+
+                <div class="instructor-inline-notice instructor-inline-notice-compact">
+                    <span><strong>Other concerns?</strong> Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></span>
+                    <button type="button" class="copy-email-btn copy-email-btn-inline" data-copy-school-email="abgayyed@uc-bcf.edu.ph">Copy</button>
                 </div>
 
                 <div class="modal-actions">
@@ -780,6 +812,7 @@
     </div>
 
     <footer class="footer">
+        <p class="footer-contact">Have other concerns or questions? Email Arnemie Gayyed at <a href="mailto:abgayyed@uc-bcf.edu.ph" data-school-email-link>abgayyed@uc-bcf.edu.ph</a></p>
         <p>© <span id="year"></span> Consultation Scheduler · Arnemie Gayyed</p>
     </footer>
 

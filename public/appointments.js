@@ -1613,8 +1613,54 @@
         window.location.href = '/';
     }
 
+    function applyInstructorSchoolEmail(email) {
+        const clean = String(email || '').trim().toLowerCase();
+        if (!clean) return;
+        document.querySelectorAll('[data-school-email-link]').forEach((el) => {
+            el.href = `mailto:${clean}`;
+            el.textContent = clean;
+        });
+        document.querySelectorAll('[data-copy-school-email]').forEach((btn) => {
+            btn.dataset.copySchoolEmail = clean;
+        });
+    }
+
+    function initCopySchoolEmailButtons() {
+        document.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-copy-school-email]');
+            if (!btn) return;
+            const email = btn.dataset.copySchoolEmail || 'abgayyed@uc-bcf.edu.ph';
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(email);
+                } else {
+                    const tmp = document.createElement('textarea');
+                    tmp.value = email;
+                    tmp.style.position = 'fixed';
+                    tmp.style.opacity = '0';
+                    document.body.appendChild(tmp);
+                    tmp.select();
+                    document.execCommand('copy');
+                    tmp.remove();
+                }
+                const orig = btn.dataset.origLabel || btn.textContent;
+                btn.dataset.origLabel = orig;
+                btn.textContent = 'Copied ✓';
+                btn.classList.add('is-copied');
+                setTimeout(() => {
+                    btn.textContent = orig;
+                    btn.classList.remove('is-copied');
+                }, 2000);
+                toast(`Copied ${email}`, 'success');
+            } catch {
+                toast(`School email: ${email}`, 'info');
+            }
+        });
+    }
+
     async function init() {
         setText('#year', new Date().getFullYear());
+        initCopySchoolEmailButtons();
 
         document.querySelectorAll('.tab').forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -1655,6 +1701,9 @@
                 api('/api/config').catch(() => null),
             ]);
             state.config = config;
+            if (config?.instructorSchoolEmail) {
+                applyInstructorSchoolEmail(config.instructorSchoolEmail);
+            }
             window.SchedulerRealtime?.init(state.config);
             window.SchedulerRealtime?.subscribe(async (event) => {
                 if (event?.type === 'auth_changed' && event?.fromLocalTab) {

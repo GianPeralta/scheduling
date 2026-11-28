@@ -39,6 +39,7 @@ app.use('/api', (req, res, next) => {
 // This site is only for one teacher: Arnemie Gayyed.
 const TEACHER_NAME = 'Arnemie Gayyed';
 const TEACHER_EMAIL = String(process.env.TEACHER_EMAIL || 'nemie07gayyed@gmail.com').trim().toLowerCase();
+const INSTRUCTOR_SCHOOL_EMAIL = String(process.env.INSTRUCTOR_SCHOOL_EMAIL || 'abgayyed@uc-bcf.edu.ph').trim().toLowerCase();
 const REMINDER_MINUTES_BEFORE = 10; // Send reminder to teacher 10 minutes before every appointment
 const STUDENT_REMINDER_MINUTES_BEFORE = intEnv('STUDENT_REMINDER_MINUTES_BEFORE', 60) || 60; // Send reminder to student before every appointment
 
@@ -995,6 +996,24 @@ async function recordEmailLog(entry = {}, { emitRealtime = true } = {}) {
     return serialized;
 }
 
+function instructorContactTextLines() {
+    return [
+        '---',
+        `Other concerns or questions? Email ${TEACHER_NAME} at her school email: ${INSTRUCTOR_SCHOOL_EMAIL}`,
+        `(Automated system emails do not receive replies — please send all inquiries to ${INSTRUCTOR_SCHOOL_EMAIL}.)`,
+    ];
+}
+
+function instructorContactHtmlFooter() {
+    return `
+            <div style="margin-top:18px;padding:12px 14px;border-radius:10px;background:#f0fdfa;border:1px solid #99f6e4;font-size:13px;color:#0f172a;line-height:1.5">
+                <strong style="color:#0f766e">Have other concerns or questions?</strong><br/>
+                Email <strong>${escapeHtml(TEACHER_NAME)}</strong> at her school email:
+                <a href="mailto:${escapeHtml(INSTRUCTOR_SCHOOL_EMAIL)}" style="color:#0f766e;font-weight:700;text-decoration:underline">${escapeHtml(INSTRUCTOR_SCHOOL_EMAIL)}</a>
+                <div style="margin-top:4px;font-size:12px;color:#64748b">This sender is automated — please send all inquiries and other concerns to ${escapeHtml(INSTRUCTOR_SCHOOL_EMAIL)}.</div>
+            </div>`;
+}
+
 async function sendOtpEmail(to, code, purpose, name) {
     const isReset = purpose === 'reset';
     const isEmailChange = purpose === 'email_change';
@@ -1020,14 +1039,16 @@ async function sendOtpEmail(to, code, purpose, name) {
             : `Use the code below to verify your university email and finish creating your account for booking consultations with ${TEACHER_NAME}.`;
     const greeting = name ? `Hi ${name},` : 'Hi,';
     const footer = `This code expires in ${AUTH.otpMinutes} minutes. If you didn't request it, you can ignore this email.`;
-    const maskedBodyPreview = `${greeting}\n\n${intro}\n\n    ••••••\n\n${footer}`;
+    const contactFooter = instructorContactTextLines().join('\n');
+    const maskedBodyPreview = `${greeting}\n\n${intro}\n\n    ••••••\n\n${footer}\n\n${contactFooter}`;
 
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to,
             subject,
-            text: `${greeting}\n\n${intro}\n\n    ${code}\n\n${footer}`,
+            text: `${greeting}\n\n${intro}\n\n    ${code}\n\n${footer}\n\n${contactFooter}`,
             html: `
                 <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:auto;color:#0f172a">
                     <p>${escapeHtml(greeting)}</p>
@@ -1035,6 +1056,7 @@ async function sendOtpEmail(to, code, purpose, name) {
                     <p style="font-size:32px;font-weight:700;letter-spacing:8px;text-align:center;
                               background:#f0fdfa;color:#0f766e;padding:16px;border-radius:12px">${code}</p>
                     <p style="color:#64748b;font-size:13px">${escapeHtml(footer)}</p>
+                    ${instructorContactHtmlFooter()}
                 </div>`,
         });
         await recordEmailLog({
@@ -2081,6 +2103,7 @@ app.get('/api/config', async (req, res) => {
     res.json({
         teacherName: TEACHER_NAME,
         teacherEmail: TEACHER_EMAIL,
+        instructorSchoolEmail: INSTRUCTOR_SCHOOL_EMAIL,
         reminderMinutesBefore: REMINDER_MINUTES_BEFORE,
         location: CONFIG.location,
         timezone: CONFIG.timezone,
@@ -3307,6 +3330,7 @@ function buildBookingCalendarDescription(booking) {
     if (booking.status === 'cancelled' && booking.cancellationReason) {
         lines.push(`Cancellation Reason: ${booking.cancellationReason}`);
     }
+    lines.push(`Other Concerns (School Email): ${INSTRUCTOR_SCHOOL_EMAIL}`);
     lines.push(`Reference: #${booking.reference}`);
     return lines.join('\n');
 }
@@ -5474,6 +5498,8 @@ function buildManuscriptReadyEmail({ studentName, title, siteOrigin, note = '' }
         '• At least two (2) or all group members are required to be present during the manuscript retrieval; otherwise, your group will not be accommodated.',
         '',
         'Thank you.',
+        '',
+        ...instructorContactTextLines(),
     ].join('\n');
 
     const noteHtml = cleanNote
@@ -5499,6 +5525,7 @@ function buildManuscriptReadyEmail({ studentName, title, siteOrigin, note = '' }
                 </ul>
             </div>
             <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     return { subject, text: bodyText, html: bodyHtml };
@@ -5524,6 +5551,8 @@ function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', no
         'Reminder: Appointments must be scheduled at least one (1) day prior to your preferred pickup date.',
         '',
         'Thank you.',
+        '',
+        ...instructorContactTextLines(),
     ].join('\n');
 
     const letterReasonHtml = letterReason
@@ -5548,6 +5577,7 @@ function buildLetterReadyEmail({ studentName, title, siteOrigin, reason = '', no
                 <strong>Reminder:</strong> Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred pickup date.
             </div>
             <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     return { subject, text: bodyText, html: bodyHtml };
@@ -5592,6 +5622,8 @@ function buildManualStudentEmail({ template, studentName, capstoneTitle, subject
             'Reminder: Appointments must be scheduled at least one (1) day prior to your preferred consultation date.',
             '',
             'Thank you.',
+            '',
+            ...instructorContactTextLines(),
         ].join('\n');
 
         const noteHtml = cleanNote
@@ -5611,6 +5643,7 @@ function buildManualStudentEmail({ template, studentName, capstoneTitle, subject
                     <strong>Reminder:</strong> Appointments must be scheduled at least <strong>one (1) day prior</strong> to your preferred consultation date.
                 </div>
                 <p style="margin-top:18px;color:#475569;font-size:14px">Thank you.</p>
+                ${instructorContactHtmlFooter()}
             </div>`;
 
         return { subject: cleanSubject || defaultSubject, text: bodyText, html: bodyHtml };
@@ -5628,6 +5661,8 @@ function buildManualStudentEmail({ template, studentName, capstoneTitle, subject
         ...(siteOrigin ? ['', `Consultation Scheduling Portal: ${siteOrigin}`] : []),
         '',
         `— ${TEACHER_NAME}`,
+        '',
+        ...instructorContactTextLines(),
     ].join('\n');
 
     const bodyHtml = `
@@ -5637,6 +5672,7 @@ function buildManualStudentEmail({ template, studentName, capstoneTitle, subject
             <div style="white-space:normal;color:#0f172a">${escapeHtml(cleanNote).replace(/\r\n|\r|\n/g, '<br/>')}</div>
             ${siteOrigin ? `<p style="margin:22px 0 8px"><a href="${escapeHtml(siteOrigin)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px">Open Scheduling Portal</a></p>` : ''}
             <p style="margin-top:18px;color:#475569;font-size:14px">— ${escapeHtml(TEACHER_NAME)}</p>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     return { subject: cleanSubject, text: bodyText, html: bodyHtml };
@@ -5674,6 +5710,7 @@ app.post('/api/admin/bookings/:id/notify-checked', requireAdmin, async (req, res
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject: emailContent.subject,
             text: emailContent.text,
@@ -5759,6 +5796,7 @@ app.post('/api/admin/bookings/:id/notify-letter-ready', requireAdmin, async (req
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject: emailContent.subject,
             text: emailContent.text,
@@ -5888,6 +5926,7 @@ app.post('/api/admin/send-email', requireAdmin, async (req, res) => {
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject: emailContent.subject,
             text: emailContent.text,
@@ -6803,6 +6842,8 @@ async function sendStudentBookingConfirmationEmail(
         ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
         '',
         'A calendar file (.ics) is attached so you can save this event to your calendar app.',
+        '',
+        ...instructorContactTextLines(),
     ];
 
     const html = `
@@ -6818,6 +6859,7 @@ async function sendStudentBookingConfirmationEmail(
                 </ul>
             </div>
             <p style="margin-top:16px;color:#64748b;font-size:13px">A calendar file (<code>.ics</code>) is attached so you can open and save this event directly in your device’s calendar app.</p>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     const bodyText = textLines.join('\n');
@@ -6829,6 +6871,7 @@ async function sendStudentBookingConfirmationEmail(
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject,
             text: bodyText,
@@ -6918,6 +6961,8 @@ async function sendStudentRescheduleEmail(
         ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
         '',
         'An updated calendar file (.ics) is attached so you can update this event in your calendar app.',
+        '',
+        ...instructorContactTextLines(),
     ];
 
     const movedFromHtml = prevSummary
@@ -6941,6 +6986,7 @@ async function sendStudentRescheduleEmail(
                 </ul>
             </div>
             <p style="margin-top:16px;color:#64748b;font-size:13px">An updated calendar file (<code>.ics</code>) is attached so you can update this event directly in your device’s calendar app.</p>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     const bodyText = textLines.join('\n');
@@ -6952,6 +6998,7 @@ async function sendStudentRescheduleEmail(
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject,
             text: bodyText,
@@ -7015,6 +7062,8 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '', { cancelle
         'Original Appointment Details:',
         ...buildBookingSummaryTextLines(booking, { includeStudentEmail: false }),
         ...(bookingUrl ? ['', `Book a new consultation: ${bookingUrl}`] : []),
+        '',
+        ...instructorContactTextLines(),
     ];
 
     const rebookBtnHtml = bookingUrl
@@ -7032,6 +7081,7 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '', { cancelle
             ${buildBookingSummaryHtmlCard(booking, { includeStudentEmail: false, accentColor: '#be123c' })}
             ${rebookBtnHtml}
             <p style="color:#64748b;font-size:13px">An updated calendar cancellation (<code>.ics</code>) is attached so it is removed from your calendar if you added it previously.</p>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     const bodyText = textLines.join('\n');
@@ -7043,6 +7093,7 @@ async function sendStudentCancellationEmail(booking, siteOrigin = '', { cancelle
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject,
             text: bodyText,
@@ -7113,6 +7164,8 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
         '',
         `Add to Outlook Calendar: ${outlookCalUrl}`,
         ...(appointmentsUrl ? [`View My Appointments: ${appointmentsUrl}`] : []),
+        '',
+        ...instructorContactTextLines(),
     ];
 
     const html = `
@@ -7127,6 +7180,7 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
                     ${rules.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}
                 </ul>
             </div>
+            ${instructorContactHtmlFooter()}
         </div>`;
 
     const bodyText = textLines.join('\n');
@@ -7136,6 +7190,7 @@ async function sendStudentReminderEmail(booking, minsUntil, siteOrigin = '') {
     try {
         await mailer().sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            replyTo: INSTRUCTOR_SCHOOL_EMAIL,
             to: recipients,
             subject,
             text: bodyText,
