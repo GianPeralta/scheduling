@@ -3383,9 +3383,9 @@
         loadBookings();
     });
 
-    // Periodically trigger the 10-minute appointment reminder sweep while the dashboard is open
+    // Periodically trigger the 10-minute appointment reminder sweep while the dashboard is open and visible
     setInterval(async () => {
-        if (!state.password) return;
+        if (!state.password || document.visibilityState === 'hidden') return;
         try {
             const res = await fetch('/api/cron/reminders', {
                 method: 'POST',
@@ -3400,5 +3400,5 @@
         } catch {
             // Ignore transient network errors during background polling
         }
-    }, 60 * 1000);
+    }, 5 * 60 * 1000);
 })();

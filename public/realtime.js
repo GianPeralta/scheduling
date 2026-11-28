@@ -156,6 +156,7 @@
 
     async function checkPulse() {
         if (document.visibilityState === 'hidden') return;
+        if (wsConnected || configRef?.realtime?.serverless) return;
         const now = Date.now();
         if (now - lastPulseCheckAt < 1500) return;
         lastPulseCheckAt = now;
@@ -175,19 +176,27 @@
 
     function init(config = null) {
         if (config) configRef = config;
-        connectEventSource();
-        connectSupabaseWebSocket(configRef);
         connectBroadcastChannel();
+
+        if (configRef) {
+            connectSupabaseWebSocket(configRef);
+            if (!configRef.realtime?.serverless) {
+                connectEventSource();
+                if (!pulseTimer) {
+                    pulseTimer = setInterval(checkPulse, 8000);
+                }
+                checkPulse();
+            }
+        }
+
         updateStatusIndicators();
 
         if (!initialized) {
             initialized = true;
-            pulseTimer = setInterval(checkPulse, 8000);
             window.addEventListener('focus', checkPulse);
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'visible') checkPulse();
             });
-            checkPulse();
         }
     }
 

@@ -12,6 +12,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve @supabase/supabase-js UMD bundle for browser WebSockets without an external CDN
 app.get('/vendor/supabase.js', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
     res.sendFile(path.join(__dirname, 'node_modules', '@supabase', 'supabase-js', 'dist', 'umd', 'supabase.js'));
 });
 
@@ -197,11 +198,31 @@ const BLOCKED_SETTING_PREFIX = '__SETTING_BOOKING_END_DATE__:';
 /* ------------------------------------------------------------------ */
 /* Supabase client                                                     */
 /* ------------------------------------------------------------------ */
+function getSupabaseServerKey() {
+    return (
+        process.env.SUPABASE_SECRET_KEY
+        || process.env.SUPABASE_SERVICE_ROLE_KEY
+        || process.env.SUPABASE_PUBLISHABLE_KEY
+        || process.env.SUPABASE_ANON_KEY
+        || null
+    );
+}
+
+function getSupabasePublicKey() {
+    return (
+        process.env.SUPABASE_PUBLISHABLE_KEY
+        || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        || process.env.SUPABASE_ANON_KEY
+        || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+        || null
+    );
+}
+
 let supabase = null;
 function db() {
     if (supabase) return supabase;
     const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    const key = getSupabaseServerKey();
     if (!url || !key) {
         const err = new Error('Server is missing SUPABASE_URL / SUPABASE key environment variables.');
         err.status = 500;
@@ -254,7 +275,7 @@ function notifyRealtimeListeners(event = {}, { fromSupabaseWs = false } = {}) {
             sseClients.delete(res);
         }
     }
-    if (!fromSupabaseWs && process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)) {
+    if (!fromSupabaseWs && process.env.SUPABASE_URL && getSupabaseServerKey()) {
         try {
             if (serverRealtimeChannel && typeof serverRealtimeChannel.send === 'function') {
                 const res = serverRealtimeChannel.send({
@@ -2032,8 +2053,9 @@ app.get('/api/config', async (req, res) => {
         defenseWindowsByDay: serializedCfg.defenseHoursByDay,
         realtime: {
             supabaseUrl: process.env.SUPABASE_URL || null,
-            supabaseAnonKey: process.env.SUPABASE_ANON_KEY || null,
+            supabaseAnonKey: getSupabasePublicKey(),
             channel: REALTIME_CHANNEL,
+            serverless: Boolean(process.env.VERCEL),
         },
     });
 });
@@ -2050,6 +2072,9 @@ app.get('/api/realtime/pulse', (req, res) => {
 });
 
 app.get('/api/realtime/stream', (req, res) => {
+    if (process.env.VERCEL) {
+        return res.status(204).end();
+    }
     res.set({
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
